@@ -16,7 +16,6 @@
     "@supabase/supabase-js": "^2.108.2",
     "axios": "^1.13.6",
     "cfturnstile-vue3": "^2.0.0",
-    "firebase": "^12.10.0",
     "pinia": "^3.0.4",
     "vanilla-cookieconsent": "^3.1.0",
     "vue": "^3.5.25",

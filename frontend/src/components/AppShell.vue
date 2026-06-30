@@ -5,7 +5,6 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PayGlueLogo from './PayGlueLogo.vue'
-import { signOutFromFirebase } from '../lib/firebaseAuth'
 import { useSessionStore } from '../stores/session'
 import { getGhostStripeStatus, getIntegrationConfig } from '../lib/api'
 import { useHeaderScriptStatus } from '../composables/useHeaderScriptStatus'
@@ -106,11 +105,6 @@ onMounted(loadStripeStatus)
 watch(() => session.activeTenantSlug, loadStripeStatus)
 
 const signOut = async () => {
-  try {
-    await signOutFromFirebase()
-  } catch {
-    // resilient
-  }
   mobileSidebarOpen.value = false
   accountPopupOpen.value = false
   session.clearSession()
