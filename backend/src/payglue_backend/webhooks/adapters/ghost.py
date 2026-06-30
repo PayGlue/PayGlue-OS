@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import re
@@ -10,6 +11,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from urllib import error, request
+from urllib.parse import urlparse
 
 from payglue_backend.core.errors import (
     CmsApplyEntitlementError,
@@ -94,6 +96,27 @@ class GhostCmsAdapter:
         self._provider_key = provider_key
         self._jwt_ttl = timedelta(minutes=5)
 
+    @staticmethod
+    def _validate_base_url(url: str) -> None:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise MissingCredentialsError(
+                tenant_slug="", provider_key="ghost", missing_fields=("api_base_url",)
+            )
+        hostname = parsed.hostname or ""
+        try:
+            addr = ipaddress.ip_address(hostname)
+            if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+                raise MissingCredentialsError(
+                    tenant_slug="", provider_key="ghost", missing_fields=("api_base_url",)
+                )
+        except ValueError:
+            lower = hostname.lower()
+            if lower in ("localhost", "localhost.localdomain") or lower.endswith(".internal") or lower.endswith(".local"):
+                raise MissingCredentialsError(
+                    tenant_slug="", provider_key="ghost", missing_fields=("api_base_url",)
+                )
+
     def apply_entitlement(
         self,
         customer: CanonicalCustomer,
@@ -117,6 +140,7 @@ class GhostCmsAdapter:
                 missing_fields=tuple(missing_fields),
             )
 
+        self._validate_base_url(base_url)
         email = customer.email
         if not email:
             raise CmsApplyEntitlementError("customer email is required for Ghost member sync")
@@ -243,7 +267,8 @@ class GhostCmsAdapter:
     def _find_member_id(
         self, members_url: str, email: str, headers: dict[str, str]
     ) -> str | None:
-        lookup_url = f"{members_url}?filter=email:'{email}'"
+        safe_email = email.replace("'", "%27")
+        lookup_url = f"{members_url}?filter=email:'{safe_email}'"
         try:
             response = self._http_client.get(url=lookup_url, headers=headers)
         except Exception as exc:
@@ -285,6 +310,7 @@ class GhostCmsAdapter:
                 missing_fields=tuple(missing_fields),
             )
 
+        self._validate_base_url(base_url)
         url = f"{base_url.rstrip('/')}/ghost/api/admin/site/"
         auth_token = self._build_admin_jwt(api_key)
         headers = {
@@ -327,6 +353,7 @@ class GhostCmsAdapter:
                 missing_fields=("api_base_url", "admin_api_key"),
             )
 
+        self._validate_base_url(base_url)
         url = f"{base_url.rstrip('/')}/ghost/api/admin/settings/"
         auth_token = self._build_admin_jwt(api_key)
         headers = {"Authorization": f"Ghost {auth_token}", "Accept-Version": "v5.0"}
@@ -367,7 +394,9 @@ class GhostCmsAdapter:
 
         auth_token = self._build_admin_jwt(api_key)
         headers = {"Authorization": f"Ghost {auth_token}", "Accept-Version": "v5.0"}
-        url = f"{base_url.rstrip('/')}/ghost/api/admin/members/?filter=email:'{email}'&include=labels"
+        self._validate_base_url(base_url)
+        safe_email = email.replace("'", "%27")
+        url = f"{base_url.rstrip('/')}/ghost/api/admin/members/?filter=email:'{safe_email}'&include=labels"
 
         try:
             response = self._http_client.get(url=url, headers=headers)

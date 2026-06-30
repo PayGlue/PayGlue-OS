@@ -10,8 +10,14 @@ from urllib.parse import urlparse
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-secret-key")
-DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
+_secret_key = os.environ.get("DJANGO_SECRET_KEY", "")
+if not _secret_key:
+    raise RuntimeError(
+        "DJANGO_SECRET_KEY environment variable is required and must not be empty."
+    )
+SECRET_KEY = _secret_key
+
+DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
 
 
 def _parse_allowed_hosts() -> list[str]:
