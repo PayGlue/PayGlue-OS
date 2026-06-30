@@ -7,6 +7,9 @@
 # Secrets (Firebase Admin service account, etc.)
 secrets/
 
+# Wrangler local cache
+.wrangler/
+
 # Accidental downloaded credential files
 *firebase-adminsdk*.json
 
