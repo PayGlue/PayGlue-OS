@@ -1,6 +1,6 @@
-# Security Policy
+# Security Manifest
 
-Full security documentation: [payglue.io/security](https://payglue.io/security)
+Our security manifest: [payglue.io/security](https://payglue.io/security)
 
 ## Reporting a Vulnerability
 
@@ -15,7 +15,7 @@ You have two options:
 
 **GitHub Security Advisory** — open a [private advisory](../../security/advisories/new) directly in this repository. This creates a private fork where we can collaborate on a fix before public disclosure.
 
-We aim to respond within 48 hours and will keep you updated as we work on a fix.
+We aim to respond within 24 hours and will keep you updated as we work on a fix.
 
 ---
 
