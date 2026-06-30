@@ -1,10 +1,10 @@
-# Ghost Glue Backend
+# PayGlue Backend
 
-Initial executable slice for Ghost Glue backend.
+Django backend for PayGlue -- handles webhook ingestion, tenant management, and provider credential storage.
 
 ## Full local stack with Docker (recommended)
 
-From the repository root (`ghost-glue/`):
+From the repository root (`PayGlue-OS/`):
 
 ```bash
 make docker
@@ -84,7 +84,7 @@ uv run python manage.py migrate_schemas --shared
 Create a tenant + domain (replace values as needed):
 
 ```bash
-uv run python manage.py shell -c "from ghost_glue_backend.tenants.models import Tenant, TenantDomain; tenant = Tenant(slug='tenant-a', schema_name='tenant_a'); tenant.save(); TenantDomain.objects.update_or_create(domain='tenant-a.localhost', defaults={'tenant': tenant, 'is_primary': True})"
+uv run python manage.py shell -c "from payglue_backend.tenants.models import Tenant, TenantDomain; tenant = Tenant(slug='tenant-a', schema_name='tenant_a'); tenant.save(); TenantDomain.objects.update_or_create(domain='tenant-a.localhost', defaults={'tenant': tenant, 'is_primary': True})"
 ```
 
 Run tenant-schema migrations:

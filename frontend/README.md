@@ -1,4 +1,4 @@
-# Ghost Glue Frontend
+# PayGlue Frontend
 
 Vue 3 + Vite + Tailwind CSS self-service portal for:
 
