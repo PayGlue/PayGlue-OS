@@ -23,7 +23,7 @@ Try it before setting anything up:
 | [Full pricing table](https://blog.payglue.io/what-a-full-pricing-table-looks-like-when-it-talks-to-ghost/) | Embedded in a Ghost post, live sandbox checkout |
 | [Paywall in action](https://blog.payglue.io/how-this-blog-runs-with-a-payglue-paywall/) | How this blog gates content with PayGlue |
 | [Three buttons, one dashboard](https://blog.payglue.io/three-buttons-one-dashboard-how-we-embed-payment-links-in-this-blog/) | Embedded payment links in Ghost |
-| [https://go.payglue.io/membership) | Production German tech blog using PayGlue live |
+| [go.payglue.io/membership](https://go.payglue.io/membership) | Production German tech blog using PayGlue live |
 
 ---
 
@@ -145,9 +145,9 @@ Each provider needs three things in the PayGlue dashboard: API credentials, a we
 ### 5. See it live on your website
 
 PayGlue embeds directly into your Ghost site. Add a payment button or a full pricing table to any post or page with a single line of HTML. No iframes from third parties, no redirects away from 
-your site
+your site.
 
-.<img width="3248" height="1934" alt="payglue-os-paywall-blog" src="https://github.com/user-attachments/assets/01a494f1-d718-46aa-abd5-d4ba70d367e4" />
+<img width="3248" height="1934" alt="payglue-os-paywall-blog" src="https://github.com/user-attachments/assets/01a494f1-d718-46aa-abd5-d4ba70d367e4" />
 
 ### 6. What happens after a new membership for your publication arrives
 
