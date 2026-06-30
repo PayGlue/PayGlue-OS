@@ -72,7 +72,7 @@ const load = async () => {
 const invite = async () => {
   if (!canWrite.value) return
   if (!form.email && !form.firebase_uid) {
-    errorMessage.value = 'Provide email or firebase uid for the member.'
+    errorMessage.value = 'Provide email or user ID for the member.'
     return
   }
   try {
@@ -132,7 +132,7 @@ onMounted(load)
           <input
             v-model="form.firebase_uid"
             type="text"
-            placeholder="firebase uid (optional)"
+            placeholder="user ID (optional)"
             class="rounded-lg border border-slate-300 px-3 py-2 text-sm"
           />
           <select v-model="form.role" class="rounded-lg border border-slate-300 px-3 py-2 text-sm">
