@@ -23,7 +23,7 @@ Try it before setting anything up:
 | [Full pricing table](https://blog.payglue.io/what-a-full-pricing-table-looks-like-when-it-talks-to-ghost/) | Embedded in a Ghost post, live sandbox checkout |
 | [Paywall in action](https://blog.payglue.io/how-this-blog-runs-with-a-payglue-paywall/) | How this blog gates content with PayGlue |
 | [Three buttons, one dashboard](https://blog.payglue.io/three-buttons-one-dashboard-how-we-embed-payment-links-in-this-blog/) | Embedded payment links in Ghost |
-| [toolgui.de/mitgliedschaft](https://www.toolgui.de/mitgliedschaft/) | Production German blog using PayGlue live |
+| [https://go.payglue.io/membership) | Production German tech blog using PayGlue live |
 
 ---
 
@@ -45,10 +45,11 @@ PayGlue sits between your payment provider and Ghost:
 | Polar | Available |
 | Lemon Squeezy | Available |
 | PayPal | Available |
-| Stripe | In Development |
+| Mollie | In Development |
 | Paddle | In Development |
 | Gumroad | In Development |
-| Chargebee | In Development |
+| Digistore24 | Planned |
+| CopeCart | Planned |
 
 ---
 
