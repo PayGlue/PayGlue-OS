@@ -64,7 +64,7 @@ describe('TeamView', () => {
     })
   })
 
-  it('shows inline validation when neither email nor firebase uid provided', async () => {
+  it('shows inline validation when neither email nor user ID provided', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -91,7 +91,7 @@ describe('TeamView', () => {
     submitButton.click()
 
     await waitFor(() => {
-      expect(container.textContent).toContain('Provide email or firebase uid for the member.')
+      expect(container.textContent).toContain('Provide email or user ID for the member.')
     })
   })
 })
