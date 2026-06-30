@@ -25,8 +25,6 @@ Try it before setting anything up:
 | [Three buttons, one dashboard](https://blog.payglue.io/three-buttons-one-dashboard-how-we-embed-payment-links-in-this-blog/) | Embedded payment links in Ghost |
 | [https://go.payglue.io/membership) | Production German tech blog using PayGlue live |
 
-<img width="3248" height="1934" alt="payglue-os-paywall-demo" src="https://github.com/user-attachments/assets/bbcb59b3-98ae-467f-ab13-83b6a2f3c82e" />
-
 ---
 
 ## How it works
@@ -133,7 +131,8 @@ Services:
 
 In the PayGlue dashboard, go to Settings and paste your Ghost site URL and Admin API key. PayGlue will verify the connection by checking for the header script on your Ghost site.
 
-<img width="3248" height="1934" alt="payglue-os-paywall-demo" src="https://github.com/user-attachments/assets/bbcb59b3-98ae-467f-ab13-83b6a2f3c82e" />
+<img width="3160" height="1846" alt="payglue-os-ghost-cms-connection" src="https://github.com/user-attachments/assets/b3c65037-36df-4394-8b2c-c7553fb201e9" />
+
 
 ### 4. Connect a payment provider and map your products
 
@@ -141,9 +140,14 @@ Each provider needs three things in the PayGlue dashboard: API credentials, a we
 
 <img width="3248" height="1934" alt="payglue-os-payment provider-polar" src="https://github.com/user-attachments/assets/6a2c4c4e-83e5-4ad4-8782-176f21834268" />
 
+<img width="3248" height="1934" alt="payglue-os-paywall-demo" src="https://github.com/user-attachments/assets/bbcb59b3-98ae-467f-ab13-83b6a2f3c82e" />
+
 ### 5. See it live on your website
 
-PayGlue embeds directly into your Ghost site. Add a payment button or a full pricing table to any post or page with a single line of HTML. No iframes from third parties, no redirects away from your site.<img width="3248" height="1934" alt="payglue-os-paywall-blog" src="https://github.com/user-attachments/assets/01a494f1-d718-46aa-abd5-d4ba70d367e4" />
+PayGlue embeds directly into your Ghost site. Add a payment button or a full pricing table to any post or page with a single line of HTML. No iframes from third parties, no redirects away from 
+your site
+
+.<img width="3248" height="1934" alt="payglue-os-paywall-blog" src="https://github.com/user-attachments/assets/01a494f1-d718-46aa-abd5-d4ba70d367e4" />
 
 ### 6. What happens after a new membership for your publication arrives
 
