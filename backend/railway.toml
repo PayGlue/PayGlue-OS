@@ -1,0 +1,2 @@
+[deploy]
+preDeployCommand = "python manage.py migrate --noinput"

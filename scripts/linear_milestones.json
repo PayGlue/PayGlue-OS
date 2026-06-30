@@ -1,0 +1,24 @@
+{
+  "milestones": [
+    {
+      "name": "M0 Plan Freeze",
+      "description": "Lock v1 scope, planning docs, workflow rules, and project readiness baseline.",
+      "issues": ["GOGU-1", "GOGU-2", "GOGU-3", "GOGU-14", "GOGU-15"]
+    },
+    {
+      "name": "M1 Dogfooding",
+      "description": "Complete onboarding quality and run internal end-to-end validation for both providers.",
+      "issues": ["GOGU-4", "GOGU-5", "GOGU-6", "GOGU-7", "GOGU-8"]
+    },
+    {
+      "name": "M2 Closed Pilot",
+      "description": "Run external pilot cohort with support process, docs, and incident tracking.",
+      "issues": ["GOGU-9", "GOGU-10", "GOGU-11"]
+    },
+    {
+      "name": "M3 Go/No-Go",
+      "description": "Evaluate launch scorecard and finalize release decision with open-source readiness prep.",
+      "issues": ["GOGU-12", "GOGU-13"]
+    }
+  ]
+}

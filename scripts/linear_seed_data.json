@@ -1,0 +1,80 @@
+[
+  {
+    "title": "[M0] Publish v1 scope and boundaries docs",
+    "description": "Definition of done:\n- docs/v1-scope.md approved\n- README links to planning docs",
+    "priority": 1,
+    "labels": ["docs"]
+  },
+  {
+    "title": "[M0] Publish pilot playbook and launch scorecard",
+    "description": "Definition of done:\n- docs/pilot-playbook.md approved\n- docs/launch-scorecard.md approved",
+    "priority": 1,
+    "labels": ["docs", "support"]
+  },
+  {
+    "title": "[M0] Define pilot communication template",
+    "description": "Definition of done:\n- English outreach template\n- English pilot acceptance message",
+    "priority": 2,
+    "labels": ["docs"]
+  },
+  {
+    "title": "[M1] Complete Ghost credential onboarding flow copy and validation states",
+    "description": "Definition of done:\n- User can configure Ghost credentials with clear validation and error messages",
+    "priority": 1,
+    "labels": ["onboarding", "ghost"]
+  },
+  {
+    "title": "[M1] Complete Polar integration test pass (dogfooding)",
+    "description": "Definition of done:\n- Successful purchase syncs member with expected labels and note",
+    "priority": 1,
+    "labels": ["sync", "provider-polar"]
+  },
+  {
+    "title": "[M1] Complete LemonSqueezy integration test pass (dogfooding)",
+    "description": "Definition of done:\n- Successful purchase syncs member with expected labels and note",
+    "priority": 1,
+    "labels": ["sync", "provider-ls"]
+  },
+  {
+    "title": "[M1] Validate failure and retry handling with terminal alert behavior",
+    "description": "Definition of done:\n- Temporary failures recover with retry\n- Terminal failures produce owner-facing warning",
+    "priority": 1,
+    "labels": ["sync", "support"]
+  },
+  {
+    "title": "[M1] Finalize pricing table editor behavior for custom benefits (check, star)",
+    "description": "Definition of done:\n- Benefits are editable and render consistently in pricing table output",
+    "priority": 2,
+    "labels": ["pricing-table"]
+  },
+  {
+    "title": "[M2] Publish docs.ghostglue.io where-to-find credential guides",
+    "description": "Definition of done:\n- Step-by-step guides with screenshots for Ghost, Polar, LemonSqueezy",
+    "priority": 1,
+    "labels": ["docs", "onboarding"]
+  },
+  {
+    "title": "[M2] Run closed pilot with 3-5 external tenants",
+    "description": "Definition of done:\n- Each tenant reaches first successful sync",
+    "priority": 1,
+    "labels": ["support"]
+  },
+  {
+    "title": "[M2] Track all pilot incidents in Linear with RCA notes",
+    "description": "Definition of done:\n- Every P1/P2 incident includes root cause and prevention action",
+    "priority": 1,
+    "labels": ["support"]
+  },
+  {
+    "title": "[M3] Validate launch scorecard and record go/no-go decision",
+    "description": "Definition of done:\n- launch-scorecard completed\n- Go/no-go decision documented",
+    "priority": 1,
+    "labels": ["support"]
+  },
+  {
+    "title": "[M3] Prepare open-source readiness checklist (coming soon)",
+    "description": "Definition of done:\n- README style target chosen\n- contribution/security/release prerequisites captured",
+    "priority": 2,
+    "labels": ["docs"]
+  }
+]

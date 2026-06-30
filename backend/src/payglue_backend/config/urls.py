@@ -1,0 +1,212 @@
+# Copyright (c) 2026 PayGlue by André Nünninghoff
+# Licensed under the Business Source License 1.1, see LICENSE.md
+from django.urls import path, re_path
+
+from payglue_backend.authn.views import AccessValidateView, AuthInvitationValidateView, AuthSessionView, CheckoutInfoView
+from payglue_backend.tenants.views import (
+    BillingProfileView,
+    LemonSqueezyProductsView,
+    LemonSqueezyStoresView,
+    PayPalProductsView,
+    PolarInvoicesView,
+    PolarProductsView,
+    PolarSubscriptionView,
+    TeamCollectionView,
+    TeamMembershipDetailView,
+    TenantCollectionView,
+    TenantDetailView,
+    TenantSlugCheckView,
+)
+from payglue_backend.webhooks.views import (
+    BuyButtonDetailView,
+    BuyButtonListView,
+    BuyButtonPublicView,
+    ButtonJsView,
+
+    PaywallCheckView,
+    PaywallConfigDetailView,
+    PaywallConfigListView,
+    PaywallConfigPublicView,
+    PaywallJsView,
+    PricingTableDetailView,
+    PricingTableJsView,
+    PricingTableListView,
+    PricingTablePublicView,
+    TenantAuditEventListView,
+    TenantEventListView,
+    TenantEventReplayView,
+    CheckHeaderScriptView,
+    TenantGhostStripeStatusView,
+    TenantIntegrationConfigView,
+    TenantIntegrationCredentialsView,
+    TenantIntegrationHealthView,
+    TenantProductMappingView,
+    WebhookIngestView,
+)
+
+
+urlpatterns = [
+    path(
+        "api/v1/auth/invitation/validate",
+        AuthInvitationValidateView.as_view(),
+        name="auth-invitation-validate",
+    ),
+    path("api/v1/auth/session", AuthSessionView.as_view(), name="auth-session"),
+    path("api/v1/auth/access/validate", AccessValidateView.as_view(), name="auth-access-validate"),
+    path("api/v1/auth/access/checkout-info", CheckoutInfoView.as_view(), name="auth-access-checkout-info"),
+    path("api/v1/tenants", TenantCollectionView.as_view(), name="tenant-collection"),
+    path("api/v1/tenants/slug-check", TenantSlugCheckView.as_view(), name="tenant-slug-check"),
+    re_path(
+        r"^api/v1/tenants/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/?$",
+        TenantDetailView.as_view(),
+        name="tenant-detail",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/integrations/(?P<provider_key>[a-z0-9_-]+)/?$",
+        TenantIntegrationConfigView.as_view(),
+        name="tenant-integration-config",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/integrations/(?P<provider_key>[a-z0-9_-]+)/health/?$",
+        TenantIntegrationHealthView.as_view(),
+        name="tenant-integration-health",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/team/?$",
+        TeamCollectionView.as_view(),
+        name="tenant-team-collection",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/team/(?P<membership_id>\d+)/?$",
+        TeamMembershipDetailView.as_view(),
+        name="tenant-team-membership-detail",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/?$",
+        BillingProfileView.as_view(),
+        name="tenant-billing-profile",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/subscription/?$",
+        PolarSubscriptionView.as_view(),
+        name="tenant-billing-subscription",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/invoices/?$",
+        PolarInvoicesView.as_view(),
+        name="tenant-billing-invoices",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/polar-products/?$",
+        PolarProductsView.as_view(),
+        name="tenant-billing-polar-products",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/lemonsqueezy-products/?$",
+        LemonSqueezyProductsView.as_view(),
+        name="tenant-billing-lemonsqueezy-products",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/lemonsqueezy-stores/?$",
+        LemonSqueezyStoresView.as_view(),
+        name="tenant-billing-lemonsqueezy-stores",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/paypal-products/?$",
+        PayPalProductsView.as_view(),
+        name="tenant-billing-paypal-products",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/integrations/(?P<provider_key>[a-z0-9_-]+)/credentials/?$",
+        TenantIntegrationCredentialsView.as_view(),
+        name="tenant-integration-credentials",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/mappings/?$",
+        TenantProductMappingView.as_view(),
+        name="tenant-product-mappings",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/events/?$",
+        TenantEventListView.as_view(),
+        name="tenant-events",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/events/audit/?$",
+        TenantAuditEventListView.as_view(),
+        name="tenant-audit-events",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/events/(?P<event_id>\d+)/replay/?$",
+        TenantEventReplayView.as_view(),
+        name="tenant-event-replay",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/webhooks/(?P<payment_provider>[a-z0-9_-]+)/(?P<endpoint_token>[A-Za-z0-9_-]+)/$",
+        WebhookIngestView.as_view(),
+        name="webhook-ingest",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/integrations/cms/ghost-stripe-status/?$",
+        TenantGhostStripeStatusView.as_view(),
+        name="tenant-ghost-stripe-status",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/installation/check-script/?$",
+        CheckHeaderScriptView.as_view(),
+        name="check-header-script",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/paywall/check/?$",
+        PaywallCheckView.as_view(),
+        name="paywall-check",
+    ),
+    path("paywall.js", PaywallJsView.as_view(), name="paywall-js"),
+    path("button.js", ButtonJsView.as_view(), name="button-js"),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/buttons/?$",
+        BuyButtonListView.as_view(),
+        name="buy-button-list",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/buttons/(?P<button_id>[A-Za-z0-9_-]+)/?$",
+        BuyButtonDetailView.as_view(),
+        name="buy-button-detail",
+    ),
+    re_path(
+        r"^api/v1/buttons/(?P<button_id>[A-Za-z0-9_-]+)/?$",
+        BuyButtonPublicView.as_view(),
+        name="buy-button-public",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/paywalls/?$",
+        PaywallConfigListView.as_view(),
+        name="paywall-config-list",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/paywalls/(?P<config_id>[A-Za-z0-9_-]+)/?$",
+        PaywallConfigDetailView.as_view(),
+        name="paywall-config-detail",
+    ),
+    re_path(
+        r"^api/v1/paywalls/(?P<config_id>[A-Za-z0-9_-]+)/?$",
+        PaywallConfigPublicView.as_view(),
+        name="paywall-config-public",
+    ),
+    path("pricing-table.js", PricingTableJsView.as_view(), name="pricing-table-js"),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/pricing-tables/?$",
+        PricingTableListView.as_view(),
+        name="pricing-table-list",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/pricing-tables/(?P<table_id>[A-Za-z0-9_-]+)/?$",
+        PricingTableDetailView.as_view(),
+        name="pricing-table-detail",
+    ),
+    re_path(
+        r"^api/v1/pricing-tables/(?P<table_id>[A-Za-z0-9_-]+)/public/?$",
+        PricingTablePublicView.as_view(),
+        name="pricing-table-public",
+    ),
+]

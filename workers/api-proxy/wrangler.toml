@@ -1,0 +1,16 @@
+// Copyright (c) 2026 PayGlue by André Nünninghoff
+// Licensed under the Business Source License 1.1, see LICENSE.md
+
+name = "payglue-api-proxy"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# Set these via Cloudflare dashboard (Workers > Settings > Variables)
+# or via: wrangler secret put RAILWAY_BACKEND_URL
+[vars]
+SUPABASE_PROJECT_REF = "your-supabase-project-ref"
+RAILWAY_BACKEND_URL = "https://your-backend.example.com"
+
+[[routes]]
+pattern = "api.your-domain.com/*"
+zone_name = "your-domain.com"

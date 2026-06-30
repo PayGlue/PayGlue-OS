@@ -1,0 +1,105 @@
+@import "tailwindcss";
+
+@theme {
+  --color-on-secondary-fixed: #00174b;
+  --color-on-primary-fixed-variant: #003ea8;
+  --color-inverse-primary: #b4c5ff;
+  --color-on-background: #191c1d;
+  --color-on-primary-container: #eeefff;
+  --color-outline: #737686;
+  --color-inverse-surface: #2e3132;
+  --color-secondary-container: #acbfff;
+  --color-on-tertiary: #ffffff;
+  --color-on-primary: #ffffff;
+  --color-on-surface: #191c1d;
+  --color-primary-fixed-dim: #b4c5ff;
+  --color-surface-variant: #e1e3e4;
+  --color-error-container: #ffdad6;
+  --color-tertiary: #943700;
+  --color-surface-container-high: #e7e8e9;
+  --color-primary-fixed: #dbe1ff;
+  --color-on-error: #ffffff;
+  --color-surface-dim: #d9dadb;
+  --color-on-tertiary-container: #ffede6;
+  --color-outline-variant: #c3c6d7;
+  --color-secondary: #495c95;
+  --color-tertiary-fixed: #ffdbcd;
+  --color-surface-container-highest: #e1e3e4;
+  --color-surface: #f8f9fa;
+  --color-error: #ba1a1a;
+  --color-on-error-container: #93000a;
+  --color-surface-container: #edeeef;
+  --color-secondary-fixed: #dbe1ff;
+  --color-tertiary-container: #bc4800;
+  --color-on-secondary-fixed-variant: #31447b;
+  --color-primary-container: #2563eb;
+  --color-on-tertiary-fixed-variant: #7d2d00;
+  --color-background: #f8f9fa;
+  --color-on-surface-variant: #434655;
+  --color-on-primary-fixed: #00174b;
+  --color-on-tertiary-fixed: #360f00;
+  --color-on-secondary: #ffffff;
+  --color-primary: #004ac6;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f3f4f5;
+  --color-on-secondary-container: #394c84;
+  --color-tertiary-fixed-dim: #ffb596;
+  --color-surface-tint: #0053db;
+  --color-inverse-on-surface: #f0f1f2;
+  --color-secondary-fixed-dim: #b4c5ff;
+  --color-surface-bright: #f8f9fa;
+
+  --font-headline: Manrope, sans-serif;
+  --font-body: Inter, sans-serif;
+  --font-label: Inter, sans-serif;
+}
+
+:root {
+  color-scheme: light;
+  --landing-color-bg: #f8f2e8;
+  --landing-color-ink: #151726;
+  --landing-color-copy: #5a6078;
+  --landing-color-line: #ddd4c5;
+  --landing-color-panel: rgba(255, 251, 245, 0.82);
+  --landing-color-panel-strong: rgba(255, 255, 255, 0.97);
+  --landing-color-accent: #2563eb;
+  --landing-color-accent-deep: #1d4ed8;
+
+  --landing-space-xs: 0.5rem;
+  --landing-space-sm: 0.75rem;
+  --landing-space-md: 1rem;
+  --landing-space-lg: 1.25rem;
+  --landing-space-xl: 1.4rem;
+
+  --landing-radius-sm: 0.65rem;
+  --landing-radius-md: 0.85rem;
+  --landing-radius-lg: 1.1rem;
+  --landing-radius-xl: 1.6rem;
+
+  --landing-font-display: 'Outfit', 'Manrope', sans-serif;
+
+  --landing-text-kicker: 0.73rem;
+  --landing-text-nav: 0.89rem;
+  --landing-text-body: 1rem;
+  --landing-text-brand: 1.18rem;
+  --landing-text-section-title: 1.4rem;
+  --landing-text-card-title: 1.01rem;
+
+  --landing-shadow-card: 0 14px 26px rgba(22, 24, 35, 0.1);
+}
+
+body {
+  margin: 0;
+  font-family:
+    "Instrument Sans",
+    "Söhne",
+    "Avenir Next",
+    "Segoe UI",
+    sans-serif;
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+* {
+  box-sizing: border-box;
+}

@@ -1,0 +1,17 @@
+# Local environment overrides
+.env
+
+# MCP server config (contains API keys, never commit)
+.mcp.json
+
+# Secrets (Firebase Admin service account, etc.)
+secrets/
+
+# Accidental downloaded credential files
+*firebase-adminsdk*.json
+
+# Local OpenCode artifacts
+.opencode/
+
+# BMAD generated output artifacts
+_bmad-output/
