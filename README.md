@@ -94,8 +94,8 @@ For a fully self-hosted setup (no external services), Docker Compose brings up P
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/PayGlue/ghost-glue.git
-cd ghost-glue
+git clone https://github.com/PayGlue/PayGlue-OS.git
+cd PayGlue-OS
 cp .env.example .env
 ```
 
