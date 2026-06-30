@@ -10,14 +10,24 @@ from urllib.parse import urlparse
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
+DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
+_running_tests = any("pytest" in arg for arg in sys.argv)
+
 _secret_key = os.environ.get("DJANGO_SECRET_KEY", "")
 if not _secret_key:
-    raise RuntimeError(
-        "DJANGO_SECRET_KEY environment variable is required and must not be empty."
-    )
+    if DEBUG or _running_tests:
+        import warnings
+        warnings.warn(
+            "DJANGO_SECRET_KEY is not set — using insecure dev placeholder. "
+            "Set DJANGO_SECRET_KEY before running in production.",
+            stacklevel=2,
+        )
+        _secret_key = "dev-only-insecure-do-not-use-in-production"
+    else:
+        raise RuntimeError(
+            "DJANGO_SECRET_KEY environment variable is required and must not be empty."
+        )
 SECRET_KEY = _secret_key
-
-DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
 
 
 def _parse_allowed_hosts() -> list[str]:
