@@ -6,7 +6,6 @@ import { useSessionStore } from '../stores/session'
 
 const LoginView = () => import('../views/LoginView.vue')
 const SignupView = () => import('../views/SignupView.vue')
-const LandingView = () => import('../views/LandingView.vue')
 const DashboardEntryView = () => import('../views/DashboardEntryView.vue')
 const DashboardPreviewView = () => import('../views/DashboardPreviewView.vue')
 const TennantDevView = () => import('../views/TennantDevView.vue')
@@ -16,11 +15,9 @@ const DashboardView = () => import('../views/DashboardView.vue')
 const InstallationView = () => import('../views/InstallationView.vue')
 const PaywallConfigView = () => import('../views/PaywallConfigView.vue')
 const BuyButtonView = () => import('../views/BuyButtonView.vue')
-
 const MappingsView = () => import('../views/MappingsView.vue')
 const TeamView = () => import('../views/TeamView.vue')
 const PricingTableView = () => import('../views/PricingTableView.vue')
-
 const EventsView = () => import('../views/EventsView.vue')
 const BillingView = () => import('../views/BillingView.vue')
 const PreferencesView = () => import('../views/PreferencesView.vue')
@@ -35,19 +32,6 @@ const AuthCallbackView = () => import('../views/AuthCallbackView.vue')
 const ResetPasswordView = () => import('../views/ResetPasswordView.vue')
 const AuthResetView = () => import('../views/AuthResetView.vue')
 const WelcomeView = () => import('../views/WelcomeView.vue')
-const WaitlistStatusView = () => import('../views/WaitlistStatusView.vue')
-const WaitlistConfirmView = () => import('../views/WaitlistConfirmView.vue')
-const UnsubscribeConfirmView = () => import('../views/UnsubscribeConfirmView.vue')
-const ChangelogView = () => import('../views/ChangelogView.vue')
-const RoadmapView = () => import('../views/RoadmapView.vue')
-const ComparisonView = () => import('../views/ComparisonView.vue')
-const VsView = () => import('../views/VsView.vue')
-const PrivacyView = () => import('../views/PrivacyView.vue')
-const ImpressumView = () => import('../views/ImpressumView.vue')
-const TermsView = () => import('../views/TermsView.vue')
-const ContactView = () => import('../views/ContactView.vue')
-const WithdrawalView = () => import('../views/WithdrawalView.vue')
-const SecurityView = () => import('../views/SecurityView.vue')
 
 const router = createRouter({
   history: createWebHistory(),
@@ -59,81 +43,7 @@ const router = createRouter({
   routes: [
     {
       path: '/',
-      name: 'landing',
-      component: LandingView,
-    },
-    {
-      path: '/waitliststatus',
-      name: 'waitlist-status',
-      component: WaitlistStatusView,
-    },
-    {
-      path: '/waitlist-confirm',
-      name: 'waitlist-confirm',
-      component: WaitlistConfirmView,
-    },
-    {
-      path: '/unsubscribe-confirm',
-      name: 'unsubscribe-confirm',
-      component: UnsubscribeConfirmView,
-    },
-    {
-      path: '/blog',
-      redirect: () => { window.location.href = 'https://blog.payglue.io'; return false as any },
-    },
-    {
-      path: '/blog/:slug',
-      redirect: () => { window.location.href = 'https://blog.payglue.io'; return false as any },
-    },
-    {
-      path: '/changelog',
-      name: 'changelog',
-      component: ChangelogView,
-    },
-    {
-      path: '/roadmap',
-      name: 'roadmap',
-      component: RoadmapView,
-    },
-    {
-      path: '/comparison',
-      name: 'comparison',
-      component: ComparisonView,
-    },
-    {
-      path: '/vs/:slug',
-      name: 'vs',
-      component: VsView,
-    },
-    {
-      path: '/privacy',
-      name: 'privacy',
-      component: PrivacyView,
-    },
-    {
-      path: '/impressum',
-      name: 'impressum',
-      component: ImpressumView,
-    },
-    {
-      path: '/terms',
-      name: 'terms',
-      component: TermsView,
-    },
-    {
-      path: '/contact',
-      name: 'contact',
-      component: ContactView,
-    },
-    {
-      path: '/withdrawal',
-      name: 'withdrawal',
-      component: WithdrawalView,
-    },
-    {
-      path: '/security',
-      name: 'security',
-      component: SecurityView,
+      redirect: { name: 'login' },
     },
     {
       path: '/auth/callback',
@@ -323,27 +233,6 @@ router.beforeEach(async (to) => {
   const session = useSessionStore()
   if (!session.isAuthenticated && !session.isLoading) {
     await session.bootstrap()
-  }
-
-  const hostname = typeof window !== 'undefined' ? window.location.hostname : ''
-  const isRootDomain = hostname === 'payglue.io' || hostname === 'www.payglue.io'
-  const isAppSubdomain = hostname === 'app.payglue.io'
-
-  // On root domain, login/signup must happen on app subdomain so Supabase session is stored there
-  if (isRootDomain && (to.name === 'login' || to.name === 'signup')) {
-    window.location.href = `https://app.payglue.io${to.fullPath}`
-    return false
-  }
-
-  // Redirect authenticated users on root domain to app subdomain
-  if (isRootDomain && session.isAuthenticated && to.name !== 'landing' && to.name !== 'changelog' && to.name !== 'roadmap') {
-    window.location.href = `https://app.payglue.io${to.fullPath}`
-    return false
-  }
-
-  // On app subdomain, redirect unauthenticated users away from landing to login
-  if (isAppSubdomain && !session.isAuthenticated && to.name === 'landing') {
-    return { name: 'login' }
   }
 
   const requiresAuth = Boolean(to.meta.requiresAuth)
