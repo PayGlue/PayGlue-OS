@@ -12,7 +12,7 @@ dependencies = [
     "djangorestframework>=3.15,<4",
     "gunicorn>=23,<24",
     "psycopg[binary]>=3.2,<4",
-    "redis>=5.0,<6",
+    "redis>=5.0,<9",
 ]
 
 [dependency-groups]
