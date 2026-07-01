@@ -319,7 +319,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "celery", specifier = ">=5.4,<6" },
-    { name = "cryptography", specifier = ">=48,<49" },
+    { name = "cryptography", specifier = ">=48,<50" },
     { name = "django", specifier = ">=5.1,<6" },
     { name = "django-tenants", specifier = ">=3.7,<4" },
     { name = "djangorestframework", specifier = ">=3.15,<4" },
