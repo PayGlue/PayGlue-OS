@@ -33,7 +33,7 @@ describe('TenantSelectView', () => {
       },
     })
 
-    await fireEvent.click(screen.getByRole('button', { name: /create your first tenant/i }))
+    await fireEvent.click(screen.getByRole('link', { name: /create your first organization/i }))
     await waitFor(() => {
       expect(router.currentRoute.value.name).toBe('tenant-onboarding')
     })

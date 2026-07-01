@@ -31,6 +31,7 @@ describe('TeamView', () => {
     const session = useSessionStore()
     session.$patch({
       user: { id: 'test-uid', email: 'owner@example.com' } as any,
+      accessToken: 'fake-access-token',
       memberships: [{ tenant_id: 'tid-1', tenant_slug: 'tenant-a', tenant_name: 'Tenant A', role: 'owner' }],
     })
     session.activeTenantSlug = 'tenant-a'

@@ -23,7 +23,11 @@ describe('router guards', () => {
 
   it('redirects authenticated users with no memberships to onboarding', async () => {
     const session = useSessionStore()
-    session.$patch({ user: { id: 'uid-1', email: 'owner@example.com' } as any, memberships: [] })
+    session.$patch({
+      user: { id: 'uid-1', email: 'owner@example.com' } as any,
+      accessToken: 'fake-access-token',
+      memberships: [],
+    })
 
     await router.push('/tenant/select')
 
@@ -32,7 +36,11 @@ describe('router guards', () => {
 
   it('redirects users with no memberships from tenant pages to onboarding', async () => {
     const session = useSessionStore()
-    session.$patch({ user: { id: 'uid-1', email: 'owner@example.com' } as any, memberships: [] })
+    session.$patch({
+      user: { id: 'uid-1', email: 'owner@example.com' } as any,
+      accessToken: 'fake-access-token',
+      memberships: [],
+    })
 
     await router.push('/t/tenant-a/mappings')
 
@@ -43,6 +51,7 @@ describe('router guards', () => {
     const session = useSessionStore()
     session.$patch({
       user: { id: 'uid-1', email: 'owner@example.com' } as any,
+      accessToken: 'fake-access-token',
       memberships: [{ tenant_id: 'tid-1', tenant_slug: 'tenant-a', tenant_name: 'Tenant A', role: 'owner' }],
     })
     session.activeTenantSlug = 'tenant-a'

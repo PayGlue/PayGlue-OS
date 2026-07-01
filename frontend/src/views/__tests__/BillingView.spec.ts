@@ -6,12 +6,13 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createPinia, setActivePinia } from 'pinia'
 import BillingView from '../BillingView.vue'
 import { useSessionStore } from '../../stores/session'
-import { getBillingProfile, updateBillingProfile } from '../../lib/api'
+import { getPolarSubscriptions, getPolarInvoices, cancelPolarSubscription } from '../../lib/api'
 
 vi.mock('../../lib/api', async () => {
   return {
-    getBillingProfile: vi.fn(),
-    updateBillingProfile: vi.fn(),
+    getPolarSubscriptions: vi.fn(),
+    getPolarInvoices: vi.fn(),
+    cancelPolarSubscription: vi.fn(),
   }
 })
 
@@ -20,6 +21,7 @@ const setupSession = (role: 'owner' | 'admin' | 'billing_admin' | 'support_reado
   const session = useSessionStore()
   session.$patch({
     user: { id: 'test-uid', email: 'user@example.com' } as any,
+    accessToken: 'fake-access-token',
     memberships: [{ tenant_id: 'tid-1', tenant_slug: 'tenant-a', tenant_name: 'Tenant A', role }],
   })
   session.activeTenantSlug = 'tenant-a'
@@ -44,52 +46,64 @@ const makeRouter = async () => {
   return router
 }
 
+const activeSubscription = {
+  id: 'sub_1',
+  status: 'active',
+  amount: 2900,
+  currency: 'eur',
+  recurring_interval: 'month',
+  cancel_at_period_end: false,
+  current_period_end: '2026-08-01T00:00:00Z',
+  product: { name: 'Pro Plan' },
+}
+
+const invoice = {
+  id: 'inv_1',
+  created_at: '2026-07-01T00:00:00Z',
+  amount: 2900,
+  currency: 'eur',
+  status: 'paid',
+  product: { name: 'Pro Plan' },
+}
+
 describe('BillingView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(getBillingProfile).mockResolvedValue({
-      legal_name: 'Acme GmbH',
-      billing_email: 'finance@example.com',
-      country_code: 'DE',
-      tax_id: 'DE123456789',
-    })
-    vi.mocked(updateBillingProfile).mockResolvedValue({
-      legal_name: 'Acme GmbH',
-      billing_email: 'new-finance@example.com',
-      country_code: 'DE',
-      tax_id: 'DE123456789',
-    })
+    vi.mocked(getPolarSubscriptions).mockResolvedValue({ subscriptions: [activeSubscription] })
+    vi.mocked(getPolarInvoices).mockResolvedValue({ invoices: [invoice] })
+    vi.mocked(cancelPolarSubscription).mockResolvedValue({})
   })
 
-  it('renders billing profile from API', async () => {
+  it('renders active subscription and invoice history from API', async () => {
     setupSession('owner')
     const router = await makeRouter()
 
     render(BillingView, { global: { plugins: [router] } })
 
     await waitFor(() => {
-      expect(screen.getByDisplayValue('Acme GmbH')).toBeInTheDocument()
-      expect(screen.getByDisplayValue('finance@example.com')).toBeInTheDocument()
+      expect(screen.getAllByText('Pro Plan').length).toBeGreaterThan(0)
     })
+    expect(screen.getAllByText(/29[.,]00/).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /cancel plan/i })).toBeInTheDocument()
   })
 
-  it('allows owner/billing_admin roles to update billing', async () => {
+  it('allows owner/billing_admin roles to cancel the subscription', async () => {
     setupSession('billing_admin')
     const router = await makeRouter()
 
     render(BillingView, { global: { plugins: [router] } })
 
-    await screen.findByDisplayValue('finance@example.com')
-    await fireEvent.update(screen.getByLabelText('billing email'), 'new-finance@example.com')
-    await fireEvent.click(screen.getByRole('button', { name: /save billing profile/i }))
+    await screen.findByRole('button', { name: /cancel plan/i })
+    await fireEvent.click(screen.getByRole('button', { name: /cancel plan/i }))
+    await fireEvent.click(screen.getByRole('button', { name: /yes, cancel/i }))
 
     await waitFor(() => {
-      expect(updateBillingProfile).toHaveBeenCalledWith('tenant-a', 'token', {
-        legal_name: 'Acme GmbH',
-        billing_email: 'new-finance@example.com',
-        country_code: 'DE',
-        tax_id: 'DE123456789',
-      })
+      expect(cancelPolarSubscription).toHaveBeenCalledWith(
+        'tenant-a',
+        'fake-access-token',
+        'sub_1',
+        false,
+      )
     })
   })
 
@@ -100,15 +114,9 @@ describe('BillingView', () => {
     render(BillingView, { global: { plugins: [router] } })
 
     await waitFor(() => {
-      expect(getBillingProfile).toHaveBeenCalledWith('tenant-a', 'token')
+      expect(getPolarSubscriptions).toHaveBeenCalledWith('tenant-a', 'fake-access-token')
     })
-    await waitFor(() => {
-      expect(screen.queryByText(/loading billing profile/i)).not.toBeInTheDocument()
-    })
-    const saveButton = screen.getByRole('button', { name: /save billing profile/i })
-    expect(saveButton).toBeDisabled()
-
-    await fireEvent.click(saveButton)
-    expect(updateBillingProfile).not.toHaveBeenCalled()
+    expect(screen.getByText(/your role can view billing but cannot make changes/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /cancel plan/i })).not.toBeInTheDocument()
   })
 })
