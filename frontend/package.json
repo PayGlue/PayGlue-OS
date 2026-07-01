@@ -18,7 +18,7 @@
     "cfturnstile-vue3": "^2.0.0",
     "pinia": "^3.0.4",
     "vanilla-cookieconsent": "^3.1.0",
-    "vue": "^3.5.25",
+    "vue": "^3.5.39",
     "vue-router": "^5.0.3"
   },
   "devDependencies": {
