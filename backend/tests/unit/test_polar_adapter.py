@@ -144,18 +144,11 @@ def test_parse_event_normalizes_order_paid_payload() -> None:
         "type": "order.paid",
         "timestamp": "2026-01-01T00:00:00Z",
         "data": {
-            "order": {
-                "status": "paid",
-                "customer": {"id": "cus_001", "email": "owner@example.com"},
-                "line_items": [
-                    {
-                        "product_id": "prod_123",
-                        "quantity": 2,
-                        "amount": 1500,
-                        "currency": "usd",
-                    }
-                ],
-            }
+            "status": "paid",
+            "customer": {"id": "cus_001", "email": "owner@example.com"},
+            "product": {"id": "prod_123"},
+            "currency": "usd",
+            "items": [{"amount": 1500}],
         },
     }
 
@@ -168,7 +161,7 @@ def test_parse_event_normalizes_order_paid_payload() -> None:
     assert event.customer.email == "owner@example.com"
     assert len(event.line_items) == 1
     assert event.line_items[0].external_product_id == "prod_123"
-    assert event.line_items[0].quantity == 2
+    assert event.line_items[0].quantity == 1
     assert event.line_items[0].amount_minor == 1500
     assert event.line_items[0].currency == "USD"
     assert event.status == "paid"

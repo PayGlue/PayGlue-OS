@@ -102,8 +102,9 @@ def test_apply_entitlement_creates_new_member() -> None:
 
     adapter.apply_entitlement(_customer(), _instruction(), _ctx())
 
-    assert len(client.get_calls) == 1
-    assert "filter=email" in client.get_calls[0]["url"]
+    assert len(client.get_calls) == 2
+    assert "settings" in client.get_calls[0]["url"]
+    assert "filter=email" in client.get_calls[1]["url"]
     assert len(client.post_calls) == 1
     assert len(client.put_calls) == 0
 
@@ -111,9 +112,13 @@ def test_apply_entitlement_creates_new_member() -> None:
     assert post["url"] == "https://ghost.test/ghost/api/admin/members/"
     member = post["json_body"]["members"][0]  # type: ignore[index]
     assert member["email"] == "user@example.com"
-    assert member["comped"] is True
+    # Stub's default GET response has no stripe_connect_account_id in settings,
+    # so Ghost's own Stripe isn't connected -> comped stays False and access is
+    # tracked via a payglue-active label instead (see GhostCmsAdapter.apply_entitlement).
+    assert member["comped"] is False
     assert {"name": "source:payglue"} in member["labels"]
     assert {"name": "product:tier-basic"} in member["labels"]
+    assert {"name": "payglue-active:payglue"} in member["labels"]
     _assert_ghost_auth(post["headers"])
 
 
@@ -146,14 +151,15 @@ def test_apply_entitlement_updates_existing_member() -> None:
 
     adapter.apply_entitlement(_customer(), _instruction(), _ctx())
 
-    assert len(client.get_calls) == 1
+    assert len(client.get_calls) == 2
     assert len(client.post_calls) == 0
     assert len(client.put_calls) == 1
 
     put = client.put_calls[0]
     assert put["url"] == "https://ghost.test/ghost/api/admin/members/abc123/"
     member = put["json_body"]["members"][0]  # type: ignore[index]
-    assert member["comped"] is True
+    # Stub's GET response has no stripe_connect_account_id, so comped stays False.
+    assert member["comped"] is False
     _assert_ghost_auth(put["headers"])
 
 

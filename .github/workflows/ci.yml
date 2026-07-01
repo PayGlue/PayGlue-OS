@@ -11,6 +11,9 @@ jobs:
     defaults:
       run:
         working-directory: frontend
+    env:
+      VITE_SUPABASE_URL: https://ci-test.supabase.co
+      VITE_SUPABASE_ANON_KEY: ci-test-anon-key
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

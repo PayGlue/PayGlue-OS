@@ -54,7 +54,7 @@ def test_wiring_exposes_supported_provider_sets() -> None:
     assert "ghost" in wiring.get_supported_cms_provider_keys()
 
 
-@override_settings(FIRESTORE_CREDENTIALS_ENABLED=False)
+@override_settings(FIRESTORE_CREDENTIALS_ENABLED=False, DB_CREDENTIALS_ENABLED=False)
 def test_get_credential_provider_defaults_to_env_provider() -> None:
     wiring._credential_provider = None
 
