@@ -30,6 +30,7 @@ def test_process_inbound_event_marks_processed_on_success(monkeypatch) -> None:
             raw_body: bytes,
             headers: dict[str, str],
             tenant_ctx: TenantContext,
+            skip_verification: bool = False,
         ) -> OrchestrationResult:
             assert payment_provider_key == "polar"
             assert cms_provider_key == "ghost"
@@ -73,6 +74,7 @@ def test_process_inbound_event_retries_then_dead_letters(monkeypatch) -> None:
             raw_body: bytes,
             headers: dict[str, str],
             tenant_ctx: TenantContext,
+            skip_verification: bool = False,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             raise CmsApplyEntitlementError("ghost unavailable")
@@ -111,6 +113,7 @@ def test_process_inbound_event_ignores_already_processing_events(monkeypatch) ->
             raw_body: bytes,
             headers: dict[str, str],
             tenant_ctx: TenantContext,
+            skip_verification: bool = False,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             raise AssertionError("orchestrator should not run for processing event")
@@ -149,6 +152,7 @@ def test_process_inbound_event_recovers_stale_processing_events(monkeypatch) -> 
             raw_body: bytes,
             headers: dict[str, str],
             tenant_ctx: TenantContext,
+            skip_verification: bool = False,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             return OrchestrationResult(
@@ -202,6 +206,7 @@ def test_process_inbound_event_does_not_override_status_changed_by_other_worker(
             raw_body: bytes,
             headers: dict[str, str],
             tenant_ctx: TenantContext,
+            skip_verification: bool = False,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             WebhookInboundEvent.objects.filter(id=event.id).update(
@@ -232,6 +237,7 @@ def test_process_inbound_event_fails_for_non_active_tenant(monkeypatch) -> None:
             raw_body: bytes,
             headers: dict[str, str],
             tenant_ctx: TenantContext,
+            skip_verification: bool = False,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             raise AssertionError("orchestrator should not run for suspended tenant")
@@ -271,6 +277,7 @@ def test_process_inbound_event_marks_queue_publish_failure_on_retry_enqueue_erro
             raw_body: bytes,
             headers: dict[str, str],
             tenant_ctx: TenantContext,
+            skip_verification: bool = False,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             raise CmsApplyEntitlementError("ghost unavailable")
@@ -320,6 +327,7 @@ def test_process_inbound_event_uses_tenant_selected_cms_provider(monkeypatch) ->
             raw_body: bytes,
             headers: dict[str, str],
             tenant_ctx: TenantContext,
+            skip_verification: bool = False,
         ) -> OrchestrationResult:
             del payment_provider_key, raw_body, headers, tenant_ctx
             seen_cms_provider.append(cms_provider_key)

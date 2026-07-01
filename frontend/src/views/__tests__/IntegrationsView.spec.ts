@@ -15,6 +15,13 @@ import {
 
 vi.mock('../../lib/api', async () => {
   return {
+    ApiHttpError: class ApiHttpError extends Error {
+      status: number
+      constructor(message: string, status: number) {
+        super(message)
+        this.status = status
+      }
+    },
     getIntegrationConfig: vi.fn(),
     updateIntegrationConfig: vi.fn(),
     setIntegrationCredentials: vi.fn(),
@@ -27,6 +34,7 @@ const setupSession = (role: 'owner' | 'admin' | 'billing_admin' | 'support_reado
   const session = useSessionStore()
   session.$patch({
     user: { id: 'test-uid', email: 'user@example.com' } as any,
+    accessToken: 'fake-access-token',
     memberships: [{ tenant_id: 'tid-1', tenant_slug: 'tenant-a', tenant_name: 'Tenant A', role }],
   })
   session.activeTenantSlug = 'tenant-a'
@@ -97,30 +105,40 @@ describe('IntegrationsView', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Payment integration/i)).toBeInTheDocument()
-      expect(screen.getByDisplayValue('polar')).toBeInTheDocument()
-      expect(screen.getByDisplayValue('ghost')).toBeInTheDocument()
+      expect(screen.getByText(/CMS Integration/i)).toBeInTheDocument()
     })
-    expect(getIntegrationConfig).toHaveBeenCalledTimes(2)
+    expect(getIntegrationConfig).toHaveBeenCalledWith('tenant-a', 'fake-access-token', 'payment')
+    expect(getIntegrationConfig).toHaveBeenCalledWith('tenant-a', 'fake-access-token', 'cms')
   })
 
-  it('allows owners to update credentials and run health checks', async () => {
+  it('allows owners to update the Polar webhook secret and run a health check', async () => {
     setupSession('owner')
     const router = await makeRouter()
 
     render(IntegrationsView, { global: { plugins: [router] } })
 
-    await screen.findByText(/CMS integration/i)
-    const paymentCredentialInput = screen.getByLabelText('payment credentials')
-    await fireEvent.update(paymentCredentialInput, '{"api_key":"secret"}')
+    // The "Update" button sits inside a <label>, which merges the masked
+    // value text into its computed accessible name — getByRole name matching
+    // doesn't reliably isolate it, so locate it by its own text instead.
+    const updateButton = await waitFor(() => {
+      const el = screen.getByText('Update', { selector: 'button' })
+      return el
+    })
+    await fireEvent.click(updateButton)
+    await fireEvent.update(screen.getByPlaceholderText('whsec_...'), 'whsec_test123')
 
-    await fireEvent.click(screen.getByRole('button', { name: /save payment credentials/i }))
-    await fireEvent.click(screen.getByRole('button', { name: /run payment health check/i }))
+    await fireEvent.click(screen.getByRole('button', { name: /save polar credentials/i }))
+    await waitFor(() => {
+      expect(setIntegrationCredentials).toHaveBeenCalledWith('tenant-a', 'fake-access-token', 'payment', {
+        webhook_secret: 'whsec_test123',
+      })
+    })
+
+    const [healthButton] = screen.getAllByRole('button', { name: /run health check/i })
+    await fireEvent.click(healthButton!)
 
     await waitFor(() => {
-      expect(setIntegrationCredentials).toHaveBeenCalledWith('tenant-a', 'token', 'payment', {
-        api_key: 'secret',
-      })
-      expect(runIntegrationHealthCheck).toHaveBeenCalledWith('tenant-a', 'token', 'payment')
+      expect(runIntegrationHealthCheck).toHaveBeenCalledWith('tenant-a', 'fake-access-token', 'payment')
       expect(screen.getByText(/reachable/i)).toBeInTheDocument()
     })
   })
@@ -131,22 +149,19 @@ describe('IntegrationsView', () => {
 
     render(IntegrationsView, { global: { plugins: [router] } })
 
-    await screen.findByText(/CMS integration/i)
-    await fireEvent.update(screen.getByLabelText('API URL'), 'https://ghost.example.com/ghost/api/admin')
+    await fireEvent.click(await screen.findByRole('button', { name: /update credentials/i }))
+
     await fireEvent.update(screen.getByLabelText('Content API key'), 'content_api_abc')
     await fireEvent.update(screen.getByLabelText('Admin API key'), 'kid:abcdef123456')
-    await fireEvent.update(screen.getByLabelText('Ghost health path'), '/site/')
-    await fireEvent.update(screen.getByLabelText('Ghost entitlements path'), '/members/entitlements/')
+    await fireEvent.update(screen.getByLabelText('Ghost URL'), 'https://ghost.example.com')
 
-    await fireEvent.click(screen.getByRole('button', { name: /save cms credentials/i }))
+    await fireEvent.click(screen.getByRole('button', { name: /save ghost credentials/i }))
 
     await waitFor(() => {
-      expect(setIntegrationCredentials).toHaveBeenCalledWith('tenant-a', 'token', 'cms', {
-        api_base_url: 'https://ghost.example.com/ghost/api/admin',
+      expect(setIntegrationCredentials).toHaveBeenCalledWith('tenant-a', 'fake-access-token', 'cms', {
+        api_base_url: 'https://ghost.example.com',
         content_api_key: 'content_api_abc',
         admin_api_key: 'kid:abcdef123456',
-        health_path: '/site/',
-        entitlements_path: '/members/entitlements/',
       })
     })
   })
@@ -158,46 +173,27 @@ describe('IntegrationsView', () => {
     render(IntegrationsView, { global: { plugins: [router] } })
 
     await screen.findByText(/Payment integration/i)
-    const saveConfigButton = screen.getByRole('button', { name: /save payment config/i })
-    const saveCredentialsButton = screen.getByRole('button', { name: /save payment credentials/i })
-    const healthButton = screen.getByRole('button', { name: /run payment health check/i })
+    expect(screen.getByRole('button', { name: /save polar credentials/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /save ghost credentials/i })).toBeDisabled()
+    for (const btn of screen.getAllByRole('button', { name: /run health check/i })) {
+      expect(btn).toBeDisabled()
+    }
 
-    expect(saveConfigButton).toBeDisabled()
-    expect(saveCredentialsButton).toBeDisabled()
-    expect(healthButton).toBeDisabled()
-
-    await fireEvent.click(saveConfigButton)
+    await fireEvent.click(screen.getByRole('button', { name: /save polar credentials/i }))
     expect(updateIntegrationConfig).not.toHaveBeenCalled()
   })
 
-  it('shows validation error when credentials contain non-string values', async () => {
+  it('shows validation error when Ghost URL is invalid', async () => {
     setupSession('owner')
     const router = await makeRouter()
 
     render(IntegrationsView, { global: { plugins: [router] } })
 
-    await screen.findByText(/Payment integration/i)
-    const paymentCredentialInput = screen.getByLabelText('payment credentials')
-    await fireEvent.update(paymentCredentialInput, '{"api_key": true}')
-    await fireEvent.click(screen.getByRole('button', { name: /save payment credentials/i }))
-
-    await waitFor(() => {
-      expect(screen.getByText(/must be a string value/i)).toBeInTheDocument()
-    })
-    expect(setIntegrationCredentials).not.toHaveBeenCalled()
-  })
-
-  it('shows validation error when Ghost API base URL is invalid', async () => {
-    setupSession('owner')
-    const router = await makeRouter()
-
-    render(IntegrationsView, { global: { plugins: [router] } })
-
-    await screen.findByText(/CMS integration/i)
-    await fireEvent.update(screen.getByLabelText('API URL'), 'ghost-api')
+    await fireEvent.click(await screen.findByRole('button', { name: /update credentials/i }))
+    await fireEvent.update(screen.getByLabelText('Ghost URL'), 'ghost-api')
     await fireEvent.update(screen.getByLabelText('Admin API key'), 'kid:abcdef123456')
 
-    await fireEvent.click(screen.getByRole('button', { name: /save cms credentials/i }))
+    await fireEvent.click(screen.getByRole('button', { name: /save ghost credentials/i }))
 
     await waitFor(() => {
       expect(screen.getByText(/API URL must be a valid URL/i)).toBeInTheDocument()
@@ -211,11 +207,11 @@ describe('IntegrationsView', () => {
 
     render(IntegrationsView, { global: { plugins: [router] } })
 
-    await screen.findByText(/CMS integration/i)
-    await fireEvent.update(screen.getByLabelText('API URL'), 'https://ghost.example.com/ghost/api/admin')
+    await fireEvent.click(await screen.findByRole('button', { name: /update credentials/i }))
+    await fireEvent.update(screen.getByLabelText('Ghost URL'), 'https://ghost.example.com')
     await fireEvent.update(screen.getByLabelText('Admin API key'), 'invalid-key')
 
-    await fireEvent.click(screen.getByRole('button', { name: /save cms credentials/i }))
+    await fireEvent.click(screen.getByRole('button', { name: /save ghost credentials/i }))
 
     await waitFor(() => {
       expect(

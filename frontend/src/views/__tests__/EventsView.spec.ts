@@ -21,6 +21,7 @@ const setupSession = (role: 'owner' | 'admin' | 'billing_admin' | 'support_reado
   const session = useSessionStore()
   session.$patch({
     user: { id: 'test-uid', email: 'user@example.com' } as any,
+    accessToken: 'fake-access-token',
     memberships: [{ tenant_id: 'tid-1', tenant_slug: 'tenant-a', tenant_name: 'Tenant A', role }],
   })
   session.activeTenantSlug = 'tenant-a'
@@ -43,6 +44,13 @@ const makeRouter = async () => {
   router.push('/t/tenant-a/events')
   await router.isReady()
   return router
+}
+
+const expandEvent = async (providerLabelText: string) => {
+  const [label] = screen.getAllByText(providerLabelText)
+  const header = label?.closest('button')
+  if (!header) throw new Error(`No expandable header found for ${providerLabelText}`)
+  await fireEvent.click(header)
 }
 
 describe('EventsView', () => {
@@ -106,47 +114,47 @@ describe('EventsView', () => {
     render(EventsView, { global: { plugins: [router] } })
 
     await waitFor(() => {
-      expect(screen.getByText(/Webhook events/i)).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: /Webhook events/i })).toBeInTheDocument()
       expect(screen.getByText(/billing_profile_updated/i)).toBeInTheDocument()
     })
   })
 
-  it('replays only failed/dead_letter events for owner/admin', async () => {
+  it('replays failed events for owner/admin roles', async () => {
     setupSession('admin')
     const router = await makeRouter()
 
     render(EventsView, { global: { plugins: [router] } })
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /replay event 10/i })).toBeInTheDocument()
-    })
-    await fireEvent.click(screen.getByRole('button', { name: /replay event 10/i }))
+    await screen.findAllByText('polar')
+    await expandEvent('polar')
 
     await waitFor(() => {
-      expect(replayWebhookEvent).toHaveBeenCalledWith('tenant-a', 'token', 10)
+      expect(screen.getByRole('button', { name: /replay event/i })).toBeInTheDocument()
     })
-    expect(screen.getByRole('button', { name: /replay event 11/i })).toBeDisabled()
+    await fireEvent.click(screen.getByRole('button', { name: /replay event/i }))
+
+    await waitFor(() => {
+      expect(replayWebhookEvent).toHaveBeenCalledWith('tenant-a', 'fake-access-token', 10)
+    })
   })
 
-  it('disables replay for readonly roles and applies audit filters', async () => {
+  it('hides replay for read-only roles and applies audit filters', async () => {
     setupSession('billing_admin')
     const router = await makeRouter()
 
     render(EventsView, { global: { plugins: [router] } })
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /replay event 10/i })).toBeInTheDocument()
-    })
-    expect(screen.getByRole('button', { name: /replay event 10/i })).toBeDisabled()
+    await screen.findAllByText('polar')
+    expect(screen.getByText(/your role can inspect events but cannot trigger replays/i)).toBeInTheDocument()
 
-    await fireEvent.update(screen.getByLabelText('audit event type'), 'billing_profile_updated')
-    await fireEvent.update(screen.getByLabelText('audit target type'), 'billing_profile')
-    await fireEvent.update(screen.getByLabelText('audit from date'), '2026-01-01T00:00')
-    await fireEvent.update(screen.getByLabelText('audit to date'), '2026-01-02T00:00')
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /apply audit filters/i })).not.toBeDisabled()
-    })
-    await fireEvent.click(screen.getByRole('button', { name: /apply audit filters/i }))
+    await expandEvent('polar')
+    expect(screen.queryByRole('button', { name: /replay event/i })).not.toBeInTheDocument()
+
+    await fireEvent.update(screen.getByLabelText('Event type'), 'billing_profile_updated')
+    await fireEvent.update(screen.getByLabelText('Target type'), 'billing_profile')
+    await fireEvent.update(screen.getByLabelText('From'), '2026-01-01T00:00')
+    await fireEvent.update(screen.getByLabelText('To'), '2026-01-02T00:00')
+    await fireEvent.click(screen.getByRole('button', { name: /apply filters/i }))
 
     await waitFor(() => {
       expect(listAuditEvents).toHaveBeenCalled()
@@ -154,7 +162,7 @@ describe('EventsView', () => {
     const calls = vi.mocked(listAuditEvents).mock.calls
     const lastArgs = calls[calls.length - 1]
     expect(lastArgs?.[0]).toBe('tenant-a')
-    expect(lastArgs?.[1]).toBe('token')
+    expect(lastArgs?.[1]).toBe('fake-access-token')
     expect(lastArgs?.[2]?.event_type).toBe('billing_profile_updated')
     expect(lastArgs?.[2]?.target_type).toBe('billing_profile')
     expect(lastArgs?.[2]?.created_at_from).toMatch(/202/)

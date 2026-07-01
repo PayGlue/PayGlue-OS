@@ -39,6 +39,7 @@ describe('MappingsView', () => {
     const session = useSessionStore()
     session.$patch({
       user: { id: 'test-uid', email: 'owner@example.com' } as any,
+      accessToken: 'fake-access-token',
       memberships: [{ tenant_id: 'tid-1', tenant_slug: 'tenant-a', tenant_name: 'Tenant A', role: 'owner' }],
     })
     session.activeTenantSlug = 'tenant-a'
@@ -68,7 +69,10 @@ describe('MappingsView', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByText(/prod_basic -> tier.basic/i)).toBeInTheDocument()
+      expect(screen.getByText('prod_basic')).toBeInTheDocument()
     })
+    expect(screen.getByText('polar')).toBeInTheDocument()
+    expect(screen.getByText('One-time')).toBeInTheDocument()
+    expect(screen.getByText('Active')).toBeInTheDocument()
   })
 })

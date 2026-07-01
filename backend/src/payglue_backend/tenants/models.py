@@ -32,6 +32,14 @@ class Tenant(TenantMixin):
 
     def clean(self) -> None:
         super().clean()
+        if self.pk is not None:
+            original_slug = (
+                Tenant.objects.filter(pk=self.pk).values_list("slug", flat=True).first()
+            )
+            if original_slug is not None and original_slug != self.slug:
+                raise ValidationError(
+                    {"slug": "Slug is immutable and cannot be changed after creation."}
+                )
 
     def save(self, *args: object, **kwargs: object) -> None:
         self.full_clean()
