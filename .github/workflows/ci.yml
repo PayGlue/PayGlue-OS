@@ -20,7 +20,7 @@ jobs:
       # keeps jsdom's implementation as the only one in scope during tests.
       NODE_OPTIONS: --no-experimental-webstorage
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -59,7 +59,7 @@ jobs:
       PGHOST: localhost
       PGPORT: 5432
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
