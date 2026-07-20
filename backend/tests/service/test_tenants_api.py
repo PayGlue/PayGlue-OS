@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import pytest
 from django.test import Client
 
-from payglue_backend.tenants.models import Tenant, TenantMembership, UserProfile
+from payglue_backend.tenants.models import BillingAccount, Tenant, TenantMembership, UserProfile
 
 
 pytestmark = pytest.mark.django_db
@@ -50,6 +50,28 @@ def test_tenants_api_requires_bearer_auth() -> None:
     assert create_response.status_code == 401
 
 
+def test_tenants_api_rejects_uninvited_stranger_instead_of_provisioning_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A verified JWT for an email that was never invited (no UserProfile, no
+    # InvitationGrant) must be rejected, not silently given a bare profile --
+    # this is exactly the gap that would let anyone with a valid Supabase
+    # OAuth login (Google/GitHub) bypass the invite gate entirely.
+    client = Client()
+    headers = _auth_headers(monkeypatch, "uid-stranger", "stranger@example.com")
+
+    response = client.post(
+        "/api/v1/tenants",
+        data={"slug": "stranger-team"},
+        content_type="application/json",
+        **headers,
+    )
+
+    assert response.status_code == 401
+    assert not UserProfile.objects.filter(firebase_uid="uid-stranger").exists()
+    assert not Tenant.objects.filter(slug="stranger-team").exists()
+
+
 def test_tenants_api_lists_active_memberships_for_authenticated_user(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -86,6 +108,7 @@ def test_tenants_api_creates_tenant_and_owner_membership(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = Client()
+    UserProfile.objects.create(firebase_uid="uid-create", email="create@example.com")
     headers = _auth_headers(monkeypatch, "uid-create", "create@example.com")
 
     response = client.post(
@@ -102,6 +125,32 @@ def test_tenants_api_creates_tenant_and_owner_membership(
     membership = TenantMembership.objects.get(tenant=tenant)
     assert membership.role == TenantMembership.Role.OWNER
     assert membership.user_profile.firebase_uid == "uid-create"
+    # Found live (PG-141 test): nothing else in the codebase ever created one
+    # of these, so every tenant made through the real signup flow had
+    # billing_account=None -- silently exempt from plan enforcement and with
+    # nothing for the dashboard's plan/usage cards to read.
+    assert tenant.billing_account is not None
+    assert tenant.billing_account.plan.key == "founding"
+
+
+def test_tenants_api_second_tenant_reuses_owners_billing_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = Client()
+    UserProfile.objects.create(firebase_uid="uid-second", email="second@example.com")
+    headers = _auth_headers(monkeypatch, "uid-second", "second@example.com")
+
+    client.post(
+        "/api/v1/tenants", data={"slug": "first-pub"}, content_type="application/json", **headers
+    )
+    client.post(
+        "/api/v1/tenants", data={"slug": "second-pub"}, content_type="application/json", **headers
+    )
+
+    first = Tenant.objects.get(slug="first-pub")
+    second = Tenant.objects.get(slug="second-pub")
+    assert first.billing_account_id == second.billing_account_id
+    assert BillingAccount.objects.filter(owner__firebase_uid="uid-second").count() == 1
 
 
 def test_tenants_api_returns_clean_error_for_duplicate_slug(
@@ -109,6 +158,7 @@ def test_tenants_api_returns_clean_error_for_duplicate_slug(
 ) -> None:
     client = Client()
     Tenant.objects.create(slug="acme", schema_name="acme")
+    UserProfile.objects.create(firebase_uid="uid-dupe", email="dupe@example.com")
     headers = _auth_headers(monkeypatch, "uid-dupe", "dupe@example.com")
 
     response = client.post(

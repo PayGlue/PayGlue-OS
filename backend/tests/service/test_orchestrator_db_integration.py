@@ -27,9 +27,9 @@ class StubPaymentAdapter:
         del raw_body, headers, tenant_ctx
 
     def parse_event(
-        self, raw_body: bytes, headers: Mapping[str, str]
+        self, raw_body: bytes, headers: Mapping[str, str], tenant_ctx: TenantContext
     ) -> CanonicalPaymentEvent:
-        del raw_body, headers
+        del raw_body, headers, tenant_ctx
         return self._event
 
     def supports_event(self, event_type: str) -> bool:

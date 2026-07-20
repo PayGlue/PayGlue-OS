@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.test import override_settings
 from django.core.exceptions import ImproperlyConfigured
 import pytest
@@ -8,36 +10,55 @@ from payglue_backend.webhooks.models import IntegrationConfig
 from payglue_backend.webhooks.resolver import DbProductMappingResolver
 
 
+# These tests exercise the legacy settings-based token path in isolation
+# (no DB access, no Tenant row) — the new per-tenant DB secret lookup is
+# patched to a miss so the legacy fallback logic runs exactly as before.
+_no_tenant_secret = patch.object(wiring, "get_tenant_webhook_secret", return_value=None)
+
+
+@_no_tenant_secret
 @override_settings(
     WEBHOOK_ENDPOINT_TOKENS={"tenant-a": {"polar": "tenant-token"}},
     WEBHOOK_ALLOW_GLOBAL_ENDPOINT_TOKEN=False,
     WEBHOOK_ENDPOINT_TOKEN="global-token",
 )
-def test_validate_endpoint_token_prefers_tenant_provider_mapping() -> None:
+def test_validate_endpoint_token_prefers_tenant_provider_mapping(_mock) -> None:
     assert wiring.validate_endpoint_token("tenant-a", "polar", "tenant-token") is True
     assert wiring.validate_endpoint_token("tenant-a", "polar", "wrong") is False
 
 
+@_no_tenant_secret
 @override_settings(
     WEBHOOK_ENDPOINT_TOKENS={},
     WEBHOOK_ALLOW_GLOBAL_ENDPOINT_TOKEN=False,
     WEBHOOK_ENDPOINT_TOKEN="global-token",
 )
-def test_validate_endpoint_token_rejects_when_no_tenant_token_and_global_disabled() -> (
-    None
-):
+def test_validate_endpoint_token_rejects_when_no_tenant_token_and_global_disabled(
+    _mock,
+) -> None:
     assert wiring.validate_endpoint_token("tenant-a", "polar", "global-token") is False
 
 
+@_no_tenant_secret
 @override_settings(
     WEBHOOK_ENDPOINT_TOKENS={},
     WEBHOOK_ALLOW_GLOBAL_ENDPOINT_TOKEN=True,
     WEBHOOK_ENDPOINT_TOKEN="global-token",
 )
-def test_validate_endpoint_token_can_use_global_fallback_when_explicitly_enabled() -> (
-    None
-):
+def test_validate_endpoint_token_can_use_global_fallback_when_explicitly_enabled(
+    _mock,
+) -> None:
     assert wiring.validate_endpoint_token("tenant-a", "polar", "global-token") is True
+
+
+@override_settings(
+    WEBHOOK_ENDPOINT_TOKENS={},
+    WEBHOOK_ALLOW_GLOBAL_ENDPOINT_TOKEN=False,
+)
+def test_validate_endpoint_token_prefers_tenant_db_secret_over_legacy_settings() -> None:
+    with patch.object(wiring, "get_tenant_webhook_secret", return_value="db-secret"):
+        assert wiring.validate_endpoint_token("tenant-a", "polar", "db-secret") is True
+        assert wiring.validate_endpoint_token("tenant-a", "polar", "wrong") is False
 
 
 def test_wiring_builds_orchestrator_with_db_mapping_resolver() -> None:
@@ -52,6 +73,17 @@ def test_wiring_builds_orchestrator_with_db_mapping_resolver() -> None:
 def test_wiring_exposes_supported_provider_sets() -> None:
     assert "polar" in wiring.get_supported_payment_provider_keys()
     assert "ghost" in wiring.get_supported_cms_provider_keys()
+
+
+def test_wiring_supports_creem_payment_provider() -> None:
+    from payglue_backend.webhooks.adapters.creem import CreemPaymentAdapter
+
+    assert "creem" in wiring.get_supported_payment_provider_keys()
+    assert isinstance(wiring.get_payment_adapter("creem"), CreemPaymentAdapter)
+
+    wiring._orchestrator = None
+    orchestrator = wiring.get_webhook_orchestrator()
+    assert isinstance(orchestrator._adapter_registry.get_payment("creem"), CreemPaymentAdapter)
 
 
 @override_settings(FIRESTORE_CREDENTIALS_ENABLED=False, DB_CREDENTIALS_ENABLED=False)

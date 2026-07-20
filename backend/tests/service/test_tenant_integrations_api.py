@@ -134,7 +134,7 @@ def test_integration_api_permission_matrix(
     headers = _auth_headers(monkeypatch, role)
 
     put_response = client.put(
-        "/t/tenant-a/api/v1/integrations/payment",
+        "/t/tenant-a/api/v1/integrations/polar",
         data={
             "enabled": True,
             "provider_type": "polar",
@@ -145,14 +145,14 @@ def test_integration_api_permission_matrix(
     )
     assert put_response.status_code == (200 if can_write else 403)
 
-    get_response = client.get("/t/tenant-a/api/v1/integrations/payment", **headers)
+    get_response = client.get("/t/tenant-a/api/v1/integrations/polar", **headers)
     assert get_response.status_code in {200, 404}
 
 
 def test_tenant_integration_requires_bearer_auth() -> None:
     client = Client()
 
-    response = client.get("/t/tenant-a/api/v1/integrations/payment")
+    response = client.get("/t/tenant-a/api/v1/integrations/polar")
 
     assert response.status_code == 401
 
@@ -517,7 +517,7 @@ def test_integration_health_for_payment_updates_metadata_on_success(
     headers = _auth_headers(monkeypatch, TenantMembership.Role.OWNER)
     IntegrationConfig.objects.create(
         tenant_slug="tenant-a",
-        provider_key="payment",
+        provider_key="polar",
         enabled=True,
         provider_type="polar",
         metadata={},
@@ -527,7 +527,7 @@ def test_integration_health_for_payment_updates_metadata_on_success(
         lambda provider_key: _HealthyPaymentAdapter(),
     )
 
-    response = client.get("/t/tenant-a/api/v1/integrations/payment/health", **headers)
+    response = client.get("/t/tenant-a/api/v1/integrations/polar/health", **headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -537,7 +537,7 @@ def test_integration_health_for_payment_updates_metadata_on_success(
     assert isinstance(body["checked_at"], str)
 
     integration = IntegrationConfig.objects.get(
-        tenant_slug="tenant-a", provider_key="payment"
+        tenant_slug="tenant-a", provider_key="polar"
     )
     assert integration.metadata["health"]["ok"] is True
     assert integration.metadata["health"]["code"] == "ok"
@@ -557,7 +557,7 @@ def test_integration_health_for_payment_updates_metadata_on_failure(
     headers = _auth_headers(monkeypatch, TenantMembership.Role.OWNER)
     IntegrationConfig.objects.create(
         tenant_slug="tenant-a",
-        provider_key="payment",
+        provider_key="polar",
         enabled=True,
         provider_type="polar",
         metadata={"region": "eu"},
@@ -567,7 +567,7 @@ def test_integration_health_for_payment_updates_metadata_on_failure(
         lambda provider_key: _FailingPaymentAdapter(),
     )
 
-    response = client.get("/t/tenant-a/api/v1/integrations/payment/health", **headers)
+    response = client.get("/t/tenant-a/api/v1/integrations/polar/health", **headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -576,8 +576,63 @@ def test_integration_health_for_payment_updates_metadata_on_failure(
     assert "failed" in body["message"].lower()
 
     integration = IntegrationConfig.objects.get(
-        tenant_slug="tenant-a", provider_key="payment"
+        tenant_slug="tenant-a", provider_key="polar"
     )
     assert integration.metadata["region"] == "eu"
     assert integration.metadata["health"]["ok"] is False
     assert integration.metadata["health"]["code"] == "error"
+
+
+def test_multiple_payment_providers_coexist_without_overwriting_each_other(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test: each payment provider used to share a single
+    provider_key="payment" IntegrationConfig row, so connecting a second
+    provider silently overwrote the first one's config. Each provider now
+    gets its own row, keyed by its own name.
+    """
+    client = Client()
+    headers = _auth_headers(monkeypatch, TenantMembership.Role.OWNER)
+
+    for provider in ("polar", "gumroad"):
+        put_response = client.put(
+            f"/t/tenant-a/api/v1/integrations/{provider}",
+            data={
+                "enabled": True,
+                "provider_type": provider,
+                "metadata": {},
+            },
+            content_type="application/json",
+            **headers,
+        )
+        assert put_response.status_code == 200
+
+    polar_get = client.get("/t/tenant-a/api/v1/integrations/polar", **headers)
+    gumroad_get = client.get("/t/tenant-a/api/v1/integrations/gumroad", **headers)
+
+    assert polar_get.status_code == 200
+    assert polar_get.json()["provider_type"] == "polar"
+    assert gumroad_get.status_code == 200
+    assert gumroad_get.json()["provider_type"] == "gumroad"
+
+    assert IntegrationConfig.objects.filter(tenant_slug="tenant-a").count() == 2
+
+
+def test_integration_config_rejects_provider_type_mismatched_with_provider_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = Client()
+    headers = _auth_headers(monkeypatch, TenantMembership.Role.OWNER)
+
+    response = client.put(
+        "/t/tenant-a/api/v1/integrations/polar",
+        data={
+            "enabled": True,
+            "provider_type": "gumroad",
+            "metadata": {},
+        },
+        content_type="application/json",
+        **headers,
+    )
+
+    assert response.status_code == 400

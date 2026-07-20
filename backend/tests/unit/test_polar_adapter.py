@@ -152,7 +152,9 @@ def test_parse_event_normalizes_order_paid_payload() -> None:
         },
     }
 
-    event = adapter.parse_event(json.dumps(payload).encode("utf-8"), {})
+    event = adapter.parse_event(
+        json.dumps(payload).encode("utf-8"), {}, TenantContext(tenant_slug="tenant-a")
+    )
 
     assert event.provider == "polar"
     assert event.provider_event_id == "evt_123"
@@ -172,7 +174,9 @@ def test_parse_event_raises_on_unsupported_payload_shape() -> None:
     bad_payload = {"id": "evt_123", "type": "order.paid", "data": {}}
 
     with pytest.raises(InvalidWebhookPayloadError):
-        adapter.parse_event(json.dumps(bad_payload).encode("utf-8"), {})
+        adapter.parse_event(
+            json.dumps(bad_payload).encode("utf-8"), {}, TenantContext(tenant_slug="tenant-a")
+        )
 
 
 def test_health_check_reports_success() -> None:

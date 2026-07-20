@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from django.test import Client
 from django.test import override_settings
@@ -111,6 +113,47 @@ def test_webhook_ingest_rejects_unsupported_payment_provider_before_enqueue() ->
 
     assert response.status_code == 400
     assert WebhookInboundEvent.objects.count() == 0
+
+
+def test_webhook_ingest_ignores_unsupported_paddle_event_before_enqueue(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.wiring.validate_endpoint_token",
+        lambda tenant_slug, provider, endpoint_token: True,
+    )
+    client = Client()
+
+    response = client.post(
+        "/t/tenant-a/webhooks/paddle/endpoint-token/",
+        data=json.dumps({"event_type": "payment_method.saved", "data": {}}).encode("utf-8"),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ignored", "event_type": "payment_method.saved"}
+    assert WebhookInboundEvent.objects.count() == 0
+
+
+def test_webhook_ingest_stores_supported_paddle_event(monkeypatch) -> None:
+    seen: list[int] = []
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.wiring.validate_endpoint_token",
+        lambda tenant_slug, provider, endpoint_token: True,
+    )
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.tasks.process_inbound_webhook_event.delay",
+        lambda event_id, **kwargs: seen.append(event_id),
+    )
+    client = Client()
+
+    response = client.post(
+        "/t/tenant-a/webhooks/paddle/endpoint-token/",
+        data=json.dumps({"event_type": "transaction.completed", "data": {}}).encode("utf-8"),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 202
+    assert WebhookInboundEvent.objects.count() == 1
+    assert seen
 
 
 def test_webhook_ingest_returns_503_when_queue_publish_fails(monkeypatch) -> None:
