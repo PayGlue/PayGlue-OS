@@ -11,7 +11,7 @@ const session = useSessionStore()
 
 onMounted(async () => {
   if (!session.isAuthenticated) {
-    await router.replace('/dashboard-preview')
+    await router.replace({ name: 'login' })
     return
   }
 

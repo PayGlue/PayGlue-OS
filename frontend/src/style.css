@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Enable class-based dark mode (a `.dark` class on <html> toggles `dark:`
+   variants), driven by the theme toggle in the sidebar. See useTheme.ts. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-on-secondary-fixed: #00174b;
   --color-on-primary-fixed-variant: #003ea8;
@@ -100,6 +104,87 @@ body {
   color: #0f172a;
 }
 
+/* Dark mode is class-based (`.dark` on <html>). The dark canvas lives on the
+   AppShell root (dark:bg-slate-950), so the public marketing pages -- which
+   don't use `dark:` utilities -- stay light regardless of the toggle. */
+:root.dark {
+  color-scheme: dark;
+}
+
 * {
   box-sizing: border-box;
+}
+
+/* ---- 2.0 shared form controls -------------------------------------------
+   Centralised input/select/textarea styling so plain controls (incl. those
+   inside FormField slots) get the same look with dark mode handled once,
+   instead of every view re-declaring border/bg/text + their `dark:` pairs.
+   Class-based dark (`.dark` on <html>) drives the dark branch. */
+.pg-input {
+  width: 100%;
+  border: 1px solid var(--color-slate-300, #cbd5e1);
+  background-color: #ffffff;
+  border-radius: 0.75rem;
+  padding: 0.5625rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: #0f172a;
+  font-family: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.pg-input::placeholder {
+  color: #94a3b8;
+}
+.pg-input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+.pg-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.pg-input.pg-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem;
+}
+/* Saved-secret rendering: dots, spaced out, muted. */
+.pg-input.pg-dots {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.2em;
+  color: #94a3b8;
+}
+.dark .pg-input {
+  border-color: #334155;
+  background-color: #020617;
+  color: #f1f5f9;
+}
+.dark .pg-input::placeholder {
+  color: #64748b;
+}
+.dark .pg-input.pg-dots {
+  color: #64748b;
+}
+
+/* Dark-mode fallback for bare form controls that predate the 2.0 kit. Wrapped
+   entirely in :where() so it has ZERO specificity — any explicit Tailwind
+   utility (bg-*, border-*, text-*) on the element always wins. This only
+   paints inputs/selects/textareas that have no colour utility of their own,
+   so the dark canvas never shows a white input well. Excludes .pg-input
+   (already styled) and colour/checkbox/radio inputs. */
+/* Scoped to `.pg-shell` (the AppShell root) so it only affects the dark
+   dashboard. The public marketing / auth / onboarding pages stay light even
+   when the OS is in dark mode (system theme), so their inputs must NOT be
+   darkened — otherwise a black field appears on a white card. */
+:where(
+  html.dark .pg-shell input:not([type="color"]):not([type="checkbox"]):not([type="radio"]):not(.pg-input),
+  html.dark .pg-shell select:not(.pg-input),
+  html.dark .pg-shell textarea:not(.pg-input)
+) {
+  background-color: #020617;
+  border-color: #334155;
+  color: #f1f5f9;
+}
+:where(html.dark .pg-shell input:not(.pg-input), html.dark .pg-shell textarea:not(.pg-input))::placeholder {
+  color: #64748b;
 }

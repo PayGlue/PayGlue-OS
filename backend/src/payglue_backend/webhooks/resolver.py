@@ -21,6 +21,14 @@ class DbProductMappingResolver(MappingResolver):
             line_item_quantities[line_item.external_product_id] += line_item.quantity
 
         if not line_item_quantities:
+            # PG-123: a cancellation that carries no product/tier id means
+            # "revoke everything this provider grants for this member" --
+            # currently only Patreon, whose delete webhook doesn't reliably
+            # carry the tier the patron was on, so revoke-all is keyed on the
+            # trigger alone (see PatreonPaymentAdapter). Every other provider
+            # always sends a product id on cancel, so it never reaches here.
+            if event.event_type == "subscription.canceled":
+                return self._revoke_all_for_provider(event, tenant_ctx)
             return ()
 
         mappings = ProductMapping.objects.filter(
@@ -72,4 +80,37 @@ class DbProductMappingResolver(MappingResolver):
                     )
                 )
 
+        return tuple(instructions)
+
+    def _revoke_all_for_provider(
+        self, event: CanonicalPaymentEvent, tenant_ctx: TenantContext
+    ) -> Sequence[EntitlementInstruction]:
+        """Revoke every distinct entitlement this provider can grant for the
+        tenant. Used for Patreon cancellations, which don't carry the tier id
+        to target a specific mapping. Revoking a Ghost label/comp the member
+        doesn't actually hold is a harmless no-op downstream, so revoking the
+        full set is safe."""
+        mappings = ProductMapping.objects.filter(
+            tenant_slug=tenant_ctx.tenant_slug,
+            payment_provider=event.provider,
+            is_active=True,
+        ).order_by("id")
+
+        seen: set[str] = set()
+        instructions: list[EntitlementInstruction] = []
+        for mapping in mappings:
+            if mapping.entitlement_key in seen:
+                continue
+            seen.add(mapping.entitlement_key)
+            meta = dict(mapping.metadata) if mapping.metadata else {}
+            meta["_provider"] = event.provider
+            meta["_event_id"] = event.provider_event_id
+            instructions.append(
+                EntitlementInstruction(
+                    entitlement_key=mapping.entitlement_key,
+                    action="revoke",
+                    quantity=mapping.quantity,
+                    metadata=meta,
+                )
+            )
         return tuple(instructions)

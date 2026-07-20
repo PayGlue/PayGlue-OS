@@ -6,6 +6,8 @@ import json
 import secrets
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.db import IntegrityError
 from django.db import transaction
 from django.http import Http404, HttpResponse as DjangoHttpResponse
@@ -22,15 +24,17 @@ from payglue_backend.authn.rbac import (
     TenantReadOwnerAdminWrite,
     resolve_tenant_membership,
 )
-from payglue_backend.core.errors import MissingCredentialsError
+from payglue_backend.core.errors import MissingCredentialsError, PlanLimitExceededError
 from payglue_backend.core.models import TenantContext
 from payglue_backend.http.throttling import DynamicScopedRateThrottle
 from payglue_backend.tenants.audit import write_public_audit_event
 from payglue_backend.tenants.models import PublicAuditEvent, Tenant, TenantMembership
+from payglue_backend.tenants.plan_limits import check_resource_limit
 from payglue_backend.tenants.serializers import PublicAuditEventSerializer
 from payglue_backend.webhooks import wiring
 from payglue_backend.webhooks.models import BuyButton, IntegrationConfig, PaywallConfig, PricingTable, PricingTier, ProductMapping
 from payglue_backend.webhooks.models import WebhookInboundEvent
+from payglue_backend.webhooks.test_events import run_mapping_test
 from payglue_backend.webhooks.serializers import (
     IntegrationCredentialsSerializer,
     IntegrationConfigSerializer,
@@ -38,6 +42,24 @@ from payglue_backend.webhooks.serializers import (
     WebhookInboundEventSerializer,
 )
 from payglue_backend.webhooks.tasks import process_inbound_webhook_event
+
+
+def _enforce_resource_limit(tenant_slug: str, resource: str) -> Response | None:
+    """Return a 402 Response if `tenant_slug`'s plan limit for `resource`
+    is exceeded, else None (including when the tenant can't be resolved --
+    permission classes have already gated access by this point)."""
+    tenant = Tenant.objects.filter(slug=tenant_slug).select_related("billing_account__plan").first()
+    if tenant is None:
+        return None
+    try:
+        check_resource_limit(tenant, resource)
+    except PlanLimitExceededError as exc:
+        plan_key = tenant.billing_account.plan.key if tenant.billing_account else None
+        return Response(
+            {"detail": str(exc), "upgrade_required": True, "plan": plan_key},
+            status=status.HTTP_402_PAYMENT_REQUIRED,
+        )
+    return None
 
 
 # TODO: Add owner/admin replay endpoint for dead-letter webhook events.
@@ -60,6 +82,46 @@ class WebhookIngestView(APIView):
         "paypal-auth-algo",
         "paypal-transmission-sig",
     }
+
+    # Each provider names/nests its raw event-type marker differently in its
+    # webhook payload -- this is NOT the canonical event type used elsewhere
+    # (e.g. Paddle's raw "transaction.completed" maps to canonical
+    # "order.paid"). Gumroad has no explicit type field at all, so it's
+    # intentionally absent here and always falls through to full processing.
+    _RAW_EVENT_TYPE_FIELDS = {
+        "polar": "type",
+        "paypal": "event_type",
+        "paddle": "event_type",
+    }
+
+    @classmethod
+    def _extract_raw_event_type(cls, payment_provider: str, payload: dict) -> str | None:
+        if payment_provider == "lemonsqueezy":
+            meta = payload.get("meta")
+            if isinstance(meta, dict):
+                event_name = meta.get("event_name")
+                return event_name if isinstance(event_name, str) and event_name else None
+            return None
+        if payment_provider == "kofi":
+            # Ko-fi's form-encoded body has a single 'data' field holding a
+            # JSON string -- the payload_snapshot dict() pass in post() below
+            # never unwraps it, so decode it here to reach the 'type' field.
+            raw_data = payload.get("data")
+            if not isinstance(raw_data, str):
+                return None
+            try:
+                parsed = json.loads(raw_data)
+            except json.JSONDecodeError:
+                return None
+            if not isinstance(parsed, dict):
+                return None
+            event_type = parsed.get("type")
+            return event_type if isinstance(event_type, str) and event_type else None
+        field = cls._RAW_EVENT_TYPE_FIELDS.get(payment_provider)
+        if not field:
+            return None
+        value = payload.get(field)
+        return value if isinstance(value, str) and value else None
 
     @staticmethod
     def _redacted_endpoint_path(tenant_slug: str, payment_provider: str) -> str:
@@ -129,17 +191,30 @@ class WebhookIngestView(APIView):
                 payload_snapshot = json.loads(request.body.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
                 payload_snapshot = None
+        elif request.content_type == "application/x-www-form-urlencoded":
+            # Gumroad (and some other providers) POST form-encoded, not JSON.
+            # Decode it too so the Events UI can show something other than
+            # "null" for debugging -- this is display-only, the real
+            # processing pipeline always re-parses payload_raw itself.
+            try:
+                from urllib.parse import parse_qsl
+
+                pairs = parse_qsl(request.body.decode("utf-8"), keep_blank_values=True)
+                payload_snapshot = dict(pairs) if pairs else None
+            except UnicodeDecodeError:
+                payload_snapshot = None
 
         # Skip storing events whose type we don't support — return 200 immediately
         # to silence retries and avoid polluting the DB with irrelevant records.
         if isinstance(payload_snapshot, dict):
-            event_type = payload_snapshot.get("type")
-            if isinstance(event_type, str) and event_type:
+            raw_event_type = self._extract_raw_event_type(payment_provider, payload_snapshot)
+            if raw_event_type:
                 try:
                     adapter = wiring.get_payment_adapter(payment_provider)
-                    if not adapter.supports_event(event_type):
+                    supports_raw_event_type = getattr(adapter, "supports_raw_event_type", None)
+                    if supports_raw_event_type and not supports_raw_event_type(raw_event_type):
                         return Response(
-                            {"status": "ignored", "event_type": event_type},
+                            {"status": "ignored", "event_type": raw_event_type},
                             status=status.HTTP_200_OK,
                         )
                 except Exception:
@@ -182,6 +257,20 @@ class WebhookIngestView(APIView):
         )
 
 
+def _integration_provider_key_allowlist() -> dict[str, set[str]]:
+    """Maps each valid IntegrationConfig provider_key to the provider_type
+    values it accepts. Payment providers each get their own slot (keyed by
+    their own name) so multiple payment providers can be connected on the
+    same tenant simultaneously without overwriting each other's config --
+    only "cms" remains a single shared slot, since a tenant has exactly one
+    CMS.
+    """
+    allowed: dict[str, set[str]] = {"cms": wiring.get_supported_cms_provider_keys()}
+    for key in wiring.get_supported_payment_provider_keys():
+        allowed[key] = {key}
+    return allowed
+
+
 class TenantIntegrationConfigView(APIView):
     authentication_classes = [FirebaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
@@ -201,20 +290,29 @@ class TenantIntegrationConfigView(APIView):
 
     def put(self, request: Request, tenant_slug: str, provider_key: str) -> Response:
         self._require_tenant_context(request, tenant_slug)
-        if provider_key not in {"payment", "cms"}:
+        allowed_provider_types = _integration_provider_key_allowlist()
+        if provider_key not in allowed_provider_types:
             return Response(
                 {"detail": "Unsupported provider key."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Only enforce on a genuinely new payment-provider connection -- "cms"
+        # is a single always-present slot, not a plan-limited resource, and
+        # updating an already-connected provider shouldn't be blocked.
+        is_new_connection = not IntegrationConfig.objects.filter(
+            tenant_slug=tenant_slug, provider_key=provider_key
+        ).exists()
+        if provider_key != "cms" and is_new_connection:
+            limit_response = _enforce_resource_limit(tenant_slug, "payment providers")
+            if limit_response is not None:
+                return limit_response
+
         serializer = IntegrationConfigSerializer(
             data=request.data,
             context={
                 "provider_key": provider_key,
-                "allowed_provider_types": {
-                    "payment": wiring.get_supported_payment_provider_keys(),
-                    "cms": wiring.get_supported_cms_provider_keys(),
-                },
+                "allowed_provider_types": allowed_provider_types,
             },
         )
         serializer.is_valid(raise_exception=True)
@@ -319,7 +417,7 @@ class TenantIntegrationCredentialsView(APIView):
 
     def put(self, request: Request, tenant_slug: str, provider_key: str) -> Response:
         self._require_tenant_context(request, tenant_slug)
-        if provider_key not in {"payment", "cms"}:
+        if provider_key not in _integration_provider_key_allowlist():
             return Response(
                 {"detail": "Unsupported provider key."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -383,13 +481,31 @@ class TenantIntegrationCredentialsView(APIView):
                 },
             )
 
-        return Response(
-            {
-                "provider_key": provider_key,
-                "provider_type": integration.provider_type,
-                "credential_ref": metadata["credential_ref"],
-            }
-        )
+        webhook_registration: dict[str, object] | None = None
+        if integration.provider_type == "gumroad" and "access_token" in merged:
+            # Gumroad has no dashboard page to paste a webhook URL into --
+            # register it for the user automatically instead of requiring an
+            # API call a real end user would never make.
+            from payglue_backend.webhooks.adapters.gumroad import GumroadPaymentAdapter
+
+            try:
+                adapter = GumroadPaymentAdapter(credential_provider=provider)
+                webhook_registration = adapter.register_webhook_subscriptions(
+                    tenant_ctx,
+                    f"https://api.payglue.io/webhooks/gumroad?tenant={tenant_slug}",
+                )
+            except Exception as exc:
+                logger.warning("gumroad: webhook auto-registration failed: %s", exc)
+                webhook_registration = {"registered": [], "failed": ["sale", "cancellation", "subscription_ended"]}
+
+        response_body = {
+            "provider_key": provider_key,
+            "provider_type": integration.provider_type,
+            "credential_ref": metadata["credential_ref"],
+        }
+        if webhook_registration is not None:
+            response_body["webhook_registration"] = webhook_registration
+        return Response(response_body)
 
 
 class TenantIntegrationHealthView(APIView):
@@ -444,14 +560,14 @@ class TenantIntegrationHealthView(APIView):
 
         checked_at = timezone.now().isoformat()
 
-        if integration.provider_key not in {"payment", "cms"}:
+        if integration.provider_key not in _integration_provider_key_allowlist():
             return Response(
                 {"detail": "Unsupported provider key."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         adapter = None
-        if integration.provider_key == "payment":
+        if integration.provider_key in wiring.get_supported_payment_provider_keys():
             if (
                 integration.provider_type
                 not in wiring.get_supported_payment_provider_keys()
@@ -568,10 +684,17 @@ class CheckHeaderScriptView(APIView):
                 return Response({"installed": False, "error": "Ghost site URL must point to a public host.", "url": None})
         root_url = f"{parsed.scheme}://{parsed.netloc}/"
 
-        import requests as _requests
+        import urllib.request
+
+        class _NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+
         try:
-            resp = _requests.get(root_url, timeout=8, allow_redirects=False, headers={"User-Agent": "PayGlue-ScriptCheck/1.0"})
-            html = resp.text
+            opener = urllib.request.build_opener(_NoRedirect)
+            req = urllib.request.Request(root_url, headers={"User-Agent": "PayGlue-ScriptCheck/1.0"})
+            with opener.open(req, timeout=8) as resp:
+                html = resp.read().decode("utf-8", errors="replace")
         except Exception as e:
             return Response({"installed": False, "error": f"Could not reach {root_url}: {e}", "url": root_url})
 
@@ -648,7 +771,7 @@ _PAYWALL_JS = r"""(function(){
     function render(){
       overlay.innerHTML='';
       var modal=document.createElement('div');
-      modal.style.cssText='background:#fff;border-radius:16px;max-width:900px;width:100%;padding:2rem;position:relative;margin:auto;';
+      modal.style.cssText='background:#fff;border-radius:16px;max-width:900px;width:100%;padding:clamp(1rem,4vw,2rem);position:relative;margin:auto;';
       var closeBtn=document.createElement('button');
       closeBtn.innerHTML='&times;';closeBtn.setAttribute('aria-label','Close');
       closeBtn.style.cssText='position:absolute;top:1rem;right:1rem;background:none;border:none;font-size:1.75rem;cursor:pointer;color:#64748b;line-height:1;padding:0;';
@@ -663,9 +786,8 @@ _PAYWALL_JS = r"""(function(){
         yBtn.onclick=function(){isYearly=true;render();};
         tWrap.appendChild(mBtn);tWrap.appendChild(yBtn);modal.appendChild(tWrap);
       }
-      var cols=Math.min(tbl.tiers.length,3);
       var grid=document.createElement('div');
-      grid.style.cssText='display:grid;grid-template-columns:repeat('+cols+',1fr);gap:1rem;';
+      grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;';
       tbl.tiers.forEach(function(tier){
         var hl=!!tier.highlighted;
         var card=document.createElement('div');
@@ -681,11 +803,17 @@ _PAYWALL_JS = r"""(function(){
         var priceEl=document.createElement('div');priceEl.style.cssText='margin-bottom:0.5rem;';
         var _syms={'EUR':'€','USD':'$','GBP':'£','CHF':'CHF '};
         var _sym=_syms[tbl.currency||'EUR']||'€';
-        if(tier.cta_type==='free_signup'){priceEl.innerHTML='<span style="font-size:1.6em;font-weight:700;color:#0f172a;">Free</span>';}
+        if(tier.cta_type==='free_signup'){var _fr=document.createElement('span');_fr.textContent='Free';_fr.style.cssText='font-size:1.6em;font-weight:700;color:#0f172a;';priceEl.appendChild(_fr);}
         else{
           var price=isYearly?tier.price_yearly:tier.price_monthly;
           var period=tier.period;
-          if(price!==null&&price!==undefined&&price!==''){priceEl.innerHTML='<span style="font-size:1.6em;font-weight:700;color:#0f172a;">'+_sym+price+'</span>'+(period?'<span style="font-size:0.8em;color:#94a3b8;">/'+period+'</span>':'');}
+          // price/period are free-text tenant config (CharField) -- build via
+          // textContent, never innerHTML, so a value like "<img onerror=...>"
+          // can't execute on the creator's site (matches the rest of this embed).
+          if(price!==null&&price!==undefined&&price!==''){
+            var _pa=document.createElement('span');_pa.textContent=_sym+price;_pa.style.cssText='font-size:1.6em;font-weight:700;color:#0f172a;';priceEl.appendChild(_pa);
+            if(period){var _pb=document.createElement('span');_pb.textContent='/'+period;_pb.style.cssText='font-size:0.8em;color:#94a3b8;';priceEl.appendChild(_pb);}
+          }
         }
         card.appendChild(priceEl);
         if(tier.description){var d=document.createElement('div');d.textContent=tier.description;d.style.cssText='font-size:0.78em;color:#64748b;margin-bottom:0.75rem;line-height:1.4;';card.appendChild(d);}
@@ -853,6 +981,10 @@ class PaywallConfigListView(APIView):
         return Response([_serialize_paywall(c) for c in configs])
 
     def post(self, request: Request, tenant_slug: str) -> Response:
+        limit_response = _enforce_resource_limit(tenant_slug, "paywalls")
+        if limit_response is not None:
+            return limit_response
+
         data = request.data
         cfg = PaywallConfig.objects.create(
             id=secrets.token_urlsafe(12),
@@ -1010,6 +1142,10 @@ class BuyButtonListView(APIView):
         return Response([_serialize_button(b) for b in buttons])
 
     def post(self, request: Request, tenant_slug: str) -> Response:
+        limit_response = _enforce_resource_limit(tenant_slug, "buy buttons")
+        if limit_response is not None:
+            return limit_response
+
         data = request.data
         btn = BuyButton.objects.create(
             id=secrets.token_urlsafe(12),
@@ -1024,6 +1160,8 @@ class BuyButtonListView(APIView):
             border_radius=data.get("border_radius") or "md",
             width=data.get("width") or "auto",
             alignment=data.get("alignment") or "left",
+            product_provider=data.get("product_provider", ""),
+            product_id=data.get("product_id", ""),
         )
         return Response(_serialize_button(btn), status=status.HTTP_201_CREATED)
 
@@ -1041,7 +1179,7 @@ class BuyButtonDetailView(APIView):
 
     def patch(self, request: Request, tenant_slug: str, button_id: str) -> Response:
         btn = self._get_button(tenant_slug, button_id)
-        for field in ("name", "label", "description", "target_url", "target", "bg_color", "text_color", "border_radius", "width", "alignment"):
+        for field in ("name", "label", "description", "target_url", "target", "bg_color", "text_color", "border_radius", "width", "alignment", "product_provider", "product_id"):
             if field in request.data:
                 setattr(btn, field, request.data[field])
         btn.save()
@@ -1091,6 +1229,8 @@ def _serialize_button(btn: BuyButton) -> dict:
         "border_radius": btn.border_radius,
         "width": btn.width,
         "alignment": btn.alignment,
+        "product_provider": btn.product_provider,
+        "product_id": btn.product_id,
         "created_at": btn.created_at.isoformat(),
         "updated_at": btn.updated_at.isoformat(),
     }
@@ -1360,7 +1500,7 @@ _PRICING_TABLE_JS = r"""(function(){
     var overlay=document.createElement('div');
     overlay.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);padding:1rem;box-sizing:border-box;';
     var modal=document.createElement('div');
-    modal.style.cssText='position:relative;background:#fff;border-radius:16px;width:100%;max-width:960px;max-height:90vh;overflow-y:auto;padding:1rem 1.25rem 1.75rem;box-sizing:border-box;box-shadow:0 25px 60px rgba(0,0,0,.3);';
+    modal.style.cssText='position:relative;background:#fff;border-radius:16px;width:100%;max-width:960px;max-height:90vh;overflow-y:auto;padding:1rem clamp(0.75rem,4vw,1.25rem) 1.75rem;box-sizing:border-box;box-shadow:0 25px 60px rgba(0,0,0,.3);';
     var hdr=document.createElement('div');
     hdr.style.cssText='display:flex;justify-content:flex-end;margin-bottom:.25rem;';
     var closeBtn=document.createElement('button');
@@ -1400,7 +1540,7 @@ _PRICING_TABLE_JS = r"""(function(){
     function buildHTML(){
       var accent=cfg.accent_color||'#4f46e5';
       var css='*{box-sizing:border-box;}'
-        +'.pg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:16px;color:#1e293b;padding:24px 32px;max-width:1200px;margin-left:auto;margin-right:auto;}'
+        +'.pg{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:16px;color:#1e293b;padding:24px clamp(12px,4vw,32px);max-width:1200px;margin-left:auto;margin-right:auto;}'
         +'.pg-tg{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:32px;}'
         +'.pg-tl{font-size:16px;color:#94a3b8;cursor:pointer;transition:color .15s;}'
         +'.pg-tl.on{color:'+accent+';font-weight:600;}'
@@ -1522,6 +1662,8 @@ def _serialize_pricing_tier(tier: PricingTier) -> dict:
         "cta_label": tier.cta_label,
         "cta_url": tier.cta_url,
         "features": tier.features,
+        "product_provider": tier.product_provider,
+        "product_id": tier.product_id,
     }
 
 
@@ -1543,6 +1685,8 @@ def _replace_tiers(table: PricingTable, tiers_data: list) -> None:
             cta_label=td.get("cta_label") or "Get started",
             cta_url=td.get("cta_url", ""),
             features=td.get("features") or [],
+            product_provider=td.get("product_provider") or "",
+            product_id=td.get("product_id") or "",
         )
 
 
@@ -1563,6 +1707,10 @@ class PricingTableListView(APIView):
         return Response([_serialize_pricing_table(t) for t in tables])
 
     def post(self, request: Request, tenant_slug: str) -> Response:
+        limit_response = _enforce_resource_limit(tenant_slug, "pricing tables")
+        if limit_response is not None:
+            return limit_response
+
         data = request.data
         table = PricingTable.objects.create(
             id=secrets.token_urlsafe(12),
@@ -1623,3 +1771,46 @@ class PricingTablePublicView(APIView):
         })
         resp["Access-Control-Allow-Origin"] = "*"
         return resp
+
+
+class TenantMappingTestView(APIView):
+    """PG-202: fire a synthetic event for one mapping at a test email through
+    the real resolve + Ghost-apply pipeline, so a creator can verify a
+    connection end to end without a real purchase. Owner/Admin only."""
+
+    authentication_classes = [FirebaseBearerAuthentication]
+    permission_classes = [TenantReadOwnerAdminWrite]
+
+    def post(self, request: Request, tenant_slug: str, mapping_id: int) -> Response:
+        try:
+            mapping = ProductMapping.objects.get(id=mapping_id, tenant_slug=tenant_slug)
+        except ProductMapping.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        test_email = (request.data.get("test_email") or "").strip()
+        try:
+            validate_email(test_email)
+        except ValidationError:
+            return Response(
+                {"detail": "A valid test_email is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        result = run_mapping_test(mapping, test_email)
+
+        tenant = Tenant.objects.filter(slug=tenant_slug).only("id").first()
+        if tenant is not None:
+            write_public_audit_event(
+                tenant=tenant,
+                actor_membership=resolve_tenant_membership(request),
+                event_type=PublicAuditEvent.EventType.TEST_EVENT_SENT,
+                target_type="product_mapping",
+                target_id=str(mapping.id),
+                metadata={
+                    "provider": mapping.payment_provider,
+                    "event_type": mapping.event_type,
+                    "ok": result["ok"],
+                },
+            )
+
+        return Response(result, status=status.HTTP_200_OK)

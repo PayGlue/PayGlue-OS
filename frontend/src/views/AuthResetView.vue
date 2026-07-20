@@ -49,12 +49,16 @@ const submit = async () => {
   isSaving.value = true
 
   const { error: authError } = await supabase.auth.updateUser({ password: password.value })
-  isSaving.value = false
 
   if (authError) {
+    isSaving.value = false
     error.value = authError.message || 'Something went wrong. Please try again.'
     return
   }
+  // Stay disabled (isSaving=true) through the redirect below -- a stray
+  // second click here would resubmit the same new password, which
+  // Supabase rejects as "New password should be different from the old
+  // password" since the first call already applied it.
   saved.value = true
   setTimeout(() => router.push('/login'), 2500)
 }

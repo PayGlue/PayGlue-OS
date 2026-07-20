@@ -1,21 +1,54 @@
 # Copyright (c) 2026 PayGlue by André Nünninghoff
 # Licensed under the Business Source License 1.1, see LICENSE.md
-from django.urls import path, re_path
+#
+# HAND-MAINTAINED in the OSS repo (sync script BACKEND_NEVER_SYNC_PATHS).
+# Identical to the private urls.py minus the admin-console routes. When the
+# private repo gains API routes, port them here by hand with each release.
+from django.urls import include, path, re_path
 
-from payglue_backend.authn.views import AccessValidateView, AuthInvitationValidateView, AuthSessionView, CheckoutInfoView
+from payglue_backend.authn.views import (
+    AccessValidateView,
+    AuthSessionView,
+    CheckoutInfoView,
+    CreemCheckoutWebhookView,
+    MfaBackupCodesView,
+    MfaBackupCodeVerifyView,
+    StepUpRequestView,
+    StepUpVerifyView,
+    DeleteAccountView,
+)
+from payglue_backend.http.health import (
+    CacheHealthView,
+    DatabaseHealthView,
+    OverallHealthView,
+    WorkerHealthView,
+)
 from payglue_backend.tenants.views import (
     BillingProfileView,
+    CreemCancelSubscriptionView,
+    CreemCheckoutSessionView,
+    CreemInvoicesView,
+    CreemProductsView,
+    PatreonProductsView,
+    CreemSubscriptionView,
+    GumroadProductsView,
     LemonSqueezyProductsView,
     LemonSqueezyStoresView,
+    PaddleProductsView,
     PayPalProductsView,
     PolarInvoicesView,
     PolarProductsView,
     PolarSubscriptionView,
+    OwnershipTransferActionView,
+    OwnershipTransferView,
+    ServicePinView,
+    SupportRequestView,
     TeamCollectionView,
     TeamMembershipDetailView,
     TenantCollectionView,
     TenantDetailView,
     TenantSlugCheckView,
+    TenantUsageView,
 )
 from payglue_backend.webhooks.views import (
     BuyButtonDetailView,
@@ -40,20 +73,34 @@ from payglue_backend.webhooks.views import (
     TenantIntegrationConfigView,
     TenantIntegrationCredentialsView,
     TenantIntegrationHealthView,
+    TenantMappingTestView,
     TenantProductMappingView,
     WebhookIngestView,
 )
 
 
 urlpatterns = [
-    path(
-        "api/v1/auth/invitation/validate",
-        AuthInvitationValidateView.as_view(),
-        name="auth-invitation-validate",
-    ),
+    path("health", OverallHealthView.as_view(), name="health-overall"),
+    path("health/db", DatabaseHealthView.as_view(), name="health-database"),
+    path("health/cache", CacheHealthView.as_view(), name="health-cache"),
+    path("health/worker", WorkerHealthView.as_view(), name="health-worker"),
     path("api/v1/auth/session", AuthSessionView.as_view(), name="auth-session"),
+    path(
+        "api/v1/auth/mfa/backup-codes",
+        MfaBackupCodesView.as_view(),
+        name="auth-mfa-backup-codes",
+    ),
+    path(
+        "api/v1/auth/mfa/backup-codes/verify",
+        MfaBackupCodeVerifyView.as_view(),
+        name="auth-mfa-backup-codes-verify",
+    ),
+    path("api/v1/auth/account", DeleteAccountView.as_view(), name="auth-account-delete"),
+    path("api/v1/auth/step-up/request", StepUpRequestView.as_view(), name="auth-step-up-request"),
+    path("api/v1/auth/step-up/verify", StepUpVerifyView.as_view(), name="auth-step-up-verify"),
     path("api/v1/auth/access/validate", AccessValidateView.as_view(), name="auth-access-validate"),
     path("api/v1/auth/access/checkout-info", CheckoutInfoView.as_view(), name="auth-access-checkout-info"),
+    path("api/v1/auth/webhooks/creem-checkout", CreemCheckoutWebhookView.as_view(), name="auth-creem-checkout-webhook"),
     path("api/v1/tenants", TenantCollectionView.as_view(), name="tenant-collection"),
     path("api/v1/tenants/slug-check", TenantSlugCheckView.as_view(), name="tenant-slug-check"),
     re_path(
@@ -77,6 +124,16 @@ urlpatterns = [
         name="tenant-team-collection",
     ),
     re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/team/ownership-transfer/?$",
+        OwnershipTransferView.as_view(),
+        name="tenant-ownership-transfer",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/team/ownership-transfer/action/?$",
+        OwnershipTransferActionView.as_view(),
+        name="tenant-ownership-transfer-action",
+    ),
+    re_path(
         r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/team/(?P<membership_id>\d+)/?$",
         TeamMembershipDetailView.as_view(),
         name="tenant-team-membership-detail",
@@ -90,6 +147,41 @@ urlpatterns = [
         r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/subscription/?$",
         PolarSubscriptionView.as_view(),
         name="tenant-billing-subscription",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/usage/?$",
+        TenantUsageView.as_view(),
+        name="tenant-billing-usage",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/creem-subscription/?$",
+        CreemSubscriptionView.as_view(),
+        name="tenant-billing-creem-subscription",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/creem-invoices/?$",
+        CreemInvoicesView.as_view(),
+        name="tenant-billing-creem-invoices",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/creem-checkout-session/?$",
+        CreemCheckoutSessionView.as_view(),
+        name="tenant-billing-creem-checkout-session",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/creem-cancel-subscription/?$",
+        CreemCancelSubscriptionView.as_view(),
+        name="tenant-billing-creem-cancel-subscription",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/service-pin/?$",
+        ServicePinView.as_view(),
+        name="tenant-service-pin",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/support/requests/?$",
+        SupportRequestView.as_view(),
+        name="tenant-support-requests",
     ),
     re_path(
         r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/invoices/?$",
@@ -117,6 +209,26 @@ urlpatterns = [
         name="tenant-billing-paypal-products",
     ),
     re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/gumroad-products/?$",
+        GumroadProductsView.as_view(),
+        name="tenant-billing-gumroad-products",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/paddle-products/?$",
+        PaddleProductsView.as_view(),
+        name="tenant-billing-paddle-products",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/creem-products/?$",
+        CreemProductsView.as_view(),
+        name="tenant-billing-creem-products",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/patreon-products/?$",
+        PatreonProductsView.as_view(),
+        name="tenant-billing-patreon-products",
+    ),
+    re_path(
         r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/integrations/(?P<provider_key>[a-z0-9_-]+)/credentials/?$",
         TenantIntegrationCredentialsView.as_view(),
         name="tenant-integration-credentials",
@@ -125,6 +237,11 @@ urlpatterns = [
         r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/mappings/?$",
         TenantProductMappingView.as_view(),
         name="tenant-product-mappings",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/mappings/(?P<mapping_id>\d+)/test/?$",
+        TenantMappingTestView.as_view(),
+        name="tenant-mapping-test",
     ),
     re_path(
         r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/events/?$",

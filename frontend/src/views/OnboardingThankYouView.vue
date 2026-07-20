@@ -19,13 +19,14 @@ const providerLabels: Record<string, string> = {
   paypal: 'PayPal',
   paddle: 'Paddle',
   gumroad: 'Gumroad',
+  kofi: 'Ko-fi',
 }
 
 const providerLabel = providerLabels[selectedProvider] ?? 'your payment provider'
 
 const continueSetup = () => {
   localStorage.setItem(`pg_ty_${tenantSlug}`, '1')
-  router.push(`/t/${tenantSlug}/integrations`)
+  router.push(`/t/${tenantSlug}/connection/${selectedProvider}`)
 }
 
 onMounted(() => {
@@ -48,7 +49,7 @@ onMounted(() => {
 
       <h1 class="mb-2 text-xl font-bold text-slate-900">You're in. Thank you.</h1>
       <p class="mb-6 text-sm leading-relaxed text-slate-500">
-        We built PayGlue because we needed it ourselves. You're one of the first — and that means a lot to us.
+        We built PayGlue because we needed it ourselves. You're one of the first, and that means a lot to us.
         If anything feels off, reply directly to your welcome email. It goes straight to us.
       </p>
 

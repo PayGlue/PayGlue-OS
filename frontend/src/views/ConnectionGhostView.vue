@@ -4,6 +4,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, computed, watch } from 'vue'
 import AppShell from '../components/AppShell.vue'
+import { PageHeader, UiCard, UiButton, FormField, ProviderLogo } from '../components/ui'
 import { ApiHttpError, getGhostStripeStatus, getIntegrationConfig, runIntegrationHealthCheck, setIntegrationCredentials, updateIntegrationConfig } from '../lib/api'
 import { useSessionStore } from '../stores/session'
 import type { IntegrationConfig, IntegrationHealthStatus } from '../types/api'
@@ -176,154 +177,156 @@ onMounted(load)
 
 <template>
   <AppShell>
-    <div class="space-y-4">
-      <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h1 class="text-lg font-semibold text-slate-900">Ghost CMS connection</h1>
-        <p class="mt-0.5 text-sm text-slate-500">Connect your Ghost instance via the Admin API to enable member sync.</p>
-        <p v-if="!canWrite" class="mt-2 text-xs text-amber-700">Your role can view but cannot modify this configuration.</p>
-        <p v-if="errorMessage" class="mt-2 text-sm text-rose-700">{{ errorMessage }}</p>
-      </section>
+    <div class="space-y-5">
+      <PageHeader title="Ghost CMS" description="Connect your Ghost instance via the Admin API to enable member sync.">
+        <template #actions>
+          <ProviderLogo provider="ghost" size="md" />
+        </template>
+      </PageHeader>
 
-      <p v-if="loading" class="text-sm text-slate-500 px-1">Loading...</p>
+      <p v-if="!canWrite" class="text-xs text-amber-600 dark:text-amber-400">Your role can view but cannot modify this configuration.</p>
+      <p v-if="errorMessage" class="text-sm text-rose-600 dark:text-rose-400">{{ errorMessage }}</p>
 
-      <section v-if="!loading" class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div class="grid gap-6 lg:grid-cols-2">
-          <!-- Left: form -->
-          <div class="space-y-3">
-            <div>
-              <span class="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Ghost URL</span>
-              <input
-                v-model="form.apiBaseUrl"
-                type="url"
-                placeholder="https://www.yourblog.com"
-                :disabled="!canWrite"
-                class="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
-              />
-            </div>
+      <p v-if="loading" class="px-1 text-sm text-slate-500 dark:text-slate-400">Loading...</p>
+
+      <div v-if="!loading" class="grid gap-5 lg:grid-cols-3">
+        <!-- Left: form -->
+        <UiCard class="lg:col-span-2">
+          <div class="space-y-4">
+            <FormField label="Ghost URL">
+              <input v-model="form.apiBaseUrl" type="url" placeholder="https://www.yourblog.com" :disabled="!canWrite" class="pg-input" />
+            </FormField>
 
             <template v-if="config.enabled && !editingCredentials">
-              <div>
-                <span class="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Content API key</span>
-                <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-mono text-sm tracking-widest text-slate-400">••••••••••••</div>
-              </div>
-              <div>
-                <span class="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Admin API key</span>
-                <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-mono text-sm tracking-widest text-slate-400">••••••••••••</div>
-              </div>
-              <button v-if="canWrite" type="button" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50" @click="editingCredentials = true">
-                Update credentials
-              </button>
+              <FormField label="Content API key">
+                <div class="pg-input pg-dots">••••••••••••</div>
+              </FormField>
+              <FormField label="Admin API key">
+                <div class="pg-input pg-dots">••••••••••••</div>
+              </FormField>
+              <UiButton v-if="canWrite" size="sm" variant="default" @click="editingCredentials = true">Update credentials</UiButton>
             </template>
 
             <template v-else>
-              <div>
-                <span class="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Content API key</span>
-                <input v-model="form.contentApiKey" type="password" placeholder="acac4d839f6cfa04b907a04cf4..." autocomplete="off" :disabled="!canWrite" class="w-full rounded-lg border border-slate-300 px-3 py-1.5 font-mono text-sm" />
-              </div>
-              <div>
-                <span class="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Admin API key</span>
-                <input v-model="form.adminApiKey" type="password" placeholder="6a3145b0e72c430001fdcd39:f0533b2b..." autocomplete="off" :disabled="!canWrite" class="w-full rounded-lg border border-slate-300 px-3 py-1.5 font-mono text-sm" />
-              </div>
+              <FormField label="Content API key">
+                <input v-model="form.contentApiKey" type="password" placeholder="acac4d839f6cfa04b907a04cf4..." autocomplete="off" :disabled="!canWrite" class="pg-input pg-mono" />
+              </FormField>
+              <FormField label="Admin API key">
+                <input v-model="form.adminApiKey" type="password" placeholder="6a3145b0e72c430001fdcd39:f0533b2b..." autocomplete="off" :disabled="!canWrite" class="pg-input pg-mono" />
+              </FormField>
             </template>
 
             <div class="flex items-center gap-1.5 text-xs">
-              <span v-if="config.enabled" class="inline-block h-2 w-2 rounded-full bg-emerald-500"></span>
-              <span v-if="config.enabled" class="font-medium text-emerald-700">Connected</span>
-              <span v-else class="inline-block h-2 w-2 rounded-full bg-rose-500"></span>
-              <span v-if="!config.enabled" class="font-medium text-rose-600">Not connected</span>
+              <span class="inline-block h-2 w-2 rounded-full" :class="config.enabled ? 'bg-emerald-500' : 'bg-rose-500'"></span>
+              <span v-if="config.enabled" class="font-medium text-emerald-600 dark:text-emerald-400">Connected</span>
+              <span v-else class="font-medium text-rose-600 dark:text-rose-400">Not connected</span>
             </div>
 
             <div class="flex flex-wrap gap-2 pt-1">
-              <button type="button" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-40" :disabled="!canWrite || saving" @click="save">
+              <UiButton variant="primary" :disabled="!canWrite || saving" @click="save">
                 {{ saving ? 'Saving...' : saved ? 'Saved!' : 'Save credentials' }}
-              </button>
-              <button type="button" class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50" :disabled="!canWrite || healthChecking" @click="runHealthCheck">
+              </UiButton>
+              <UiButton variant="default" :disabled="!canWrite || healthChecking" @click="runHealthCheck">
                 {{ healthChecking ? 'Checking...' : 'Run health check' }}
-              </button>
+              </UiButton>
             </div>
 
-            <div v-if="latestHealth" class="rounded-lg border p-3 text-sm" :class="latestHealth.ok ? 'border-emerald-200 bg-emerald-50' : 'border-rose-200 bg-rose-50'">
-              <p class="font-semibold" :class="latestHealth.ok ? 'text-emerald-800' : 'text-rose-800'">{{ latestHealth.ok ? 'Connection established' : 'Connection failed' }}</p>
-              <p class="mt-0.5 text-xs" :class="latestHealth.ok ? 'text-emerald-700' : 'text-rose-700'">{{ latestHealth.message }}</p>
+            <div
+              v-if="latestHealth"
+              class="rounded-xl border p-3 text-sm"
+              :class="latestHealth.ok ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/10' : 'border-rose-200 bg-rose-50 dark:border-rose-500/30 dark:bg-rose-500/10'"
+            >
+              <p class="font-semibold" :class="latestHealth.ok ? 'text-emerald-800 dark:text-emerald-300' : 'text-rose-800 dark:text-rose-300'">{{ latestHealth.ok ? 'Connection established' : 'Connection failed' }}</p>
+              <p class="mt-0.5 text-xs" :class="latestHealth.ok ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'">{{ latestHealth.message }}</p>
             </div>
           </div>
+        </UiCard>
 
-          <!-- Right: setup guide -->
-          <div class="space-y-2">
-            <p class="text-xs font-semibold uppercase tracking-widest text-indigo-600">How to set up</p>
-            <div class="rounded-lg border border-slate-100 bg-slate-50 p-3">
-              <p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Step 1</p>
-              <p class="mt-0.5 text-sm font-medium text-slate-800">Open Ghost admin</p>
-              <p class="mt-0.5 text-xs text-slate-500">In your Ghost dashboard, go to <strong>Settings → Integrations</strong> and click <strong>Add custom integration</strong>.</p>
+        <!-- Right: setup guide -->
+        <UiCard title="How to set up" description="3 steps.">
+          <div class="space-y-2.5">
+            <div class="rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/40">
+              <div class="flex items-start gap-2.5">
+                <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[11px] font-bold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">1</span>
+                <div class="min-w-0">
+                  <p class="text-sm font-semibold text-slate-800 dark:text-slate-100">Open Ghost admin</p>
+                  <p class="mt-0.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">In your Ghost dashboard, go to <strong>Settings → Integrations</strong> and click <strong>Add custom integration</strong>.</p>
+                </div>
+              </div>
             </div>
-            <div class="rounded-lg border border-slate-100 bg-slate-50 p-3">
-              <p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Step 2</p>
-              <p class="mt-0.5 text-sm font-medium text-slate-800">Copy the API keys</p>
-              <p class="mt-0.5 text-xs text-slate-500">Copy the <strong>Content API Key</strong> and <strong>Admin API Key</strong> shown in the integration detail view.</p>
+            <div class="rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/40">
+              <div class="flex items-start gap-2.5">
+                <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[11px] font-bold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">2</span>
+                <div class="min-w-0">
+                  <p class="text-sm font-semibold text-slate-800 dark:text-slate-100">Copy the API keys</p>
+                  <p class="mt-0.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">Copy the <strong>Content API Key</strong> and <strong>Admin API Key</strong> shown in the integration detail view.</p>
+                </div>
+              </div>
             </div>
-            <div class="rounded-lg border border-slate-100 bg-slate-50 p-3">
-              <p class="text-xs font-semibold uppercase tracking-wide text-slate-400">Step 3</p>
-              <p class="mt-0.5 text-sm font-medium text-slate-800">Save and test</p>
-              <p class="mt-0.5 text-xs text-slate-500">Paste both keys above, add your Ghost URL, click <strong>Save credentials</strong>, then run a health check to verify.</p>
+            <div class="rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/40">
+              <div class="flex items-start gap-2.5">
+                <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[11px] font-bold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">3</span>
+                <div class="min-w-0">
+                  <p class="text-sm font-semibold text-slate-800 dark:text-slate-100">Save and test</p>
+                  <p class="mt-0.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">Paste both keys above, add your Ghost URL, click <strong>Save credentials</strong>, then run a health check to verify.</p>
+                </div>
+              </div>
             </div>
-            <a :href="DOCS_URL" target="_blank" rel="noopener" class="inline-block pt-1 text-xs text-blue-700 hover:underline">Full setup guide →</a>
+            <a :href="DOCS_URL" target="_blank" rel="noopener" class="inline-block pt-1 text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400">Full setup guide →</a>
           </div>
-        </div>
-      </section>
+        </UiCard>
+      </div>
 
       <!-- Stripe status section: shown once Ghost is connected -->
-      <section v-if="!loading && config.enabled" class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div class="flex items-start justify-between gap-4">
-          <div>
-            <h2 class="text-base font-semibold text-slate-900">Stripe in Ghost</h2>
-            <p class="mt-0.5 text-sm text-slate-500">
-              PayGlue checks your Ghost blog for a Stripe connection. This determines how members are created after a purchase.
-            </p>
+      <UiCard v-if="!loading && config.enabled">
+        <template #header>
+          <div class="min-w-0">
+            <h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">Stripe in Ghost</h2>
+            <p class="mt-0.5 text-xs text-slate-500 dark:text-slate-400">PayGlue checks your Ghost blog for a Stripe connection. This determines how members are created after a purchase.</p>
           </div>
-          <span v-if="stripeStatusLoading" class="mt-0.5 text-xs text-slate-400 whitespace-nowrap">Checking...</span>
-        </div>
+        </template>
+        <template #actions>
+          <span v-if="stripeStatusLoading" class="whitespace-nowrap text-xs text-slate-400 dark:text-slate-500">Checking...</span>
+        </template>
 
-        <div v-if="!stripeStatusLoading && stripeStatus" class="mt-4 space-y-3">
+        <div v-if="!stripeStatusLoading && stripeStatus" class="space-y-3">
           <!-- Connected -->
-          <div v-if="stripeStatus.connected" class="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
-            <span class="h-2.5 w-2.5 rounded-full bg-emerald-500 shrink-0"></span>
+          <div v-if="stripeStatus.connected" class="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+            <span class="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500"></span>
             <div>
-              <p class="text-sm font-medium text-emerald-800">Stripe connected in Ghost</p>
-              <p v-if="stripeStatus.display_name" class="text-xs text-emerald-700 mt-0.5">Account: {{ stripeStatus.display_name }}</p>
-              <p class="text-xs text-emerald-700 mt-0.5">Members who purchase will receive full access via a complimentary subscription.</p>
+              <p class="text-sm font-medium text-emerald-800 dark:text-emerald-300">Stripe connected in Ghost</p>
+              <p v-if="stripeStatus.display_name" class="mt-0.5 text-xs text-emerald-700 dark:text-emerald-400">Account: {{ stripeStatus.display_name }}</p>
+              <p class="mt-0.5 text-xs text-emerald-700 dark:text-emerald-400">Members who purchase will receive full access via a complimentary subscription.</p>
             </div>
           </div>
 
           <!-- Not connected -->
-          <div v-else class="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+          <div v-else class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-500/30 dark:bg-amber-500/10">
             <div class="flex items-start gap-2">
-              <span class="mt-0.5 h-2.5 w-2.5 rounded-full bg-amber-400 shrink-0"></span>
+              <span class="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-400"></span>
               <div>
-                <p class="text-sm font-medium text-amber-800">No Stripe connection found in Ghost</p>
-                <p class="text-xs text-amber-700 mt-0.5">
-                  Members who purchase will be added as free members with a label. Native Ghost content gating will not apply.
-                  A PayGlue JS snippet can handle access control instead.
-                </p>
+                <p class="text-sm font-medium text-amber-800 dark:text-amber-300">No Stripe connection found in Ghost</p>
+                <p class="mt-0.5 text-xs text-amber-700 dark:text-amber-400">Members who purchase will be added as free members with a label. Native Ghost content gating will not apply. A PayGlue JS snippet can handle access control instead.</p>
               </div>
             </div>
-            <div class="mt-3 rounded-lg border border-amber-200 bg-white p-3 space-y-2">
-              <p class="text-xs font-semibold uppercase tracking-wide text-amber-700">How to connect Stripe in Ghost</p>
-              <div class="flex gap-2 text-xs text-slate-600">
-                <span class="font-semibold text-slate-400 shrink-0">1.</span>
+            <div class="mt-3 space-y-2 rounded-xl border border-amber-200 bg-white p-3 dark:border-amber-500/30 dark:bg-slate-900">
+              <p class="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">How to connect Stripe in Ghost</p>
+              <div class="flex gap-2 text-xs text-slate-600 dark:text-slate-300">
+                <span class="shrink-0 font-semibold text-slate-400 dark:text-slate-500">1.</span>
                 <span>In your Ghost Admin, go to <strong>Settings</strong> and open <strong>Membership</strong>.</span>
               </div>
-              <div class="flex gap-2 text-xs text-slate-600">
-                <span class="font-semibold text-slate-400 shrink-0">2.</span>
+              <div class="flex gap-2 text-xs text-slate-600 dark:text-slate-300">
+                <span class="shrink-0 font-semibold text-slate-400 dark:text-slate-500">2.</span>
                 <span>Click <strong>Connect with Stripe</strong> and follow the OAuth flow. No API keys needed.</span>
               </div>
-              <div class="flex gap-2 text-xs text-slate-600">
-                <span class="font-semibold text-slate-400 shrink-0">3.</span>
+              <div class="flex gap-2 text-xs text-slate-600 dark:text-slate-300">
+                <span class="shrink-0 font-semibold text-slate-400 dark:text-slate-500">3.</span>
                 <span>Once connected, come back here and refresh. PayGlue will automatically detect the connection.</span>
               </div>
             </div>
           </div>
         </div>
-      </section>
+      </UiCard>
     </div>
   </AppShell>
 </template>

@@ -116,7 +116,7 @@ const deleteOrg = async () => {
   const slug = session.activeTenantSlug
   if (!slug || !session.idToken) return
   if (deleteConfirmSlug.value !== slug) {
-    deleteError.value = 'Organization name does not match.'
+    deleteError.value = 'Publication name does not match.'
     return
   }
   deleteLoading.value = true
@@ -134,7 +134,7 @@ const deleteOrg = async () => {
       await router.push('/tenant/create')
     }
   } catch (e) {
-    deleteError.value = e instanceof Error ? e.message : 'Could not delete organization.'
+    deleteError.value = e instanceof Error ? e.message : 'Could not delete publication.'
   } finally {
     deleteLoading.value = false
   }
@@ -145,9 +145,9 @@ const deleteOrg = async () => {
   <AppShell>
     <div class="space-y-6">
       <!-- Slug settings -->
-      <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h1 class="text-xl font-semibold text-slate-900">Organization</h1>
-        <p class="mt-1 text-sm text-slate-500">Your organization identifier. Changing the slug updates all webhook URLs.</p>
+      <section class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <h1 class="text-xl font-semibold text-slate-900 dark:text-slate-100">Publication</h1>
+        <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Your publication identifier. Changing the slug updates all webhook URLs.</p>
 
         <!-- Two-column layout when slug changed: input left, warning right -->
         <div class="mt-4" :class="slugChanged ? 'grid grid-cols-1 gap-6 lg:grid-cols-2' : ''">
@@ -155,59 +155,59 @@ const deleteOrg = async () => {
           <div>
             <div class="max-w-sm lg:max-w-none">
               <label class="block">
-                <span class="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Slug (URL identifier)</span>
+                <span class="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Slug (URL identifier)</span>
                 <input
                   v-model="slugInput"
                   type="text"
                   :disabled="!isOwner"
                   class="w-full rounded-lg border px-3 py-2 text-sm font-mono transition-colors"
-                  :class="slugChanged ? 'border-amber-400 bg-amber-50 focus:outline-none focus:ring-1 focus:ring-amber-400' : 'border-slate-300'"
+                  :class="slugChanged ? 'border-amber-400 bg-amber-50 dark:bg-amber-500/10 focus:outline-none focus:ring-1 focus:ring-amber-400' : 'border-slate-300 dark:border-slate-700'"
                 />
               </label>
-              <p class="mt-1 text-xs text-slate-400">Lowercase letters, numbers, hyphens only.</p>
+              <p class="mt-1 text-xs text-slate-400 dark:text-slate-500">Lowercase letters, numbers, hyphens only.</p>
             </div>
 
             <!-- Slug availability indicator -->
             <div v-if="slugChanged" class="mt-2 max-w-sm lg:max-w-none">
               <div
                 class="flex items-center justify-between rounded-lg border px-3 py-2 text-sm font-mono"
-                :class="checkingSlug ? 'border-slate-200 bg-slate-50 text-slate-400'
-                  : !slugValid ? 'border-rose-200 bg-rose-50 text-slate-500'
-                  : slugAvailable === true ? 'border-emerald-300 bg-emerald-50 text-slate-700'
-                  : slugAvailable === false ? 'border-rose-300 bg-rose-50 text-slate-700'
-                  : 'border-slate-200 bg-slate-50 text-slate-400'"
+                :class="checkingSlug ? 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 text-slate-400 dark:text-slate-500'
+                  : !slugValid ? 'border-rose-200 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-500/10 text-slate-500 dark:text-slate-400'
+                  : slugAvailable === true ? 'border-emerald-300 bg-emerald-50 dark:bg-emerald-500/10 text-slate-700 dark:text-slate-200'
+                  : slugAvailable === false ? 'border-rose-300 bg-rose-50 dark:bg-rose-500/10 text-slate-700 dark:text-slate-200'
+                  : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 text-slate-400 dark:text-slate-500'"
               >
                 <span>app.payglue.io/t/<strong>{{ slugInput.trim() }}</strong></span>
-                <span v-if="checkingSlug" class="text-xs text-slate-400">Checking...</span>
+                <span v-if="checkingSlug" class="text-xs text-slate-400 dark:text-slate-500">Checking...</span>
                 <span v-else-if="!slugValid" class="text-xs font-semibold text-rose-500">Invalid</span>
-                <span v-else-if="slugAvailable === true" class="text-xs font-semibold text-emerald-600">Available</span>
+                <span v-else-if="slugAvailable === true" class="text-xs font-semibold text-emerald-600 dark:text-emerald-400">Available</span>
                 <span v-else-if="slugAvailable === false" class="text-xs font-semibold text-rose-500">Taken</span>
               </div>
             </div>
           </div>
 
-          <!-- Right: warning box — only when slug changed -->
-          <div v-if="slugChanged" class="rounded-xl border-2 border-amber-400 bg-amber-50 p-4">
+          <!-- Right: warning box -- only when slug changed -->
+          <div v-if="slugChanged" class="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-500/10 p-4">
             <div class="flex items-start gap-3">
               <svg class="mt-0.5 h-5 w-5 shrink-0 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
               </svg>
               <div class="flex-1">
-                <p class="font-semibold text-amber-900">Slug change affects all webhook URLs</p>
-                <p class="mt-1 text-sm text-amber-800">
-                  After saving, the webhook URL changes for every connected payment provider. You must update the URL in each provider's dashboard manually — otherwise incoming webhooks will fail and members won't receive access.
+                <p class="font-semibold text-amber-900 dark:text-amber-200">Slug change affects all webhook URLs</p>
+                <p class="mt-1 text-sm text-amber-800 dark:text-amber-300">
+                  After saving, the webhook URL changes for every connected payment provider. You must update the URL in each provider's dashboard manually. Otherwise incoming webhooks will fail and members won't receive access.
                 </p>
-                <div class="mt-2 rounded bg-amber-100 px-3 py-1.5 font-mono text-xs text-amber-900">
+                <div class="mt-2 rounded bg-amber-100 px-3 py-1.5 font-mono text-xs text-amber-900 dark:text-amber-200">
                   https://api.payglue.io/webhooks/{provider}?tenant=<strong>{{ slugInput.trim() }}</strong>
                 </div>
                 <div class="mt-3 space-y-2">
                   <label class="flex items-start gap-2 cursor-pointer">
                     <input v-model="confirmWebhooks" type="checkbox" class="mt-0.5 h-4 w-4 accent-amber-600" />
-                    <span class="text-sm text-amber-900">I know I must update the webhook URL at every connected payment provider after saving.</span>
+                    <span class="text-sm text-amber-900 dark:text-amber-200">I know I must update the webhook URL at every connected payment provider after saving.</span>
                   </label>
                   <label class="flex items-start gap-2 cursor-pointer">
                     <input v-model="confirmUnderstand" type="checkbox" class="mt-0.5 h-4 w-4 accent-amber-600" />
-                    <span class="text-sm text-amber-900">I understand that webhooks sent to the old URL will fail until I update the provider settings.</span>
+                    <span class="text-sm text-amber-900 dark:text-amber-200">I understand that webhooks sent to the old URL will fail until I update the provider settings.</span>
                   </label>
                 </div>
               </div>
@@ -215,7 +215,7 @@ const deleteOrg = async () => {
           </div>
         </div>
 
-        <p v-if="saveError" class="mt-3 text-sm text-rose-700">{{ saveError }}</p>
+        <p v-if="saveError" class="mt-3 text-sm text-rose-700 dark:text-rose-300">{{ saveError }}</p>
 
         <div class="mt-4 flex gap-2">
           <button
@@ -226,32 +226,32 @@ const deleteOrg = async () => {
           >
             {{ saving ? 'Saving...' : 'Save changes' }}
           </button>
-          <button v-if="slugChanged" type="button" class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50" @click="slugInput = originalSlug; confirmWebhooks = false; confirmUnderstand = false">
+          <button v-if="slugChanged" type="button" class="rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/40" @click="slugInput = originalSlug; confirmWebhooks = false; confirmUnderstand = false">
             Discard
           </button>
         </div>
       </section>
 
       <!-- Danger Zone -->
-      <section v-if="isOwner" class="rounded-2xl border border-rose-200 bg-white p-5 shadow-sm">
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-rose-600">Danger zone</h2>
-        <p class="mt-1 text-sm text-slate-500">Permanently delete this organization and all associated data including credentials, mappings, and webhook history. This cannot be undone.</p>
+      <section v-if="isOwner" class="rounded-2xl border border-rose-200 dark:border-rose-500/30 bg-white p-5 shadow-sm dark:border-rose-500/30 dark:bg-slate-900">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-rose-600 dark:text-rose-400">Danger zone</h2>
+        <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Permanently delete this publication and all associated data including credentials, mappings, and webhook history. This cannot be undone.</p>
 
         <!-- Step 1: effects acknowledgement -->
         <div v-if="!deleteEffectsAcknowledged" class="space-y-3">
-          <div class="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+          <div class="rounded-xl border border-rose-200 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-500/10 p-4 text-sm text-rose-900">
             <p class="font-semibold mb-2">This will permanently delete:</p>
-            <ul class="space-y-1 list-disc list-inside text-rose-800">
+            <ul class="space-y-1 list-disc list-inside text-rose-800 dark:text-rose-300">
               <li>All credentials (Ghost Admin API key, provider secrets)</li>
               <li>All mappings and their configuration</li>
               <li>The complete webhook event history</li>
-              <li>All organization settings and team member access</li>
+              <li>All publication settings and team member access</li>
             </ul>
             <p class="mt-2 font-medium">This cannot be undone.</p>
           </div>
           <button
             type="button"
-            class="rounded-lg border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 transition-colors"
+            class="rounded-lg border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 dark:text-rose-300 hover:bg-rose-50 transition-colors"
             @click="deleteEffectsAcknowledged = true"
           >
             I have read and understand these effects
@@ -260,16 +260,16 @@ const deleteOrg = async () => {
 
         <!-- Step 2: confirm by typing slug -->
         <div v-else class="space-y-3">
-          <label class="block text-xs font-medium text-slate-700">
+          <label class="block text-xs font-medium text-slate-700 dark:text-slate-200">
             Type
             <button
               type="button"
-              class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono font-semibold text-slate-900 hover:bg-slate-100 transition-colors"
+              class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono font-semibold text-slate-900 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               :title="copied ? 'Copied!' : 'Copy to clipboard'"
               @click="copySlug"
             >
               {{ session.activeTenantSlug }}
-              <svg v-if="!copied" class="h-3.5 w-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <svg v-if="!copied" class="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
               </svg>
               <svg v-else class="h-3.5 w-3.5 text-emerald-500" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
@@ -282,20 +282,26 @@ const deleteOrg = async () => {
             v-model="deleteConfirmSlug"
             type="text"
             :placeholder="session.activeTenantSlug ?? ''"
-            class="w-full max-w-sm rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono outline-none focus:border-rose-400 focus:ring-1 focus:ring-rose-200"
+            class="w-full max-w-sm rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-sm font-mono outline-none focus:border-rose-400 focus:ring-1 focus:ring-rose-200"
           />
-          <p v-if="deleteError" class="text-xs text-rose-600">{{ deleteError }}</p>
-          <button
-            type="button"
-            class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="deleteConfirmSlug !== session.activeTenantSlug || deleteLoading"
-            @click="deleteOrg"
-          >
-            {{ deleteLoading ? 'Deleting...' : 'Delete organization' }}
-          </button>
-          <button type="button" class="text-xs text-slate-400 hover:text-slate-600" @click="deleteEffectsAcknowledged = false; deleteConfirmSlug = ''">
-            Cancel
-          </button>
+          <p v-if="deleteError" class="text-xs text-rose-600 dark:text-rose-400">{{ deleteError }}</p>
+          <div class="flex flex-wrap items-center gap-3 pt-1">
+            <button
+              type="button"
+              class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="deleteConfirmSlug !== session.activeTenantSlug || deleteLoading"
+              @click="deleteOrg"
+            >
+              {{ deleteLoading ? 'Deleting...' : 'Delete publication' }}
+            </button>
+            <button
+              type="button"
+              class="rounded-lg border border-slate-300 dark:border-slate-600 px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              @click="deleteEffectsAcknowledged = false; deleteConfirmSlug = ''"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       </section>
     </div>

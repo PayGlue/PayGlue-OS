@@ -45,7 +45,7 @@ class WebhookOrchestrator:
 
         if not skip_verification:
             payment_adapter.verify_webhook(raw_body, headers, tenant_ctx)
-        event = payment_adapter.parse_event(raw_body, headers)
+        event = payment_adapter.parse_event(raw_body, headers, tenant_ctx)
 
         if not payment_adapter.supports_event(event.event_type):
             raise UnsupportedEventTypeError(

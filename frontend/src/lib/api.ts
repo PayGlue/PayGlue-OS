@@ -6,7 +6,6 @@ import type {
   AuditEvent,
   BillingProfile,
   AuthSessionResponse,
-  InvitationValidationResponse,
   IntegrationConfig,
   IntegrationCredentialWriteResult,
   IntegrationHealthStatus,
@@ -14,6 +13,8 @@ import type {
   PricingTierData,
   ProductMapping,
   ReplayWebhookEventResult,
+  ServicePin,
+  SupportRequestSummary,
   TeamMember,
   TenantCreateResponse,
   TenantMembership,
@@ -47,10 +48,13 @@ api.interceptors.response.use(
 
 export class ApiHttpError extends Error {
   status: number
+  /** Raw JSON error body, when the backend returned one (e.g. `{ upgrade_required, plan }` on a 402). */
+  data?: Record<string, unknown>
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, data?: Record<string, unknown>) {
     super(message)
     this.status = status
+    this.data = data
   }
 }
 
@@ -79,7 +83,7 @@ const extractApiError = (error: unknown): ApiHttpError => {
         detail = flattened
       }
     }
-    return new ApiHttpError(detail, status)
+    return new ApiHttpError(detail, status, payload && typeof payload === 'object' ? payload : undefined)
   }
   return new ApiHttpError('Unexpected API error', 500)
 }
@@ -114,18 +118,91 @@ export const postAuthSession = async (idToken: string): Promise<AuthSessionRespo
   }
 }
 
-export const validateInvitationCode = async (
-  payload: { email: string; invitationCode: string },
-): Promise<InvitationValidationResponse> => {
+export const generateMfaBackupCodes = async (idToken: string): Promise<{ codes: string[] }> => {
   try {
-    const { data } = await api.post<InvitationValidationResponse>(
-      '/api/v1/auth/invitation/validate',
-      {
-        email: payload.email,
-        invitation_code: payload.invitationCode,
-      },
+    const { data } = await api.post<{ codes: string[] }>('/api/v1/auth/mfa/backup-codes', null, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    })
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+export const getMfaBackupCodesStatus = async (idToken: string): Promise<{ remaining: number }> => {
+  try {
+    const { data } = await api.get<{ remaining: number }>('/api/v1/auth/mfa/backup-codes', {
+      headers: { Authorization: `Bearer ${idToken}` },
+    })
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+export const verifyMfaBackupCode = async (
+  idToken: string,
+  code: string,
+): Promise<{ valid: boolean }> => {
+  try {
+    const { data } = await api.post<{ valid: boolean }>(
+      '/api/v1/auth/mfa/backup-codes/verify',
+      { code },
+      { headers: { Authorization: `Bearer ${idToken}` } },
     )
     return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+/** PG-203 step-up ("sudo mode"). `purpose` scopes the confirmation: a grant
+ * earned for one action cannot be spent on another. */
+export type StepUpPurpose = 'delete_account' | 'owner_transfer'
+
+/** Which proof the account will be asked for. `totp` when an authenticator is
+ * enrolled (no email sent), `email` otherwise. */
+export const requestStepUp = async (
+  idToken: string,
+  purpose: StepUpPurpose,
+): Promise<{ method: 'totp' | 'email'; challenge_id: string }> => {
+  try {
+    const { data } = await api.post<{ method: 'totp' | 'email'; challenge_id: string }>(
+      '/api/v1/auth/step-up/request',
+      { purpose },
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+/** Returns a single-use grant token to pass to the destructive call. */
+export const verifyStepUp = async (
+  idToken: string,
+  purpose: StepUpPurpose,
+  code: string,
+): Promise<{ token: string }> => {
+  try {
+    const { data } = await api.post<{ token: string }>(
+      '/api/v1/auth/step-up/verify',
+      { purpose, code },
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+/** Really deletes the account: tenants, data and the auth user. Requires a
+ * step-up grant, which the backend spends and refuses to reuse. */
+export const deleteAccount = async (idToken: string, stepUpToken: string): Promise<void> => {
+  try {
+    await api.delete('/api/v1/auth/account', {
+      headers: { Authorization: `Bearer ${idToken}`, 'X-Step-Up-Token': stepUpToken },
+    })
   } catch (error) {
     throw toActionableApiError(error)
   }
@@ -156,6 +233,21 @@ export const updateTenant = async (
     const { data } = await api.patch<{ slug: string }>(`/api/v1/tenants/${tenantSlug}`, payload, {
       headers: { Authorization: `Bearer ${idToken}` },
     })
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+export const getTenantWebhookSecret = async (
+  tenantSlug: string,
+  idToken: string,
+): Promise<{ slug: string; webhook_secret: string }> => {
+  try {
+    const { data } = await api.get<{ slug: string; webhook_secret: string }>(
+      `/api/v1/tenants/${tenantSlug}`,
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
     return data
   } catch (error) {
     throw toActionableApiError(error)
@@ -204,6 +296,31 @@ export const createMapping = async (
         Authorization: `Bearer ${idToken}`,
       },
     })
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+export type TestMappingResult = {
+  ok: boolean
+  applied: number
+  entitlements: { entitlement_key: string; action: string }[]
+  error: string | null
+}
+
+export const testMapping = async (
+  tenantSlug: string,
+  idToken: string,
+  mappingId: number,
+  testEmail: string,
+): Promise<TestMappingResult> => {
+  try {
+    const { data } = await api.post<TestMappingResult>(
+      tenantPath(tenantSlug, `mappings/${mappingId}/test`),
+      { test_email: testEmail },
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
     return data
   } catch (error) {
     throw toActionableApiError(error)
@@ -315,10 +432,77 @@ export const removeTeamMember = async (
   }
 }
 
+// PG-182: ownership transfer is a confirmed flow, not a direct role edit.
+export interface OwnershipTransfer {
+  id: number
+  status: 'pending' | 'confirmed' | 'rejected' | 'cancelled'
+  current_owner_email: string
+  new_owner_email: string
+  requested_by_email: string
+  created_at: string
+}
+
+export const getOwnershipTransfer = async (
+  tenantSlug: string,
+  idToken: string,
+): Promise<{ pending: OwnershipTransfer | null }> => {
+  try {
+    const { data } = await api.get<{ pending: OwnershipTransfer | null }>(
+      tenantPath(tenantSlug, 'team/ownership-transfer'),
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+export const requestOwnershipTransfer = async (
+  tenantSlug: string,
+  idToken: string,
+  newOwnerMembershipId: number,
+): Promise<OwnershipTransfer> => {
+  try {
+    const { data } = await api.post<OwnershipTransfer>(
+      tenantPath(tenantSlug, 'team/ownership-transfer'),
+      { new_owner_membership_id: newOwnerMembershipId },
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+export const ownershipTransferAction = async (
+  tenantSlug: string,
+  idToken: string,
+  action: 'confirm' | 'reject' | 'cancel',
+  /** PG-203: required for "confirm" only. Reject and cancel change nothing, so
+   * the backend does not ask for a step-up there. */
+  stepUpToken?: string,
+): Promise<OwnershipTransfer> => {
+  try {
+    const { data } = await api.post<OwnershipTransfer>(
+      tenantPath(tenantSlug, 'team/ownership-transfer/action'),
+      { action },
+      {
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          ...(stepUpToken ? { 'X-Step-Up-Token': stepUpToken } : {}),
+        },
+      },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
 export const getIntegrationConfig = async (
   tenantSlug: string,
   idToken: string,
-  providerKey: 'payment' | 'cms',
+  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'cms',
 ): Promise<IntegrationConfig> => {
   try {
     const { data } = await api.get<IntegrationConfig>(
@@ -338,7 +522,7 @@ export const getIntegrationConfig = async (
 export const updateIntegrationConfig = async (
   tenantSlug: string,
   idToken: string,
-  providerKey: 'payment' | 'cms',
+  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'cms',
   payload: Pick<IntegrationConfig, 'enabled' | 'provider_type' | 'metadata'>,
 ): Promise<IntegrationConfig> => {
   try {
@@ -360,7 +544,7 @@ export const updateIntegrationConfig = async (
 export const setIntegrationCredentials = async (
   tenantSlug: string,
   idToken: string,
-  providerKey: 'payment' | 'cms',
+  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'cms',
   credentials: Record<string, string>,
 ): Promise<IntegrationCredentialWriteResult> => {
   try {
@@ -382,7 +566,7 @@ export const setIntegrationCredentials = async (
 export const runIntegrationHealthCheck = async (
   tenantSlug: string,
   idToken: string,
-  providerKey: 'payment' | 'cms',
+  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'cms',
 ): Promise<IntegrationHealthStatus> => {
   try {
     const { data } = await api.get<IntegrationHealthStatus>(
@@ -511,6 +695,47 @@ export const updateBillingProfile = async (
   }
 }
 
+export const getServicePin = async (
+  tenantSlug: string,
+  idToken: string,
+): Promise<ServicePin | null> => {
+  try {
+    const { data } = await api.get<{ pin: ServicePin | null }>(
+      tenantPath(tenantSlug, 'service-pin'),
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data.pin
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+export const generateServicePin = async (
+  tenantSlug: string,
+  idToken: string,
+): Promise<ServicePin> => {
+  try {
+    const { data } = await api.post<{ pin: ServicePin }>(
+      tenantPath(tenantSlug, 'service-pin'),
+      undefined,
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data.pin
+  } catch (error) {
+    throw extractApiError(error)
+  }
+}
+
+export const revokeServicePin = async (tenantSlug: string, idToken: string): Promise<void> => {
+  try {
+    await api.delete(tenantPath(tenantSlug, 'service-pin'), {
+      headers: { Authorization: `Bearer ${idToken}` },
+    })
+  } catch (error) {
+    throw extractApiError(error)
+  }
+}
+
 export const getPolarSubscriptions = async (
   tenantSlug: string,
   idToken: string,
@@ -551,6 +776,105 @@ export const getPolarInvoices = async (
   try {
     const { data } = await api.get<{ invoices: Record<string, unknown>[] }>(
       tenantPath(tenantSlug, 'billing/invoices'),
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+export type TenantUsage = {
+  plan: string | null
+  // PG-183: tester accounts (redeemed a PayGlue license code) have no Creem sub.
+  is_tester?: boolean
+  tester_access_expires_at?: string | null
+  // PG-210: which founding batch this account joined and the rate it locked.
+  // Both null for anyone who is not a Founding Member, and for accounts
+  // created before the stamp existed.
+  founding_tier?: number | null
+  founding_monthly_eur?: number | null
+  usage: Record<string, { used: number; limit: number | null }>
+}
+
+export const getTenantUsage = async (
+  tenantSlug: string,
+  idToken: string,
+): Promise<TenantUsage> => {
+  try {
+    const { data } = await api.get<TenantUsage>(
+      tenantPath(tenantSlug, 'billing/usage'),
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+export const getCreemSubscription = async (
+  tenantSlug: string,
+  idToken: string,
+): Promise<{ subscriptions: Record<string, unknown>[]; portal_link: string | null }> => {
+  try {
+    const { data } = await api.get<{ subscriptions: Record<string, unknown>[]; portal_link: string | null }>(
+      tenantPath(tenantSlug, 'billing/creem-subscription'),
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+export const getCreemInvoices = async (
+  tenantSlug: string,
+  idToken: string,
+): Promise<{ invoices: Record<string, unknown>[]; portal_link: string | null }> => {
+  try {
+    const { data } = await api.get<{ invoices: Record<string, unknown>[]; portal_link: string | null }>(
+      tenantPath(tenantSlug, 'billing/creem-invoices'),
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+// If the caller already has an active subscription, the backend switches
+// it in place (Creem prorates automatically) and returns `updated` instead
+// of a checkout_url -- there's nothing to redirect to, the plan change
+// already happened.
+export type CreemCheckoutSessionResult =
+  | { checkout_url: string }
+  | { updated: true; subscription: Record<string, unknown> }
+
+export const createCreemCheckoutSession = async (
+  tenantSlug: string,
+  idToken: string,
+  params: { planKey: 'solo' | 'studio' | 'agency'; interval: 'monthly' | 'annual'; returnUrl: string },
+): Promise<CreemCheckoutSessionResult> => {
+  try {
+    const { data } = await api.post<CreemCheckoutSessionResult>(
+      tenantPath(tenantSlug, 'billing/creem-checkout-session'),
+      { plan_key: params.planKey, interval: params.interval, return_url: params.returnUrl },
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+export const cancelCreemSubscription = async (
+  tenantSlug: string,
+  idToken: string,
+): Promise<Record<string, unknown>> => {
+  try {
+    const { data } = await api.post<Record<string, unknown>>(
+      tenantPath(tenantSlug, 'billing/creem-cancel-subscription'),
+      null,
       { headers: { Authorization: `Bearer ${idToken}` } },
     )
     return data
@@ -604,6 +928,66 @@ export const getPayPalProducts = async (
   }
 }
 
+export const getGumroadProducts = async (
+  tenantSlug: string,
+  idToken: string,
+): Promise<{ products: { id: string; name: string; checkout_url?: string }[]; has_token: boolean; error?: string }> => {
+  try {
+    const { data } = await api.get<{ products: { id: string; name: string; checkout_url?: string }[]; has_token: boolean; error?: string }>(
+      tenantPath(tenantSlug, 'billing/gumroad-products'),
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+export const getPaddleProducts = async (
+  tenantSlug: string,
+  idToken: string,
+): Promise<{ products: { id: string; name: string; checkout_url?: string }[]; has_token: boolean; error?: string }> => {
+  try {
+    const { data } = await api.get<{ products: { id: string; name: string; checkout_url?: string }[]; has_token: boolean; error?: string }>(
+      tenantPath(tenantSlug, 'billing/paddle-products'),
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+export const getCreemProducts = async (
+  tenantSlug: string,
+  idToken: string,
+): Promise<{ products: { id: string; name: string; checkout_url?: string }[]; has_token: boolean; error?: string }> => {
+  try {
+    const { data } = await api.get<{ products: { id: string; name: string; checkout_url?: string }[]; has_token: boolean; error?: string }>(
+      tenantPath(tenantSlug, 'billing/creem-products'),
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+export const getPatreonProducts = async (
+  tenantSlug: string,
+  idToken: string,
+): Promise<{ products: { id: string; name: string; checkout_url?: string }[]; has_token: boolean; error?: string }> => {
+  try {
+    const { data } = await api.get<{ products: { id: string; name: string; checkout_url?: string }[]; has_token: boolean; error?: string }>(
+      tenantPath(tenantSlug, 'billing/patreon-products'),
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
 export const getPolarProducts = async (
   tenantSlug: string,
   idToken: string,
@@ -649,10 +1033,14 @@ export const createPaywallConfig = async (
   idToken: string,
   payload: Omit<PaywallConfigData, 'id' | 'created_at' | 'updated_at'>,
 ): Promise<PaywallConfigData> => {
-  const { data } = await api.post<PaywallConfigData>(tenantPath(tenantSlug, 'paywalls'), payload, {
-    headers: { Authorization: `Bearer ${idToken}` },
-  })
-  return data
+  try {
+    const { data } = await api.post<PaywallConfigData>(tenantPath(tenantSlug, 'paywalls'), payload, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    })
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
 }
 
 export const updatePaywallConfig = async (
@@ -685,6 +1073,8 @@ export interface BuyButtonData {
   border_radius: 'none' | 'md' | 'full'
   width: 'auto' | 'full'
   alignment: 'left' | 'center' | 'right'
+  product_provider: string
+  product_id: string
   created_at: string
   updated_at: string
 }
@@ -701,10 +1091,14 @@ export const createBuyButton = async (
   idToken: string,
   payload: Omit<BuyButtonData, 'id' | 'created_at' | 'updated_at'>,
 ): Promise<BuyButtonData> => {
-  const { data } = await api.post<BuyButtonData>(tenantPath(tenantSlug, 'buttons'), payload, {
-    headers: { Authorization: `Bearer ${idToken}` },
-  })
-  return data
+  try {
+    const { data } = await api.post<BuyButtonData>(tenantPath(tenantSlug, 'buttons'), payload, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    })
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
 }
 
 export const updateBuyButton = async (
@@ -737,10 +1131,14 @@ export const createPricingTable = async (
   idToken: string,
   payload: { name: string; template: string; show_toggle: boolean; tiers: PricingTierData[] },
 ): Promise<PricingTableData> => {
-  const { data } = await api.post<PricingTableData>(tenantPath(tenantSlug, 'pricing-tables'), payload, {
-    headers: { Authorization: `Bearer ${idToken}` },
-  })
-  return data
+  try {
+    const { data } = await api.post<PricingTableData>(tenantPath(tenantSlug, 'pricing-tables'), payload, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    })
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
 }
 
 export const updatePricingTable = async (
@@ -770,4 +1168,28 @@ export const checkHeaderScript = async (
     { headers: { Authorization: `Bearer ${idToken}` } },
   )
   return data
+}
+
+export const listSupportRequests = async (
+  tenantSlug: string,
+  idToken: string,
+): Promise<SupportRequestSummary[]> => {
+  const { data } = await api.get<{ requests: SupportRequestSummary[] }>(
+    tenantPath(tenantSlug, 'support/requests'),
+    { headers: { Authorization: `Bearer ${idToken}` } },
+  )
+  return data.requests
+}
+
+export const createSupportRequest = async (
+  tenantSlug: string,
+  idToken: string,
+  payload: { name: string; message: string; topic: string },
+): Promise<SupportRequestSummary> => {
+  const { data } = await api.post<{ request: SupportRequestSummary }>(
+    tenantPath(tenantSlug, 'support/requests'),
+    payload,
+    { headers: { Authorization: `Bearer ${idToken}` } },
+  )
+  return data.request
 }

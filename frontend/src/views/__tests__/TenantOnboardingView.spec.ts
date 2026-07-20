@@ -74,7 +74,7 @@ describe('TenantOnboardingView', () => {
     vi.mocked(createTenant).mockResolvedValue({ tenant_slug: 'acme-corp' } as any)
     const session = useSessionStore()
     const bootstrapMock = vi.fn(async () => {
-      session.memberships = [{ tenant_id: 'tid-1', tenant_slug: 'acme-corp', tenant_name: 'Acme Corp', role: 'owner' }]
+      session.memberships = [{ tenant_id: 'tid-1', tenant_slug: 'acme-corp', tenant_name: 'Acme Corp', role: 'owner', status: 'active' }]
       return true
     })
     session.bootstrap = bootstrapMock

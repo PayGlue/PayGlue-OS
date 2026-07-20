@@ -95,7 +95,7 @@ class LemonSqueezyPaymentAdapter:
             raise InvalidWebhookSignatureError("signature mismatch")
 
     def parse_event(
-        self, raw_body: bytes, headers: Mapping[str, str]
+        self, raw_body: bytes, headers: Mapping[str, str], tenant_ctx: TenantContext
     ) -> CanonicalPaymentEvent:
         try:
             payload = json.loads(raw_body)
@@ -254,6 +254,9 @@ class LemonSqueezyPaymentAdapter:
 
     def supports_event(self, event_type: str) -> bool:
         return event_type in self._supported_events
+
+    def supports_raw_event_type(self, raw_event_type: str) -> bool:
+        return raw_event_type in self._raw_event_names
 
     @staticmethod
     def _parse_iso8601(value: str) -> datetime:
