@@ -1,173 +1,99 @@
-# PayGlue-OS
+<p align="center">
+  <img src=".github/assets/logo.svg" alt="PayGlue" width="120" />
+</p>
 
-**PayGlue connects Ghost CMS to any payment provider.**
+<h1 align="center">PayGlue-OS</h1>
 
-Ghost natively supports only Stripe. PayGlue bridges Polar, Lemon Squeezy, PayPal, and more by receiving signed webhooks and syncing membership state back into Ghost via the Admin API. No Ghost code changes required.
+<p align="center"><b>Sell Ghost memberships with any payment provider, not just Stripe.</b></p>
 
-> **Open beta.** Version 0.2 covers eight payment providers -- Polar, Lemon Squeezy, PayPal, Gumroad, Paddle, Ko-fi, Creem, and Patreon -- plus free member signups through Ghost. See the [changelog](CHANGELOG.md) for what changed.
->
-> **Rather not run it yourself?** [payglue.io](https://payglue.io) is the hosted version, operated by the person who built this. Same code you are looking at, minus the ops.
->
-> **Documentation lives at [docs.payglue.io](https://docs.payglue.io)** -- provider setup guides, the Ghost connection, paywalls, buy buttons, and pricing tables. Written for the hosted product, but the walkthroughs apply to a self-hosted install just the same.
->
-> One more thing: somewhere in this source code hides a small thank-you for people who actually read it. Happy hunting.
-
----
-
-## Why this exists
-
-I run a Ghost blog and wanted to accept payments through Polar, not Stripe. Ghost made that impossible without custom code. So I built PayGlue to solve my own problem, then realized others had the same frustration. This is that tool, now open source.
+<p align="center">
+  <a href="https://github.com/PayGlue/PayGlue-OS/releases"><img src="https://img.shields.io/github/v/release/PayGlue/PayGlue-OS" alt="Latest release"></a>
+  <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-BUSL--1.1-blue" alt="License: BUSL 1.1"></a>
+  <img src="https://img.shields.io/badge/python-3.12+-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
+  <img src="https://img.shields.io/badge/vue-3-42b883?logo=vuedotjs&logoColor=white" alt="Vue 3">
+  <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs welcome"></a>
+</p>
 
 ---
 
-## See it live
+I run a Ghost blog and wanted to accept payments through Polar, not Stripe. Ghost said no. So I built PayGlue: a relay that receives signed webhooks from your payment provider and syncs membership state into Ghost via the Admin API. Someone pays, they get access. Someone cancels, access is revoked. No Ghost code changes, no manual syncing, no spreadsheet of shame.
 
-Try it before setting anything up:
+**Eight providers, one relay:** Polar · Lemon Squeezy · PayPal · Gumroad · Paddle · Ko-fi · Creem · Patreon
 
-| Demo | What it shows |
-|---|---|
-| [Full pricing table](https://blog.payglue.io/what-a-full-pricing-table-looks-like-when-it-talks-to-ghost/) | Embedded in a Ghost post, live sandbox checkout |
-| [Paywall in action](https://blog.payglue.io/how-this-blog-runs-with-a-payglue-paywall/) | How this blog gates content with PayGlue |
-| [Three buttons, one dashboard](https://blog.payglue.io/three-buttons-one-dashboard-how-we-embed-payment-links-in-this-blog/) | Embedded payment links in Ghost |
-| [go.payglue.io/membership](https://go.payglue.io/membership) | Production German tech blog using PayGlue live |
+Your existing Stripe setup stays untouched. PayGlue runs next to it and only covers what Ghost can't do natively.
 
----
+> **Status:** Open beta. This repo contains the exact code running the hosted product at [payglue.io](https://payglue.io). Rather not run it yourself? The hosted version is the same code, minus the ops. See the [changelog](CHANGELOG.md) for what changed.
 
-## How it works
+## 👀 See it running before you clone anything
 
-PayGlue sits between your payment provider and Ghost:
+The best pitch is a working paywall. All of these are live, powered by this codebase (yes, we eat our own dog food, it pays our bills):
 
-1. Customer buys through any of the eight supported providers
+| Try it | What you'll see |
+| --- | --- |
+| [The paywall on our own blog](https://blog.payglue.io/how-this-blog-runs-with-a-payglue-paywall/) | Content gating on a real Ghost site, no Stripe connected |
+| [A full pricing table inside a Ghost post](https://blog.payglue.io/what-a-full-pricing-table-looks-like-when-it-talks-to-ghost/) | Embedded table with live sandbox checkout |
+| [Embedded payment buttons](https://blog.payglue.io/three-buttons-one-dashboard-how-we-embed-payment-links-in-this-blog/) | Three buttons, one dashboard |
+| [A production German tech blog](https://go.payglue.io/membership) | PayGlue in the wild, real members, real money |
+
+## ⚙️ How it works
+
+```
+Customer pays  →  Provider sends signed webhook  →  PayGlue verifies signature
+              →  Maps product to Ghost tier      →  Ghost Admin API updates the member
+```
+
+1. Customer buys through any supported provider
 2. Provider sends a signed webhook to PayGlue
-3. PayGlue verifies the cryptographic signature and maps the product to a Ghost membership tier
+3. PayGlue verifies the cryptographic signature (HMAC or RSA depending on provider) and maps the product to a Ghost membership tier
 4. Ghost Admin API creates or updates the member automatically
 
----
+<p align="center">
+  <img src=".github/assets/ghost-connection.png" alt="Connecting a Ghost site in the PayGlue dashboard" width="720" />
+</p>
 
-## Supported providers
+<p align="center">
+  <img src=".github/assets/paywall-blog.png" alt="Embedded paywall and pricing table on a live Ghost blog" width="720" />
+</p>
 
-| Provider | Status |
-|---|---|
-| Polar | Available |
-| Lemon Squeezy | Available |
-| PayPal | Available |
-| Gumroad | Available |
-| Paddle | Available |
-| Ko-fi | Available |
-| Creem | Available |
-| Patreon | Available |
-| Mollie | On hold -- its recurring model needs per-creator subscription code, which does not fit the webhook-relay approach |
+<p align="center">
+  <img src=".github/assets/ghost-memberview.png" alt="The synced member as it appears in Ghost Admin" width="720" />
+</p>
 
----
+## 🚀 Quickstart (self-hosting)
 
-## Stack
-
-| Layer | Technology |
-|---|---|
-| Frontend | Vue 3 + TypeScript, Cloudflare Pages |
-| Backend | Django + Celery, Python 3.12+ |
-| Auth | Supabase Auth (ES256 JWT) |
-| Database | PostgreSQL |
-| Queue / Cache | Redis |
-| Webhook proxy | Cloudflare Workers |
-
----
-
-## Self-hosting
-
-### Prerequisites
-
-- Docker and Docker Compose
-- A running Ghost instance (any self-hosted version)
-- PostgreSQL (see recommended services below)
-- Redis (see recommended services below)
-- A Supabase project or compatible auth backend (see below)
-- An account with at least one payment provider
-
-### Recommended services
-
-PayGlue has no hard dependency on any specific cloud provider. The table below lists what each component needs and some options for each:
-
-| Component | What you need | Options |
-|---|---|---|
-| PostgreSQL | A Postgres database | Neon, Railway, Supabase, self-hosted |
-| Redis | A Redis instance | Upstash, Railway, self-hosted |
-| Auth | JWT issuer (ES256, JWKS endpoint) | Supabase Auth (recommended), self-hosted GoTrue, Clerk |
-| Deployment | Anywhere that runs Docker | Railway, Render, Fly.io, any VPS |
-| Webhook proxy | Routes provider webhooks to your backend | Cloudflare Workers (included), any reverse proxy |
-
-For a fully self-hosted setup (no external services), Docker Compose brings up PostgreSQL, Redis, and the Django backend locally. Auth requires a JWT issuer with a JWKS endpoint; self-hosted Supabase or GoTrue covers that.
-
-### 1. Clone and configure
+Self-hosting is free, no license fee, no catch. You need Docker, a running Ghost instance, an account with at least one payment provider, and about one coffee's worth of time.
 
 ```bash
 git clone https://github.com/PayGlue/PayGlue-OS.git
 cd PayGlue-OS
-cp .env.example .env
-```
-
-Fill in your `.env`:
-
-| Variable | Description |
-|---|---|
-| `DJANGO_SECRET_KEY` | Required with `DJANGO_DEBUG=0`; the app refuses to boot without it |
-| `DJANGO_ALLOWED_HOSTS` | Comma-separated hostnames the API answers on |
-| `DATABASE_URL` | Postgres connection string |
-| `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` | Redis URLs (there is no `REDIS_URL`) |
-| `CREDENTIAL_ENCRYPTION_KEY` | 32-byte base64 key: `openssl rand -base64 32` |
-| `SUPABASE_URL` | Your Supabase project URL (or compatible auth issuer) |
-| `SUPABASE_JWKS_URL` | JWKS endpoint of that project; or inline the JSON via `SUPABASE_JWKS_KEYS` |
-| `WEBHOOK_ENDPOINT_TOKEN` | Random secret: `openssl rand -base64 32` |
-| `WEBHOOK_ALLOW_GLOBAL_ENDPOINT_TOKEN` | Set to `1` for single-operator deployments |
-| `DJANGO_DEBUG` | Must be `0` in production |
-
-Optional: `RESEND_API_KEY` for outbound email (or point `EMAIL_BACKEND` at Django's console backend for development), `SUPABASE_SERVICE_ROLE_KEY` for account deletion and user provisioning. The full annotated list lives in [`.env.example`](.env.example).
-
-### 2. Start the backend
-
-```bash
+cp .env.example .env   # fill in secrets, every variable is annotated
 docker compose up -d postgres redis
 docker compose run --rm web python manage.py migrate
 docker compose up -d
 ```
 
-Services:
+Then open the dashboard at `http://localhost:5173`, connect your Ghost site (URL + Admin API key), connect a provider, and map your products to Ghost tiers.
 
-| Service | URL |
-|---|---|
-| Django API | `http://localhost:8000` |
-| Vue dashboard | `http://localhost:5173` |
+The complete walkthrough, including per-provider setup, auth options, and recommended services for Postgres/Redis/deployment, lives in **[SETUP.md](SETUP.md)**. Full product documentation is at **[docs.payglue.io](https://docs.payglue.io)**, written for the hosted version but the walkthroughs apply to self-hosted installs just the same.
 
-### 3. Connect Ghost
+<details>
+<summary><b>Stack at a glance</b></summary>
 
-In the PayGlue dashboard, go to Settings and paste your Ghost site URL and Admin API key. PayGlue will verify the connection by checking for the header script on your Ghost site.
+| Layer | Technology |
+| --- | --- |
+| Frontend | Vue 3 + TypeScript, Cloudflare Pages |
+| Backend | Django + Celery, Python 3.12+ |
+| Auth | Supabase Auth (ES256 JWT), or any JWKS-compatible issuer |
+| Database | PostgreSQL |
+| Queue / Cache | Redis |
+| Webhook proxy | Cloudflare Workers (included), or any reverse proxy |
 
-<img width="3160" height="1846" alt="payglue-os-ghost-cms-connection" src="https://github.com/user-attachments/assets/b3c65037-36df-4394-8b2c-c7553fb201e9" />
+No hard dependency on any specific cloud provider. Docker Compose brings up everything locally.
 
+</details>
 
-### 4. Connect a payment provider and map your products
-
-Each provider needs three things in the PayGlue dashboard: API credentials, a webhook secret, and a product mapping to a Ghost membership tier. The full step-by-step for each provider is in [SETUP.md](SETUP.md).
-
-<img width="3248" height="1934" alt="payglue-os-payment provider-polar" src="https://github.com/user-attachments/assets/6a2c4c4e-83e5-4ad4-8782-176f21834268" />
-
-<img width="3248" height="1934" alt="payglue-os-paywall-demo" src="https://github.com/user-attachments/assets/bbcb59b3-98ae-467f-ab13-83b6a2f3c82e" />
-
-### 5. See it live on your website
-
-PayGlue embeds directly into your Ghost site. Add a payment button or a full pricing table to any post or page with a single line of HTML. No iframes from third parties, no redirects away from 
-your site.
-
-<img width="3248" height="1934" alt="payglue-os-paywall-blog" src="https://github.com/user-attachments/assets/01a494f1-d718-46aa-abd5-d4ba70d367e4" />
-
-### 6. What happens after a new membership for your publication arrives
-
-When a customer completes a purchase, PayGlue receives the signed webhook from your payment provider, verifies the signature, and creates or updates the member in Ghost automatically. No manual steps, no code. The new member appears in your Ghost Admin with the correct tier and access level applied.
-
-<img width="2404" height="1454" alt="payglue-os-ghost-memberview" src="https://github.com/user-attachments/assets/026b433f-9cad-408b-be52-457ea8c01af7" />
-
-
-### Webhook smoke test
+<details>
+<summary><b>Webhook smoke test</b></summary>
 
 ```bash
 curl -i -X POST "http://localhost:8000/t/your-tenant/webhooks/polar/dev-token/" \
@@ -176,42 +102,36 @@ curl -i -X POST "http://localhost:8000/t/your-tenant/webhooks/polar/dev-token/" 
 # Expected: 202 Accepted
 ```
 
----
+</details>
 
-## Contributing
+## 🔌 Provider status
 
-Contributions are more than welcome and will be rewarded.
+Live: **Polar, Lemon Squeezy, PayPal, Gumroad, Paddle, Ko-fi, Creem, Patreon.** Each ships with encrypted credential storage, health checks, webhook signature verification, and product autofetch.
 
-If you build something with PayGlue and want to contribute back, whether that is a new payment provider adapter, a bug fix, or a documentation improvement, get in touch. Contributors who want to run PayGlue on their own Ghost site using our infrastructure get a goodie.
+<p align="center">
+  <img src=".github/assets/provider-config.png" alt="Configuring a payment provider in the PayGlue dashboard" width="720" />
+</p>
 
-Reach out: [team@payglue.io](mailto:team@payglue.io)
+On hold: **Mollie.** Its recurring model needs per-creator subscription code, which doesn't fit the webhook-relay approach. We tried. Mollie won.
 
-### How to contribute
+Missing yours? [Open a discussion](https://github.com/PayGlue/PayGlue-OS/discussions). Provider order is largely decided by who asks, so ask.
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Make your changes
-4. Run backend tests: `cd backend && python -m pytest`
-5. Push and open a pull request
+## 🔐 Security
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for the full PR workflow and branch naming conventions.
+Two-layer model for inbound webhooks: a URL endpoint token for proxy authentication, plus per-provider cryptographic signature verification (HMAC-SHA256 for Polar and Lemon Squeezy, RSA-SHA256 for PayPal). Credentials are encrypted at rest (AES-256). Boring by design, this thing sits next to your revenue.
 
-### Adding a new payment provider
+Full architecture and vulnerability disclosure process: [SECURITY.md](SECURITY.md)
 
-Payment providers are implemented as adapters in `backend/src/payglue_backend/webhooks/adapters/`. Each adapter implements signature verification and event mapping. Polar and Lemon Squeezy are the cleanest references to follow.
+## 🤝 Contributing
 
----
+Contributions are welcome and rewarded, and we mean the second part literally. New provider adapters live in `backend/src/payglue_backend/webhooks/adapters/`, Polar and Lemon Squeezy are the cleanest references to follow. Contributors who want to run PayGlue on their own Ghost site using our infrastructure get a goodie.
 
-## Security
+Workflow, branch naming, and PR conventions: [CONTRIBUTING.md](CONTRIBUTING.md) · Reach out: team@payglue.io
 
-PayGlue uses a two-layer security model for inbound webhooks: a URL endpoint token (proxy authentication) and per-provider cryptographic signature verification (HMAC-SHA256 for Polar and Lemon Squeezy, RSA-SHA256 for PayPal).
+## 🥚 One more thing
 
-See [SECURITY.md](SECURITY.md) for the full security architecture and vulnerability disclosure process.
+Somewhere in this source code hides a small thank-you for people who actually read it. First finders win. No hints. Happy hunting.
 
----
+## 📄 License
 
-## License
-
-Business Source License 1.1. See [LICENSE.md](LICENSE.md).
-
-Self-hosting for your own Ghost site is free. Offering PayGlue as a managed service to others requires a commercial license. Each version converts to Apache License 2.0 four years after first public release.
+Business Source License 1.1, converting to Apache 2.0 four years after each version's release. Self-hosting for your own Ghost site is free. Offering PayGlue as a managed service to others requires a commercial license. Details: [LICENSE.md](LICENSE.md)
