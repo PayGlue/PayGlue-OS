@@ -7,6 +7,15 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: "development"
+    ignore:
+      # vue-tsc doesn't support TypeScript 7's restructured package exports yet
+      # (breaks `typescript/lib/tsc` resolution). Remove once vue-tsc catches up.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      # vue-router's peer range only allows pinia ^3 — pinia 4 makes
+      # `npm ci` fail outright. Remove once vue-router widens the range.
+      - dependency-name: "pinia"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "pip"
     directory: "/backend"
