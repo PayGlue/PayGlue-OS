@@ -48,7 +48,7 @@ Customer pays  →  Provider sends signed webhook  →  PayGlue verifies signatu
 4. Ghost Admin API creates or updates the member automatically
 
 <p align="center">
-  <img src=".github/assets/ghost-connection.png" alt="Connecting a Ghost site in the PayGlue dashboard" width="720" />
+  <img width="720" height="426" alt="demo" src="https://github.com/user-attachments/assets/06969d9b-2165-4881-8301-f13a4322d435" alt="PayGlue Dashboard" />
 </p>
 
 <p align="center">
@@ -121,6 +121,10 @@ Missing yours? [Open a discussion](https://github.com/PayGlue/PayGlue-OS/discuss
 Two-layer model for inbound webhooks: a URL endpoint token for proxy authentication, plus per-provider cryptographic signature verification (HMAC-SHA256 for Polar and Lemon Squeezy, RSA-SHA256 for PayPal). Credentials are encrypted at rest (AES-256). Boring by design, this thing sits next to your revenue.
 
 Full architecture and vulnerability disclosure process: [SECURITY.md](SECURITY.md)
+
+<p align="center">
+  <img src=".github/assets/ghost-connection.png" alt="Connecting a Ghost site in the PayGlue dashboard" width="720" />
+</p>
 
 ## 🤝 Contributing
 
