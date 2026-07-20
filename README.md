@@ -108,14 +108,18 @@ Fill in your `.env`:
 
 | Variable | Description |
 |---|---|
+| `DJANGO_SECRET_KEY` | Required with `DJANGO_DEBUG=0`; the app refuses to boot without it |
+| `DJANGO_ALLOWED_HOSTS` | Comma-separated hostnames the API answers on |
 | `DATABASE_URL` | Postgres connection string |
-| `REDIS_URL` | Redis connection string |
+| `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` | Redis URLs (there is no `REDIS_URL`) |
 | `CREDENTIAL_ENCRYPTION_KEY` | 32-byte base64 key: `openssl rand -base64 32` |
-| `SUPABASE_URL` | Your Supabase project URL (or compatible auth URL) |
-| `JWKS_KEYS` | JWKS JSON from your auth provider |
+| `SUPABASE_URL` | Your Supabase project URL (or compatible auth issuer) |
+| `SUPABASE_JWKS_URL` | JWKS endpoint of that project; or inline the JSON via `SUPABASE_JWKS_KEYS` |
 | `WEBHOOK_ENDPOINT_TOKEN` | Random secret: `openssl rand -base64 32` |
 | `WEBHOOK_ALLOW_GLOBAL_ENDPOINT_TOKEN` | Set to `1` for single-operator deployments |
 | `DJANGO_DEBUG` | Must be `0` in production |
+
+Optional: `RESEND_API_KEY` for outbound email (or point `EMAIL_BACKEND` at Django's console backend for development), `SUPABASE_SERVICE_ROLE_KEY` for account deletion and user provisioning. The full annotated list lives in [`.env.example`](.env.example).
 
 ### 2. Start the backend
 
