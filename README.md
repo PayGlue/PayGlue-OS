@@ -8,6 +8,8 @@ Ghost natively supports only Stripe. PayGlue bridges Polar, Lemon Squeezy, PayPa
 >
 > **Rather not run it yourself?** [payglue.io](https://payglue.io) is the hosted version, operated by the person who built this. Same code you are looking at, minus the ops.
 >
+> **Documentation lives at [docs.payglue.io](https://docs.payglue.io)** -- provider setup guides, the Ghost connection, paywalls, buy buttons, and pricing tables. Written for the hosted product, but the walkthroughs apply to a self-hosted install just the same.
+>
 > One more thing: somewhere in this source code hides a small thank-you for people who actually read it. Happy hunting.
 
 ---
