@@ -4,7 +4,11 @@
 
 Ghost natively supports only Stripe. PayGlue bridges Polar, Lemon Squeezy, PayPal, and more by receiving signed webhooks and syncing membership state back into Ghost via the Admin API. No Ghost code changes required.
 
-> **Closed beta.** PayGlue is currently invite-only. Join the waitlist at [payglue.io](https://payglue.io). Version 0.1 covers Polar, Lemon Squeezy, and PayPal, plus free member signups through Ghost.
+> **Open beta.** Version 0.2 covers eight payment providers -- Polar, Lemon Squeezy, PayPal, Gumroad, Paddle, Ko-fi, Creem, and Patreon -- plus free member signups through Ghost. See the [changelog](CHANGELOG.md) for what changed.
+>
+> **Rather not run it yourself?** [payglue.io](https://payglue.io) is the hosted version, operated by the person who built this. Same code you are looking at, minus the ops.
+>
+> One more thing: somewhere in this source code hides a small thank-you for people who actually read it. Happy hunting.
 
 ---
 
@@ -31,7 +35,7 @@ Try it before setting anything up:
 
 PayGlue sits between your payment provider and Ghost:
 
-1. Customer buys through Polar, Lemon Squeezy, or PayPal
+1. Customer buys through any of the eight supported providers
 2. Provider sends a signed webhook to PayGlue
 3. PayGlue verifies the cryptographic signature and maps the product to a Ghost membership tier
 4. Ghost Admin API creates or updates the member automatically
@@ -45,11 +49,12 @@ PayGlue sits between your payment provider and Ghost:
 | Polar | Available |
 | Lemon Squeezy | Available |
 | PayPal | Available |
-| Mollie | In Development |
-| Paddle | In Development |
-| Gumroad | In Development |
-| Digistore24 | Planned |
-| CopeCart | Planned |
+| Gumroad | Available |
+| Paddle | Available |
+| Ko-fi | Available |
+| Creem | Available |
+| Patreon | Available |
+| Mollie | On hold -- its recurring model needs per-creator subscription code, which does not fit the webhook-relay approach |
 
 ---
 

@@ -155,7 +155,7 @@ class PolarPaymentAdapter:
             raise InvalidWebhookSignatureError("signature mismatch")
 
     def parse_event(
-        self, raw_body: bytes, headers: Mapping[str, str]
+        self, raw_body: bytes, headers: Mapping[str, str], tenant_ctx: TenantContext
     ) -> CanonicalPaymentEvent:
         payload = self._parse_payload(raw_body)
 
@@ -323,6 +323,11 @@ class PolarPaymentAdapter:
 
     def supports_event(self, event_type: str) -> bool:
         return event_type in self._supported_events
+
+    def supports_raw_event_type(self, raw_event_type: str) -> bool:
+        # Polar's raw webhook `type` field already uses the same names as
+        # our canonical event types (order.created, order.paid, etc.).
+        return raw_event_type in self._supported_events
 
     @staticmethod
     def _extract_signature_header(headers: Mapping[str, str]) -> str:

@@ -6,13 +6,14 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createPinia, setActivePinia } from 'pinia'
 import BillingView from '../BillingView.vue'
 import { useSessionStore } from '../../stores/session'
-import { getPolarSubscriptions, getPolarInvoices, cancelPolarSubscription } from '../../lib/api'
+import { getCreemSubscription, getCreemInvoices, cancelCreemSubscription } from '../../lib/api'
 
 vi.mock('../../lib/api', async () => {
   return {
-    getPolarSubscriptions: vi.fn(),
-    getPolarInvoices: vi.fn(),
-    cancelPolarSubscription: vi.fn(),
+    getCreemSubscription: vi.fn(),
+    getCreemInvoices: vi.fn(),
+    cancelCreemSubscription: vi.fn(),
+    getTenantUsage: vi.fn().mockResolvedValue({ plan: 'solo', usage: {} }),
   }
 })
 
@@ -54,7 +55,7 @@ const activeSubscription = {
   recurring_interval: 'month',
   cancel_at_period_end: false,
   current_period_end: '2026-08-01T00:00:00Z',
-  product: { name: 'Pro Plan' },
+  product: { name: 'Solo Plan' },
 }
 
 const invoice = {
@@ -62,49 +63,36 @@ const invoice = {
   created_at: '2026-07-01T00:00:00Z',
   amount: 2900,
   currency: 'eur',
-  status: 'paid',
-  product: { name: 'Pro Plan' },
+  product: { name: 'Solo Plan' },
 }
 
 describe('BillingView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(getPolarSubscriptions).mockResolvedValue({ subscriptions: [activeSubscription] })
-    vi.mocked(getPolarInvoices).mockResolvedValue({ invoices: [invoice] })
-    vi.mocked(cancelPolarSubscription).mockResolvedValue({})
+    vi.mocked(getCreemSubscription).mockResolvedValue({
+      subscriptions: [activeSubscription],
+      portal_link: 'https://creem.io/portal/abc',
+    })
+    vi.mocked(getCreemInvoices).mockResolvedValue({
+      invoices: [invoice],
+      portal_link: 'https://creem.io/portal/abc',
+    })
   })
 
-  it('renders active subscription and invoice history from API', async () => {
+  it('renders active subscription and invoice history from the Creem API', async () => {
     setupSession('owner')
     const router = await makeRouter()
 
     render(BillingView, { global: { plugins: [router] } })
 
     await waitFor(() => {
-      expect(screen.getAllByText('Pro Plan').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('Solo Plan').length).toBeGreaterThan(0)
     })
     expect(screen.getAllByText(/29[.,]00/).length).toBeGreaterThan(0)
-    expect(screen.getByRole('button', { name: /cancel plan/i })).toBeInTheDocument()
-  })
-
-  it('allows owner/billing_admin roles to cancel the subscription', async () => {
-    setupSession('billing_admin')
-    const router = await makeRouter()
-
-    render(BillingView, { global: { plugins: [router] } })
-
-    await screen.findByRole('button', { name: /cancel plan/i })
-    await fireEvent.click(screen.getByRole('button', { name: /cancel plan/i }))
-    await fireEvent.click(screen.getByRole('button', { name: /yes, cancel/i }))
-
-    await waitFor(() => {
-      expect(cancelPolarSubscription).toHaveBeenCalledWith(
-        'tenant-a',
-        'fake-access-token',
-        'sub_1',
-        false,
-      )
-    })
+    expect(screen.getByRole('link', { name: /manage on creem/i })).toHaveAttribute(
+      'href',
+      'https://creem.io/portal/abc',
+    )
   })
 
   it('shows read-only mode for non billing roles', async () => {
@@ -114,9 +102,33 @@ describe('BillingView', () => {
     render(BillingView, { global: { plugins: [router] } })
 
     await waitFor(() => {
-      expect(getPolarSubscriptions).toHaveBeenCalledWith('tenant-a', 'fake-access-token')
+      expect(getCreemSubscription).toHaveBeenCalledWith('tenant-a', 'fake-access-token')
     })
     expect(screen.getByText(/your role can view billing but cannot make changes/i)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /cancel plan/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/danger zone/i)).not.toBeInTheDocument()
+  })
+
+  it('cancels the subscription after the two-step confirmation', async () => {
+    setupSession('owner')
+    const router = await makeRouter()
+    vi.mocked(cancelCreemSubscription).mockResolvedValue({
+      status: 'canceled',
+      current_period_end_date: '2026-08-01T00:00:00Z',
+    })
+
+    render(BillingView, { global: { plugins: [router] } })
+
+    await waitFor(() => screen.getByText(/danger zone/i))
+    expect(screen.queryByRole('button', { name: /^cancel subscription$/i })).not.toBeInTheDocument()
+
+    await fireEvent.click(screen.getByRole('button', { name: /i have read and understand these effects/i }))
+    await fireEvent.click(screen.getByRole('button', { name: /^cancel subscription$/i }))
+
+    await waitFor(() => {
+      expect(cancelCreemSubscription).toHaveBeenCalledWith('tenant-a', 'fake-access-token')
+    })
+    await waitFor(() => {
+      expect(screen.getByText(/subscription canceled/i)).toBeInTheDocument()
+    })
   })
 })

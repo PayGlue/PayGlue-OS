@@ -170,7 +170,9 @@ def test_team_api_prevents_admin_owner_escalation_and_owner_mutation(
         content_type="application/json",
         **headers,
     )
-    assert post_owner_response.status_code == 403
+    # PG-182: a member is never added as owner directly (single-owner invariant);
+    # ownership only moves via the confirmed transfer flow -> 400, not 403.
+    assert post_owner_response.status_code == 400
 
     patch_owner_response = client.patch(
         f"/t/tenant-a/api/v1/team/{owner_membership.id}",
@@ -213,3 +215,108 @@ def test_team_api_returns_400_on_email_uid_conflict_in_create(
     )
 
     assert response.status_code == 400
+
+
+def test_team_api_invites_a_brand_new_account_by_email(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adding someone by email who has no PayGlue account yet provisions
+    them a Supabase account + UserProfile and sends them a sign-in link,
+    instead of failing with 'User profile for email was not found'."""
+    client = Client()
+    headers, _ = _auth_headers(
+        monkeypatch,
+        role=TenantMembership.Role.OWNER,
+        uid_suffix="owner-invite",
+    )
+
+    invited_emails = []
+
+    def _fake_invite(email: str) -> str:
+        invited_emails.append(email)
+        return "supabase-new-user-id"
+
+    monkeypatch.setattr(
+        "payglue_backend.tenants.supabase_admin.invite_supabase_user", _fake_invite
+    )
+
+    response = client.post(
+        "/t/tenant-a/api/v1/team",
+        data={"email": "brandnew@example.com", "role": TenantMembership.Role.ADMIN},
+        content_type="application/json",
+        **headers,
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["invited_new_account"] is True
+    assert invited_emails == ["brandnew@example.com"]
+    assert UserProfile.objects.filter(
+        email="brandnew@example.com", firebase_uid="supabase-new-user-id"
+    ).exists()
+    assert TenantMembership.objects.filter(
+        tenant__slug="tenant-a", user_profile__email="brandnew@example.com"
+    ).exists()
+
+
+def test_team_api_does_not_reinvite_existing_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = Client()
+    headers, _ = _auth_headers(
+        monkeypatch,
+        role=TenantMembership.Role.OWNER,
+        uid_suffix="owner-existing",
+    )
+    UserProfile.objects.create(firebase_uid="uid-known", email="known@example.com")
+
+    def _fail_if_called(email: str) -> str:
+        raise AssertionError("invite_supabase_user should not be called for an existing account")
+
+    monkeypatch.setattr(
+        "payglue_backend.tenants.supabase_admin.invite_supabase_user", _fail_if_called
+    )
+
+    response = client.post(
+        "/t/tenant-a/api/v1/team",
+        data={"email": "known@example.com", "role": TenantMembership.Role.ADMIN},
+        content_type="application/json",
+        **headers,
+    )
+
+    assert response.status_code == 201
+    assert response.json()["invited_new_account"] is False
+
+
+def test_team_api_surfaces_supabase_invite_error_as_400(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed Supabase invite must surface as 400 (with the real reason), NOT
+    502 -- Cloudflare swallows any origin 502 behind its own opaque interstitial,
+    which left the admin unable to add members with no idea why (found live: an
+    invalid/undeliverable invitee address)."""
+    from payglue_backend.tenants.supabase_admin import SupabaseAdminError
+
+    client = Client()
+    headers, _ = _auth_headers(
+        monkeypatch,
+        role=TenantMembership.Role.OWNER,
+        uid_suffix="owner-supabase-down",
+    )
+
+    def _raise(email: str) -> str:
+        raise SupabaseAdminError("Supabase admin API 422: email address is invalid")
+
+    monkeypatch.setattr(
+        "payglue_backend.tenants.supabase_admin.invite_supabase_user", _raise
+    )
+
+    response = client.post(
+        "/t/tenant-a/api/v1/team",
+        data={"email": "willfail@example.com", "role": TenantMembership.Role.ADMIN},
+        content_type="application/json",
+        **headers,
+    )
+
+    assert response.status_code == 400
+    assert "email address is invalid" in response.json()["detail"]

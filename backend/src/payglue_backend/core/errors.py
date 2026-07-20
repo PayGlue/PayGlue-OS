@@ -56,3 +56,12 @@ class InvalidWebhookPayloadError(PayGlueError):
 
 class CmsApplyEntitlementError(PayGlueError):
     """CMS entitlement call failed."""
+
+
+class PlanLimitExceededError(PayGlueError):
+    def __init__(self, resource: str, limit: int) -> None:
+        super().__init__(
+            f"Your plan allows up to {limit} {resource}. Upgrade to add more."
+        )
+        self.resource = resource
+        self.limit = limit

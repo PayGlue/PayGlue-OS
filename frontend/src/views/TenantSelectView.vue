@@ -24,16 +24,16 @@ const openOrg = async (tenantSlug: string) => {
       </div>
 
       <div class="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-        <h1 class="text-xl font-bold text-slate-900">Your organizations</h1>
-        <p class="mt-1 text-sm text-slate-500">Select an organization to open its dashboard.</p>
+        <h1 class="text-xl font-bold text-slate-900">Your publications</h1>
+        <p class="mt-1 text-sm text-slate-500">Select a publication to open its dashboard.</p>
 
         <div v-if="session.memberships.length === 0" class="mt-6 rounded-xl border border-slate-200 bg-slate-50 px-5 py-6 text-center">
-          <p class="text-sm text-slate-500">No organization found for this account yet.</p>
+          <p class="text-sm text-slate-500">No publication found for this account yet.</p>
           <RouterLink
             to="/tenant/create"
             class="mt-4 inline-block rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90"
           >
-            Create your first organization
+            Create your first publication
           </RouterLink>
         </div>
 
@@ -45,7 +45,10 @@ const openOrg = async (tenantSlug: string) => {
             @click="openOrg(membership.tenant_slug)"
           >
             <div>
-              <p class="font-semibold text-slate-900">{{ membership.tenant_name }}</p>
+              <p class="flex items-center gap-2 font-semibold text-slate-900">
+                {{ membership.tenant_name }}
+                <span v-if="membership.status === 'paused'" class="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">Paused</span>
+              </p>
               <p class="text-xs text-slate-400">{{ membership.tenant_slug }} · {{ membership.role }}</p>
             </div>
             <span class="text-sm font-semibold text-indigo-600">Open</span>
@@ -55,7 +58,7 @@ const openOrg = async (tenantSlug: string) => {
             to="/tenant/create"
             class="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-400 transition-colors hover:border-indigo-300 hover:text-indigo-600"
           >
-            <span>+ Add organization</span>
+            <span>+ Add publication</span>
           </RouterLink>
         </div>
       </div>

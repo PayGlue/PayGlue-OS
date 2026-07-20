@@ -6,6 +6,10 @@ from django.db import IntegrityError
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
 
+from payglue_backend.authn.profile_gate import (
+    InviteGateError,
+    resolve_profile_with_invite_gate,
+)
 from payglue_backend.authn.verifier import (
     AuthVerificationUnavailableError,
     ExpiredAuthTokenError,
@@ -47,13 +51,17 @@ class FirebaseBearerAuthentication(BaseAuthentication):
                 "Authentication service is unavailable."
             ) from exc
 
+        # Same invite-gated resolution AuthSessionView uses, so a brand-new
+        # invited user's very first authenticated call (whichever endpoint
+        # that happens to be) still provisions their profile correctly, while
+        # a verified JWT with no invite behind it (e.g. an uninvited OAuth
+        # sign-in) is rejected rather than silently provisioned.
         try:
-            profile, _ = UserProfile.objects.update_or_create(
-                firebase_uid=claims.firebase_uid,
-                defaults={"email": claims.email},
-            )
+            profile = resolve_profile_with_invite_gate(claims)
         except IntegrityError as exc:
             raise AuthenticationFailed("Authentication profile conflict.") from exc
+        except InviteGateError as exc:
+            raise AuthenticationFailed(str(exc)) from exc
 
         request._request.user_profile = profile
         return profile, None

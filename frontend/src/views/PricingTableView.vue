@@ -4,7 +4,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import AppShell from '../components/AppShell.vue'
+import { PageHeader, UiButton } from '../components/ui'
+import UpgradeBanner from '../components/UpgradeBanner.vue'
 import { useSessionStore } from '../stores/session'
+import { isPlanLimitError, planKeyFromError } from '../lib/planUpgrade'
 import {
   listPricingTables,
   createPricingTable,
@@ -13,6 +16,10 @@ import {
   getPolarProducts,
   getLemonSqueezyProducts,
   getPayPalProducts,
+  getGumroadProducts,
+  getPaddleProducts,
+  getCreemProducts,
+  getPatreonProducts,
   listMappings,
   createMapping,
   updateMapping,
@@ -38,7 +45,7 @@ interface LocalTier {
   cta_url: string
   features: LocalFeature[]
   selectedProductId: string
-  selectedProvider: 'polar' | 'lemonsqueezy' | 'paypal'
+  selectedProvider: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon'
   mappingEventType: 'order.paid' | 'subscription.active'
   mappingGhostSubscribed: boolean
   mappingEmailType: 'signin' | 'signup' | 'subscribe' | ''
@@ -86,6 +93,7 @@ const formShowToggle = computed(() => formTiers.value.some(t => t.cta_type === '
 
 const saving = ref(false)
 const saveError = ref<string | null>(null)
+const saveErrorPlan = ref<string | null>(null)
 const justSaved = ref<PricingTableData | null>(null)
 const copiedSnippet = ref(false)
 const copiedOverlay = ref(false)
@@ -108,7 +116,55 @@ const paypalProducts = ref<Product[]>([])
 const paypalProductsLoading = ref(false)
 const paypalProductsError = ref<string | null>(null)
 
-const allProducts = computed(() => [...polarProducts.value, ...lsProducts.value, ...paypalProducts.value])
+const gumroadProducts = ref<Product[]>([])
+const gumroadProductsLoading = ref(false)
+const gumroadProductsError = ref<string | null>(null)
+
+const paddleProducts = ref<Product[]>([])
+const paddleProductsLoading = ref(false)
+const paddleProductsError = ref<string | null>(null)
+
+const creemProducts = ref<Product[]>([])
+const creemProductsLoading = ref(false)
+const creemProductsError = ref<string | null>(null)
+
+const patreonProducts = ref<Product[]>([])
+const patreonProductsLoading = ref(false)
+const patreonProductsError = ref<string | null>(null)
+
+const allProducts = computed(() => [...polarProducts.value, ...lsProducts.value, ...paypalProducts.value, ...gumroadProducts.value, ...paddleProducts.value, ...creemProducts.value, ...patreonProducts.value])
+
+type ProviderKey = 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon'
+
+function productsForProvider(provider: ProviderKey): Product[] {
+  if (provider === 'polar') return polarProducts.value
+  if (provider === 'paypal') return paypalProducts.value
+  if (provider === 'gumroad') return gumroadProducts.value
+  if (provider === 'paddle') return paddleProducts.value
+  if (provider === 'creem') return creemProducts.value
+  if (provider === 'patreon') return patreonProducts.value
+  return lsProducts.value
+}
+
+function productsLoadingForProvider(provider: ProviderKey): boolean {
+  if (provider === 'polar') return polarProductsLoading.value
+  if (provider === 'paypal') return paypalProductsLoading.value
+  if (provider === 'gumroad') return gumroadProductsLoading.value
+  if (provider === 'paddle') return paddleProductsLoading.value
+  if (provider === 'creem') return creemProductsLoading.value
+  if (provider === 'patreon') return patreonProductsLoading.value
+  return lsProductsLoading.value
+}
+
+function productsErrorForProvider(provider: ProviderKey): string | null {
+  if (provider === 'polar') return polarProductsError.value
+  if (provider === 'paypal') return paypalProductsError.value
+  if (provider === 'gumroad') return gumroadProductsError.value
+  if (provider === 'paddle') return paddleProductsError.value
+  if (provider === 'creem') return creemProductsError.value
+  if (provider === 'patreon') return patreonProductsError.value
+  return lsProductsError.value
+}
 
 const mappings = ref<ProductMapping[]>([])
 
@@ -173,6 +229,70 @@ async function loadPayPalProducts() {
   }
 }
 
+async function loadGumroadProducts() {
+  if (!session.activeTenantSlug || !session.idToken) return
+  gumroadProductsLoading.value = true
+  gumroadProductsError.value = null
+  try {
+    const result = await getGumroadProducts(session.activeTenantSlug, session.idToken)
+    gumroadProducts.value = result.products ?? []
+    if (!result.has_token) gumroadProductsError.value = 'No Gumroad credentials configured. Connect Gumroad first.'
+    else if (result.error) gumroadProductsError.value = result.error
+  } catch {
+    gumroadProductsError.value = 'Could not load Gumroad products.'
+  } finally {
+    gumroadProductsLoading.value = false
+  }
+}
+
+async function loadPaddleProducts() {
+  if (!session.activeTenantSlug || !session.idToken) return
+  paddleProductsLoading.value = true
+  paddleProductsError.value = null
+  try {
+    const result = await getPaddleProducts(session.activeTenantSlug, session.idToken)
+    paddleProducts.value = result.products ?? []
+    if (!result.has_token) paddleProductsError.value = 'No Paddle credentials configured. Connect Paddle first.'
+    else if (result.error) paddleProductsError.value = result.error
+  } catch {
+    paddleProductsError.value = 'Could not load Paddle products.'
+  } finally {
+    paddleProductsLoading.value = false
+  }
+}
+
+async function loadPatreonProducts() {
+  if (!session.activeTenantSlug || !session.idToken) return
+  patreonProductsLoading.value = true
+  patreonProductsError.value = null
+  try {
+    const result = await getPatreonProducts(session.activeTenantSlug, session.idToken)
+    patreonProducts.value = result.products ?? []
+    if (!result.has_token) patreonProductsError.value = 'No Patreon credentials configured. Connect Patreon first.'
+    else if (result.error) patreonProductsError.value = result.error
+  } catch {
+    patreonProductsError.value = 'Could not load Patreon tiers.'
+  } finally {
+    patreonProductsLoading.value = false
+  }
+}
+
+async function loadCreemProducts() {
+  if (!session.activeTenantSlug || !session.idToken) return
+  creemProductsLoading.value = true
+  creemProductsError.value = null
+  try {
+    const result = await getCreemProducts(session.activeTenantSlug, session.idToken)
+    creemProducts.value = result.products ?? []
+    if (!result.has_token) creemProductsError.value = 'No Creem credentials configured. Connect Creem first.'
+    else if (result.error) creemProductsError.value = result.error
+  } catch {
+    creemProductsError.value = 'Could not load Creem products.'
+  } finally {
+    creemProductsLoading.value = false
+  }
+}
+
 async function loadMappings() {
   if (!session.activeTenantSlug || !session.idToken) return
   try {
@@ -198,18 +318,17 @@ function syncTierMappingState(tier: LocalTier) {
 }
 
 function checkoutUrlForProduct(tier: LocalTier, id: string): string {
-  const list = tier.selectedProvider === 'lemonsqueezy' ? lsProducts.value
-    : tier.selectedProvider === 'paypal' ? paypalProducts.value
-    : polarProducts.value
-  return list.find(p => p.id === id)?.checkout_url ?? ''
+  return productsForProvider(tier.selectedProvider).find(p => p.id === id)?.checkout_url ?? ''
 }
 
-function productIdForUrl(url: string): { id: string; provider: 'polar' | 'lemonsqueezy' | 'paypal' } {
+function productIdForUrl(url: string): { id: string; provider: ProviderKey } {
   if (!url) return { id: '', provider: 'polar' }
   const polar = polarProducts.value.find(p => p.checkout_url === url)
   if (polar) return { id: polar.id, provider: 'polar' }
   const ls = lsProducts.value.find(p => p.checkout_url === url)
   if (ls) return { id: ls.id, provider: 'lemonsqueezy' }
+  const gumroad = gumroadProducts.value.find(p => p.checkout_url === url)
+  if (gumroad) return { id: gumroad.id, provider: 'gumroad' }
   return { id: '', provider: 'polar' }
 }
 
@@ -256,8 +375,16 @@ function startEdit(table: PricingTableData) {
   formTemplate.value = table.template
   formAccentColor.value = table.accent_color || '#4f46e5'
   formCurrency.value = (table.currency as 'EUR' | 'USD' | 'GBP' | 'CHF') || 'EUR'
+  const KNOWN_PROVIDERS = ['polar', 'lemonsqueezy', 'paypal', 'gumroad', 'paddle', 'kofi', 'creem', 'patreon'] as const
   formTiers.value = table.tiers.map(t => {
-    const { id: pId, provider: pProv } = productIdForUrl(t.cta_url)
+    // Tiers saved since PR (product_provider/product_id) restore directly --
+    // older tiers fall back to the legacy guess (cta_url matched against live
+    // product lists), same fix as BuyButton/Paywall (527d75d). Ko-fi has no
+    // checkout_url to match, so it only ever works via the persisted fields.
+    const persisted = t.product_id && (KNOWN_PROVIDERS as readonly string[]).includes(t.product_provider || '')
+    const { id: pId, provider: pProv } = persisted
+      ? { id: t.product_id!, provider: t.product_provider as LocalTier['selectedProvider'] }
+      : productIdForUrl(t.cta_url)
     const em = pId ? mappings.value.find(m => m.external_product_id === pId) : undefined
     const emEmailTypes = em?.metadata?.ghost_email_types ?? (em?.metadata?.ghost_email_type ? [em.metadata.ghost_email_type] : ['signin'])
     return defaultTier({
@@ -319,6 +446,30 @@ function setFeatureIcon(tier: LocalTier, idx: number, icon: PricingFeatureIcon) 
   if (feat) feat.icon = icon
 }
 
+// Ko-fi has no product dropdown (no API to fetch tiers/shop items), so its
+// field is manual text entry -- mirrors BuyButtonView/PaywallConfigView.
+// Pasting a full shop-item share link (ko-fi.com/s/<code>) extracts the
+// code we actually need for the mapping and fills the CTA URL with the
+// pasted link so the tier has somewhere to send buyers.
+function onKofiProductInput(tier: LocalTier) {
+  const val = tier.selectedProductId
+  const m = val.match(/ko-fi\.com\/s\/([A-Za-z0-9]+)/i)
+  if (m) {
+    if (!tier.cta_url) {
+      tier.cta_url = val.startsWith('http') ? val.trim() : `https://${val.trim()}`
+    }
+    tier.selectedProductId = m[1]
+  }
+  if (tier.selectedProductId) {
+    syncTierMappingState(tier)
+  } else {
+    tier.existingMappingId = null
+    tier.mappingEventType = 'order.paid'
+    tier.mappingGhostSubscribed = true
+    tier.mappingEmailType = 'signin'
+  }
+}
+
 function onProductSelect(tier: LocalTier, productId: string) {
   tier.selectedProductId = productId
   if (productId) {
@@ -356,6 +507,8 @@ async function save() {
         cta_label: t.cta_label,
         cta_url: t.cta_url,
         features: t.features,
+        product_provider: t.selectedProductId ? t.selectedProvider : '',
+        product_id: t.selectedProductId,
       })),
     }
     let saved: PricingTableData
@@ -394,6 +547,7 @@ async function save() {
     }
   } catch (e: unknown) {
     saveError.value = e instanceof Error ? e.message : 'Save failed.'
+    saveErrorPlan.value = isPlanLimitError(e) ? planKeyFromError(e) : null
   } finally {
     saving.value = false
   }
@@ -471,68 +625,60 @@ onMounted(async () => {
   loadPolarProducts()
   loadLsProducts()
   loadPayPalProducts()
+  loadGumroadProducts()
+  loadPaddleProducts()
+  loadCreemProducts()
+  loadPatreonProducts()
   loadMappings()
 })
 </script>
 
 <template>
   <AppShell>
-    <div class="space-y-6">
+    <div class="space-y-5">
 
-      <!-- Header -->
-      <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div class="flex items-start justify-between gap-4">
-          <div>
-            <p class="text-xs font-semibold uppercase tracking-[0.12em] text-indigo-600">Embeds</p>
-            <h1 class="mt-1 text-xl font-semibold text-slate-900">Pricing Tables</h1>
-            <p class="mt-1 text-sm text-slate-600">
-              Build a pricing table with up to 3 tiers and paste the embed snippet into any Ghost HTML card.
-            </p>
-          </div>
-          <button
-            type="button"
-            @click="openNew"
-            class="flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 transition-colors"
-          >
+      <PageHeader title="Pricing Tables" description="Build a pricing table with up to 3 tiers and paste the embed snippet into any Ghost HTML card.">
+        <template #actions>
+          <UiButton variant="primary" size="sm" @click="openNew">
             <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
             </svg>
             New table
-          </button>
-        </div>
-      </section>
+          </UiButton>
+        </template>
+      </PageHeader>
 
       <!-- Empty state (only when no editor open and no tables) -->
-      <section v-if="!loading && !editorOpen && tables.length === 0" class="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center">
+      <section v-if="!loading && !editorOpen && tables.length === 0" class="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-10 text-center">
         <svg class="mx-auto h-10 w-10 text-slate-300" fill="none" stroke="currentColor" stroke-width="1.25" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0112 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375z" />
         </svg>
-        <p class="mt-3 text-sm font-medium text-slate-500">No pricing tables yet</p>
-        <p class="mt-1 text-xs text-slate-400">Click "New table" to create your first one.</p>
+        <p class="mt-3 text-sm font-medium text-slate-500 dark:text-slate-400">No pricing tables yet</p>
+        <p class="mt-1 text-xs text-slate-400 dark:text-slate-500">Click "New table" to create your first one.</p>
       </section>
 
       <!-- Editor -->
-      <section v-if="editorOpen" class="rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div class="border-b border-slate-100 px-5 py-3.5">
-          <p class="text-sm font-semibold text-slate-900">{{ isEditing ? 'Edit table' : 'New pricing table' }}</p>
+      <section v-if="editorOpen" class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div class="border-b border-slate-100 dark:border-slate-800 px-5 py-3.5">
+          <p class="text-sm font-semibold text-slate-900 dark:text-slate-100">{{ isEditing ? 'Edit table' : 'New pricing table' }}</p>
         </div>
 
         <div class="p-5 space-y-6">
 
           <!-- Internal name -->
           <div>
-            <label class="block text-xs font-medium text-slate-700 mb-1.5">Internal name</label>
+            <label class="block text-xs font-medium text-slate-700 dark:text-slate-200 mb-1.5">Internal name</label>
             <input
               v-model="formName"
               type="text"
               placeholder="e.g. Main pricing page"
-              class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
             />
           </div>
 
           <!-- Template picker -->
           <div>
-            <label class="block text-xs font-medium text-slate-700 mb-2">Template</label>
+            <label class="block text-xs font-medium text-slate-700 dark:text-slate-200 mb-2">Template</label>
             <div class="grid grid-cols-3 gap-2.5">
               <button
                 v-for="tmpl in TEMPLATES"
@@ -541,11 +687,11 @@ onMounted(async () => {
                 @click="formTemplate = tmpl.value"
                 class="rounded-lg border-2 p-3 text-left transition-all"
                 :class="formTemplate === tmpl.value
-                  ? 'border-indigo-500 bg-indigo-50'
-                  : 'border-slate-200 bg-white hover:border-slate-300'"
+                  ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-500/10'
+                  : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-800/40 dark:hover:border-slate-700'"
               >
-                <p class="text-xs font-semibold" :class="formTemplate === tmpl.value ? 'text-indigo-700' : 'text-slate-700'">{{ tmpl.label }}</p>
-                <p class="mt-0.5 text-[11px] leading-snug" :class="formTemplate === tmpl.value ? 'text-indigo-500' : 'text-slate-400'">{{ tmpl.desc }}</p>
+                <p class="text-xs font-semibold" :class="formTemplate === tmpl.value ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-700 dark:text-slate-200'">{{ tmpl.label }}</p>
+                <p class="mt-0.5 text-[11px] leading-snug" :class="formTemplate === tmpl.value ? 'text-indigo-500' : 'text-slate-400 dark:text-slate-500'">{{ tmpl.desc }}</p>
               </button>
             </div>
           </div>
@@ -553,35 +699,35 @@ onMounted(async () => {
           <!-- Accent color + Toggle row -->
           <div class="flex items-center gap-6">
             <div class="flex items-center gap-2.5">
-              <label for="accent-color" class="text-sm text-slate-700 whitespace-nowrap">Accent color</label>
+              <label for="accent-color" class="text-sm text-slate-700 dark:text-slate-200 whitespace-nowrap">Accent color</label>
               <div class="relative flex items-center gap-2">
                 <input
                   id="accent-color"
                   v-model="formAccentColor"
                   type="color"
-                  class="h-8 w-8 cursor-pointer rounded border border-slate-300 p-0.5 bg-white"
+                  class="h-8 w-8 cursor-pointer rounded border border-slate-300 dark:border-slate-700 p-0.5 bg-white"
                 />
                 <input
                   v-model="formAccentColor"
                   type="text"
                   maxlength="7"
-                  class="w-24 rounded border border-slate-300 px-2 py-1 text-xs font-mono text-slate-700 focus:border-indigo-400 focus:outline-none"
+                  class="w-24 rounded border border-slate-300 dark:border-slate-700 px-2 py-1 text-xs font-mono text-slate-700 dark:text-slate-200 focus:border-indigo-400 focus:outline-none"
                   placeholder="#4f46e5"
                 />
               </div>
             </div>
             <div class="flex items-center gap-2.5">
-              <label class="text-xs font-medium text-slate-500">Currency</label>
+              <label class="text-xs font-medium text-slate-500 dark:text-slate-400">Currency</label>
               <select
                 v-model="formCurrency"
-                class="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm bg-white focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                class="rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm bg-white dark:bg-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               >
                 <option value="EUR">EUR (€)</option>
                 <option value="USD">USD ($)</option>
                 <option value="GBP">GBP (£)</option>
                 <option value="CHF">CHF</option>
               </select>
-              <span v-if="formShowToggle" class="ml-2 inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-600">
+              <span v-if="formShowToggle" class="ml-2 inline-flex items-center gap-1 rounded-full bg-indigo-50 dark:bg-indigo-500/10 px-2 py-0.5 text-[11px] font-medium text-indigo-600 dark:text-indigo-400">
                 <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h8M8 12h5m-5 5h8"/></svg>
                 Monthly / yearly toggle active
               </span>
@@ -591,7 +737,7 @@ onMounted(async () => {
           <!-- Tiers -->
           <div class="space-y-4">
             <div class="flex items-center justify-between">
-              <p class="text-xs font-medium text-slate-700">Tiers ({{ formTiers.length }}/3)</p>
+              <p class="text-xs font-medium text-slate-700 dark:text-slate-200">Tiers ({{ formTiers.length }}/3)</p>
               <button
                 v-if="formTiers.length < 3"
                 type="button"
@@ -608,16 +754,16 @@ onMounted(async () => {
             <div
               v-for="(tier, idx) in formTiers"
               :key="tier._key"
-              class="rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-4"
+              class="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 dark:border-slate-800 dark:bg-slate-800/40/50 p-4 space-y-4"
             >
               <!-- Tier header -->
               <div class="flex items-center justify-between gap-2">
-                <p class="text-xs font-semibold text-slate-600">Tier {{ idx + 1 }}</p>
+                <p class="text-xs font-semibold text-slate-600 dark:text-slate-300">Tier {{ idx + 1 }}</p>
                 <button
                   v-if="formTiers.length > 1"
                   type="button"
                   @click="removeTier(idx)"
-                  class="text-slate-400 hover:text-rose-500 transition-colors"
+                  class="text-slate-400 dark:text-slate-500 hover:text-rose-500 transition-colors"
                   title="Remove tier"
                 >
                   <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -629,12 +775,12 @@ onMounted(async () => {
               <!-- Name & description -->
               <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <label class="block text-[11px] font-medium text-slate-600 mb-1">Name</label>
-                  <input v-model="tier.name" type="text" placeholder="Free" class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                  <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Name</label>
+                  <input v-model="tier.name" type="text" placeholder="Free" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
                 </div>
                 <div>
-                  <label class="block text-[11px] font-medium text-slate-600 mb-1">Description</label>
-                  <input v-model="tier.description" type="text" placeholder="For everyone" class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                  <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Description</label>
+                  <input v-model="tier.description" type="text" placeholder="For everyone" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
                 </div>
               </div>
 
@@ -644,24 +790,24 @@ onMounted(async () => {
                 :class="(tier.cta_type === 'one_time' || tier.cta_type === 'free_signup') ? 'grid-cols-2' : (formShowToggle ? 'grid-cols-3' : 'grid-cols-2')"
               >
                 <div>
-                  <label class="block text-[11px] font-medium text-slate-600 mb-1">
+                  <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
                     {{ tier.cta_type === 'one_time' ? 'Price' : tier.cta_type === 'free_signup' ? 'Display price' : (formShowToggle ? 'Monthly price' : 'Price') }}
                   </label>
-                  <input v-model="tier.price_monthly" type="text" placeholder="€0" class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                  <input v-model="tier.price_monthly" type="text" placeholder="€0" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
                 </div>
                 <div v-if="formShowToggle && tier.cta_type !== 'one_time' && tier.cta_type !== 'free_signup'">
-                  <label class="block text-[11px] font-medium text-slate-600 mb-1">Yearly price</label>
-                  <input v-model="tier.price_yearly" type="text" placeholder="€0" class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                  <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Yearly price</label>
+                  <input v-model="tier.price_yearly" type="text" placeholder="€0" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
                 </div>
                 <div v-if="tier.cta_type !== 'free_signup' && tier.cta_type !== 'one_time'">
-                  <label class="block text-[11px] font-medium text-slate-600 mb-1">Trial days</label>
+                  <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Trial days</label>
                   <input
                     :value="tier.trial_days ?? ''"
                     @input="tier.trial_days = ($event.target as HTMLInputElement).value ? parseInt(($event.target as HTMLInputElement).value) : null"
                     type="number"
                     min="0"
                     placeholder="—"
-                    class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
                 </div>
               </div>
@@ -674,8 +820,8 @@ onMounted(async () => {
                     @click="toggleHighlight(idx)"
                     class="flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-[11px] font-medium transition-all"
                     :class="tier.highlight
-                      ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
-                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'"
+                      ? 'border-indigo-300 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300'
+                      : 'border-slate-200 dark:border-slate-800 bg-white text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:border-slate-700'"
                   >
                     <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.562.562 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
@@ -689,104 +835,135 @@ onMounted(async () => {
                     maxlength="10"
                     type="text"
                     placeholder="Popular"
-                    class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
-                  <p class="mt-0.5 text-[10px] text-slate-400">Ribbon text ({{ tier.ribbon_text.length }}/10 chars)</p>
+                  <p class="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">Ribbon text ({{ tier.ribbon_text.length }}/10 chars)</p>
                 </div>
               </div>
 
               <!-- CTA -->
               <div class="space-y-2">
-                <p class="text-[11px] font-medium text-slate-600">Call to action</p>
+                <p class="text-[11px] font-medium text-slate-600 dark:text-slate-300">Call to action</p>
                 <div class="grid grid-cols-3 gap-2">
-                  <select v-model="tier.cta_type" class="col-span-1 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white">
+                  <select v-model="tier.cta_type" class="col-span-1 rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900">
                     <option value="custom_url">Custom URL</option>
                     <option value="free_signup">Free Sign-Up</option>
                     <option value="one_time">One-time</option>
                     <option value="subscription">Subscription</option>
                   </select>
-                  <input v-model="tier.cta_label" type="text" placeholder="Get started" class="col-span-2 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                  <input v-model="tier.cta_label" type="text" placeholder="Get started" class="col-span-2 rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
                 </div>
                 <!-- Free Sign-Up info box -->
-                <div v-if="tier.cta_type === 'free_signup'" class="rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2.5 text-[11px] text-indigo-700 leading-relaxed">
+                <div v-if="tier.cta_type === 'free_signup'" class="rounded-lg border border-indigo-100 dark:border-indigo-500/30 bg-indigo-50 dark:bg-indigo-500/10 px-3 py-2.5 text-[11px] text-indigo-700 dark:text-indigo-300 leading-relaxed">
                   Visitors who click this button will be redirected to your Ghost free member signup. No payment required, no URL to enter.
                 </div>
                 <!-- Product picker for paid types -->
                 <div v-if="tier.cta_type === 'one_time' || tier.cta_type === 'subscription'" class="space-y-1.5">
-                  <div class="flex gap-1.5">
+                  <div class="flex flex-wrap gap-1.5">
                     <button type="button"
                       class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-                      :class="tier.selectedProvider === 'polar' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                      :class="tier.selectedProvider === 'polar' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
                       @click="tier.selectedProvider = 'polar'; tier.selectedProductId = ''; tier.cta_url = ''">Polar</button>
                     <button type="button"
                       class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-                      :class="tier.selectedProvider === 'lemonsqueezy' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                      :class="tier.selectedProvider === 'lemonsqueezy' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
                       @click="tier.selectedProvider = 'lemonsqueezy'; tier.selectedProductId = ''; tier.cta_url = ''">Lemon Squeezy</button>
                     <button type="button"
                       class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-                      :class="tier.selectedProvider === 'paypal' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                      :class="tier.selectedProvider === 'paypal' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
                       @click="tier.selectedProvider = 'paypal'; tier.selectedProductId = ''; tier.cta_url = ''">PayPal</button>
+                    <button type="button"
+                      class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                      :class="tier.selectedProvider === 'gumroad' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
+                      @click="tier.selectedProvider = 'gumroad'; tier.selectedProductId = ''; tier.cta_url = ''">Gumroad</button>
+                    <button type="button"
+                      class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                      :class="tier.selectedProvider === 'paddle' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
+                      @click="tier.selectedProvider = 'paddle'; tier.selectedProductId = ''; tier.cta_url = ''">Paddle</button>
+                    <button type="button"
+                      class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                      :class="tier.selectedProvider === 'kofi' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
+                      @click="tier.selectedProvider = 'kofi'; tier.selectedProductId = ''; tier.cta_url = ''">Ko-fi</button>
+                    <button type="button"
+                      class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                      :class="tier.selectedProvider === 'creem' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
+                      @click="tier.selectedProvider = 'creem'; tier.selectedProductId = ''; tier.cta_url = ''">Creem</button>
+                    <button type="button"
+                      class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
+                      :class="tier.selectedProvider === 'patreon' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
+                      @click="tier.selectedProvider = 'patreon'; tier.selectedProductId = ''; tier.cta_url = ''; tier.mappingEventType = 'subscription.active'">Patreon</button>
                   </div>
-                  <select
-                    :value="tier.selectedProductId"
-                    @change="onProductSelect(tier, ($event.target as HTMLSelectElement).value)"
-                    class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white"
-                    :disabled="tier.selectedProvider === 'polar' ? polarProductsLoading : tier.selectedProvider === 'paypal' ? paypalProductsLoading : lsProductsLoading"
-                  >
-                    <option value="">
-                      {{ (tier.selectedProvider === 'polar' ? polarProductsLoading : tier.selectedProvider === 'paypal' ? paypalProductsLoading : lsProductsLoading) ? 'Loading...' :
-                         (tier.selectedProvider === 'polar' ? polarProductsError : tier.selectedProvider === 'paypal' ? paypalProductsError : lsProductsError) ? 'No products available' : 'Select a product' }}
-                    </option>
-                    <option v-for="p in (tier.selectedProvider === 'polar' ? polarProducts : tier.selectedProvider === 'paypal' ? paypalProducts : lsProducts)" :key="p.id" :value="p.id">{{ p.name }}</option>
-                  </select>
-                  <p v-if="polarSandbox && tier.selectedProvider === 'polar'" class="text-[10px] text-amber-600">Sandbox mode — using test products</p>
-                  <p v-if="tier.selectedProvider === 'polar' && polarProductsError" class="text-[10px] text-amber-600">{{ polarProductsError }}</p>
-                  <p v-if="tier.selectedProvider === 'lemonsqueezy' && lsProductsError" class="text-[10px] text-amber-600">{{ lsProductsError }}</p>
-                  <p v-if="tier.selectedProvider === 'paypal' && paypalProductsError" class="text-[10px] text-amber-600">{{ paypalProductsError }}</p>
+                  <template v-if="tier.selectedProvider === 'kofi'">
+                    <input
+                      v-model="tier.selectedProductId"
+                      @input="onKofiProductInput(tier)"
+                      type="text"
+                      placeholder="Paste a shop item link (ko-fi.com/s/...), a tier name, or kofi-support"
+                      class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <p class="text-[10px] text-slate-400 dark:text-slate-500">For shop items, just paste the item's share link (Share &rarr; Copy link, e.g. <code>ko-fi.com/s/c0e30e5fcf</code>), we extract the item code and fill the checkout URL for you. For memberships, type the exact tier name as it appears on your Ko-fi page. Use <code>kofi-support</code> for plain tips.</p>
+                  </template>
+                  <template v-else>
+                    <select
+                      :value="tier.selectedProductId"
+                      @change="onProductSelect(tier, ($event.target as HTMLSelectElement).value)"
+                      class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
+                      :disabled="productsLoadingForProvider(tier.selectedProvider)"
+                    >
+                      <option value="">
+                        {{ productsLoadingForProvider(tier.selectedProvider) ? 'Loading...' :
+                           productsErrorForProvider(tier.selectedProvider) ? 'No products available' : 'Select a product' }}
+                      </option>
+                      <option v-for="p in productsForProvider(tier.selectedProvider)" :key="p.id" :value="p.id">{{ p.name }}</option>
+                    </select>
+                    <p v-if="polarSandbox && tier.selectedProvider === 'polar'" class="text-[10px] text-amber-600 dark:text-amber-400">Sandbox mode, using test products</p>
+                    <p v-if="productsErrorForProvider(tier.selectedProvider)" class="text-[10px] text-amber-600 dark:text-amber-400">{{ productsErrorForProvider(tier.selectedProvider) }}</p>
+                    <p v-if="tier.selectedProvider === 'paddle'" class="text-[10px] text-slate-400 dark:text-slate-500">Paddle checkout is driven client-side and has no direct checkout link. Enter your Paddle checkout link manually after selecting a product.</p>
+                  </template>
                   <!-- Ghost actions mapping -->
-                  <div v-if="tier.selectedProductId" class="rounded-lg border border-indigo-100 bg-indigo-50/40 px-3 py-2.5 space-y-2">
+                  <div v-if="tier.selectedProductId" class="rounded-lg border border-indigo-100 dark:border-indigo-500/30 bg-indigo-50/40 dark:bg-indigo-500/10 px-3 py-2.5 space-y-2">
                     <div class="flex items-center justify-between">
-                      <p class="text-[10px] font-semibold uppercase tracking-widest text-indigo-600">Ghost actions</p>
-                      <span v-if="tier.existingMappingId !== null" class="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                      <p class="text-[10px] font-semibold uppercase tracking-widest text-indigo-600 dark:text-indigo-400">Ghost actions</p>
+                      <span v-if="tier.existingMappingId !== null" class="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
                         <svg class="h-2 w-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
                         Mapped
                       </span>
-                      <span v-else class="inline-flex items-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">Not mapped</span>
+                      <span v-else class="inline-flex items-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 dark:text-slate-400">Not mapped</span>
                     </div>
                     <!-- Trigger -->
                     <div class="grid grid-cols-2 gap-1">
                       <button type="button"
                         class="flex items-center gap-1.5 rounded border px-2 py-1.5 text-left transition-colors"
-                        :class="tier.mappingEventType === 'order.paid' ? 'border-indigo-300 bg-white' : 'border-slate-200 bg-white/60 hover:bg-white'"
+                        :class="tier.mappingEventType === 'order.paid' ? 'border-indigo-300 bg-white dark:border-indigo-500/50 dark:bg-indigo-500/10' : 'border-slate-200 dark:border-slate-800 bg-white/60 hover:bg-white dark:bg-slate-800/40 dark:hover:bg-slate-800'"
                         @click="tier.mappingEventType = 'order.paid'">
                         <div class="h-3 w-3 rounded-full border-2 flex items-center justify-center shrink-0"
-                          :class="tier.mappingEventType === 'order.paid' ? 'border-indigo-600 bg-indigo-600' : 'border-slate-300'">
+                          :class="tier.mappingEventType === 'order.paid' ? 'border-indigo-600 bg-indigo-600' : 'border-slate-300 dark:border-slate-700'">
                           <div v-if="tier.mappingEventType === 'order.paid'" class="h-1 w-1 rounded-full bg-white" />
                         </div>
-                        <span class="text-[10px] font-medium text-slate-700">One-time</span>
+                        <span class="text-[10px] font-medium text-slate-700 dark:text-slate-200">One-time</span>
                       </button>
                       <button type="button"
                         class="flex items-center gap-1.5 rounded border px-2 py-1.5 text-left transition-colors"
-                        :class="tier.mappingEventType === 'subscription.active' ? 'border-indigo-300 bg-white' : 'border-slate-200 bg-white/60 hover:bg-white'"
+                        :class="tier.mappingEventType === 'subscription.active' ? 'border-indigo-300 bg-white dark:border-indigo-500/50 dark:bg-indigo-500/10' : 'border-slate-200 dark:border-slate-800 bg-white/60 hover:bg-white dark:bg-slate-800/40 dark:hover:bg-slate-800'"
                         @click="tier.mappingEventType = 'subscription.active'">
                         <div class="h-3 w-3 rounded-full border-2 flex items-center justify-center shrink-0"
-                          :class="tier.mappingEventType === 'subscription.active' ? 'border-indigo-600 bg-indigo-600' : 'border-slate-300'">
+                          :class="tier.mappingEventType === 'subscription.active' ? 'border-indigo-600 bg-indigo-600' : 'border-slate-300 dark:border-slate-700'">
                           <div v-if="tier.mappingEventType === 'subscription.active'" class="h-1 w-1 rounded-full bg-white" />
                         </div>
-                        <span class="text-[10px] font-medium text-slate-700">Subscription</span>
+                        <span class="text-[10px] font-medium text-slate-700 dark:text-slate-200">Subscription</span>
                       </button>
                     </div>
                     <!-- Newsletter + email in one row -->
-                    <div class="flex items-center gap-2 rounded border border-slate-200 bg-white px-2 py-1.5">
-                      <span class="text-[10px] text-slate-600 shrink-0">Newsletter</span>
-                      <label class="flex items-center gap-0.5 cursor-pointer text-[10px] text-slate-700">
+                    <div class="flex items-center gap-2 rounded border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 py-1.5">
+                      <span class="text-[10px] text-slate-600 dark:text-slate-300 shrink-0">Newsletter</span>
+                      <label class="flex items-center gap-0.5 cursor-pointer text-[10px] text-slate-700 dark:text-slate-200">
                         <input type="radio" :value="true" v-model="tier.mappingGhostSubscribed" class="accent-indigo-600 h-3 w-3" /> Yes
                       </label>
-                      <label class="flex items-center gap-0.5 cursor-pointer text-[10px] text-slate-700">
+                      <label class="flex items-center gap-0.5 cursor-pointer text-[10px] text-slate-700 dark:text-slate-200">
                         <input type="radio" :value="false" v-model="tier.mappingGhostSubscribed" class="accent-indigo-600 h-3 w-3" /> No
                       </label>
                     </div>
-                    <select v-model="tier.mappingEmailType" class="w-full rounded border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-800 focus:border-indigo-400 focus:outline-none">
+                    <select v-model="tier.mappingEmailType" class="w-full rounded border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 py-1 text-[10px] text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none">
                       <option value="signin">Magic Link (recommended)</option>
                       <option value="signup">Account confirmation</option>
                       <option value="subscribe">Newsletter opt-in</option>
@@ -795,17 +972,17 @@ onMounted(async () => {
                   </div>
                 </div>
                 <!-- PWYW hint for custom_url -->
-                <div v-if="tier.cta_type === 'custom_url'" class="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-500 leading-relaxed">
-                  You can also use this for Pay What You Want (PWYW) — just paste your payment provider's PWYW checkout link here.
+                <div v-if="tier.cta_type === 'custom_url'" class="rounded-lg border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 dark:border-slate-800 dark:bg-slate-800/40 px-3 py-2 text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                  You can also use this for Pay What You Want (PWYW). Just paste your payment provider's PWYW checkout link here.
                 </div>
                 <!-- URL input for custom_url and paid types -->
                 <div v-if="tier.cta_type !== 'free_signup'">
-                  <label class="block text-[11px] text-slate-500 mb-1">{{ tier.cta_type === 'custom_url' ? 'URL' : 'Checkout URL (auto-filled from product or enter manually)' }}</label>
+                  <label class="block text-[11px] text-slate-500 dark:text-slate-400 mb-1">{{ tier.cta_type === 'custom_url' ? 'URL' : 'Checkout URL (auto-filled from product or enter manually)' }}</label>
                   <input
                     v-model="tier.cta_url"
                     type="url"
                     placeholder="https://"
-                    class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
                 </div>
               </div>
@@ -813,11 +990,11 @@ onMounted(async () => {
               <!-- Features -->
               <div class="space-y-2">
                 <div class="flex items-center justify-between">
-                  <p class="text-[11px] font-medium text-slate-600">Features</p>
+                  <p class="text-[11px] font-medium text-slate-600 dark:text-slate-300">Features</p>
                   <button
                     type="button"
                     @click="addFeature(tier)"
-                    class="flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:border-slate-300 hover:text-slate-800"
+                    class="flex items-center gap-1 rounded border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 py-1 text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:border-slate-700 hover:text-slate-800 dark:text-slate-100"
                   >
                     <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
@@ -825,7 +1002,7 @@ onMounted(async () => {
                     Add
                   </button>
                 </div>
-                <div v-if="tier.features.length === 0" class="text-[11px] text-slate-400 py-1">
+                <div v-if="tier.features.length === 0" class="text-[11px] text-slate-400 dark:text-slate-500 py-1">
                   No features yet.
                 </div>
                 <div
@@ -834,14 +1011,14 @@ onMounted(async () => {
                   class="flex items-center gap-2"
                 >
                   <!-- Icon picker -->
-                  <div class="flex shrink-0 items-center gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5">
+                  <div class="flex shrink-0 items-center gap-0.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-0.5">
                     <button
                       v-for="ico in ICON_OPTIONS"
                       :key="ico.value"
                       type="button"
                       @click="setFeatureIcon(tier, fi, ico.value)"
                       class="w-7 h-6 rounded text-center text-sm leading-none transition-colors"
-                      :class="feat.icon === ico.value ? 'bg-indigo-100 text-indigo-700 font-bold' : 'text-slate-400 hover:bg-slate-100'"
+                      :class="feat.icon === ico.value ? 'bg-indigo-100 text-indigo-700 dark:text-indigo-300 font-bold' : 'text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'"
                       :title="ico.value"
                     >{{ ico.label }}</button>
                   </div>
@@ -849,7 +1026,7 @@ onMounted(async () => {
                     v-model="feat.text"
                     type="text"
                     placeholder="Feature description"
-                    class="flex-1 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    class="flex-1 rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
                   <button
                     type="button"
@@ -866,7 +1043,8 @@ onMounted(async () => {
           </div>
 
           <!-- Error -->
-          <p v-if="saveError" class="text-sm text-rose-600 rounded-lg bg-rose-50 px-3 py-2 border border-rose-200">{{ saveError }}</p>
+          <UpgradeBanner v-if="saveError && saveErrorPlan" :message="saveError" :plan-key="saveErrorPlan" />
+          <p v-else-if="saveError" class="text-sm text-rose-600 dark:text-rose-400 rounded-lg bg-rose-50 dark:bg-rose-500/10 px-3 py-2 border border-rose-200 dark:border-rose-500/30">{{ saveError }}</p>
 
           <!-- Actions -->
           <div class="flex items-center gap-3 pt-1">
@@ -885,7 +1063,7 @@ onMounted(async () => {
             <button
               type="button"
               @click="resetForm"
-              class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+              class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
             >
               Cancel
             </button>
@@ -899,25 +1077,25 @@ onMounted(async () => {
 
         <!-- Success header -->
         <div class="flex items-center gap-2 px-1">
-          <svg class="h-4 w-4 text-emerald-600 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <svg class="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
           </svg>
-          <p class="text-sm font-semibold text-slate-800">Table saved — choose how to embed it</p>
+          <p class="text-sm font-semibold text-slate-800 dark:text-slate-100">Table saved. Choose how to embed it</p>
         </div>
 
         <!-- Option A: Inline embed -->
-        <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-3">
+        <div class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 space-y-3">
           <div>
-            <p class="text-sm font-semibold text-slate-900">Option A — Inline embed</p>
-            <p class="mt-0.5 text-xs text-slate-500">Renders the pricing table directly inside a Ghost HTML card. Width is limited by Ghost's content column.</p>
+            <p class="text-sm font-semibold text-slate-900 dark:text-slate-100">Option A: Inline embed</p>
+            <p class="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Renders the pricing table directly inside a Ghost HTML card. Width is limited by Ghost's content column.</p>
           </div>
           <div class="flex items-center justify-between">
-            <p class="text-xs text-slate-500">Paste into a Ghost HTML card</p>
-            <button type="button" @click="copySnippet" class="flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50">
+            <p class="text-xs text-slate-500 dark:text-slate-400">Paste into a Ghost HTML card</p>
+            <button type="button" @click="copySnippet" class="flex items-center gap-1 rounded border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 py-1 text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/40">
               <svg v-if="!copiedSnippet" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
-              <svg v-else class="h-3 w-3 text-emerald-600" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+              <svg v-else class="h-3 w-3 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
               </svg>
               {{ copiedSnippet ? 'Copied' : 'Copy' }}
@@ -927,41 +1105,41 @@ onMounted(async () => {
         </div>
 
         <!-- Option B: Overlay button -->
-        <div class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm space-y-3">
+        <div class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 space-y-3">
           <div>
-            <p class="text-sm font-semibold text-slate-900">Option B — Overlay button</p>
-            <p class="mt-0.5 text-xs text-slate-500">Renders a styled button anywhere on your page. Clicking it opens the full pricing table in a full-screen overlay — no width constraints.</p>
+            <p class="text-sm font-semibold text-slate-900 dark:text-slate-100">Option B: Overlay button</p>
+            <p class="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Renders a styled button anywhere on your page. Clicking it opens the full pricing table in a full-screen overlay, with no width constraints.</p>
           </div>
           <!-- Button label -->
           <div>
-            <label class="block text-[11px] font-medium text-slate-600 mb-1">Button label</label>
+            <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Button label</label>
             <input
               v-model="overlayLabel"
               type="text"
               placeholder="View plans"
-              class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
             />
           </div>
           <!-- Button style options -->
           <div class="grid grid-cols-3 gap-3">
             <div>
-              <label class="block text-[11px] font-medium text-slate-600 mb-1">Button color</label>
+              <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Button color</label>
               <div class="flex items-center gap-1.5">
-                <input v-model="overlayBgColor" type="color" class="h-8 w-8 cursor-pointer rounded border border-slate-300 p-0.5 bg-white shrink-0" />
-                <input v-model="overlayBgColor" type="text" maxlength="7" class="w-full rounded border border-slate-300 px-2 py-1.5 text-xs font-mono text-slate-700 focus:border-indigo-400 focus:outline-none" placeholder="#4f46e5" />
+                <input v-model="overlayBgColor" type="color" class="h-8 w-8 cursor-pointer rounded border border-slate-300 dark:border-slate-700 p-0.5 bg-white shrink-0" />
+                <input v-model="overlayBgColor" type="text" maxlength="7" class="w-full rounded border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-xs font-mono text-slate-700 dark:text-slate-200 focus:border-indigo-400 focus:outline-none" placeholder="#4f46e5" />
               </div>
             </div>
             <div>
-              <label class="block text-[11px] font-medium text-slate-600 mb-1">Corners</label>
-              <select v-model="overlayRadius" class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white">
+              <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Corners</label>
+              <select v-model="overlayRadius" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900">
                 <option value="md">Rounded</option>
                 <option value="full">Pill</option>
                 <option value="none">Flat</option>
               </select>
             </div>
             <div>
-              <label class="block text-[11px] font-medium text-slate-600 mb-1">Alignment</label>
-              <select v-model="overlayAlign" class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white">
+              <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Alignment</label>
+              <select v-model="overlayAlign" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900">
                 <option value="left">Left</option>
                 <option value="center">Center</option>
                 <option value="right">Right</option>
@@ -969,12 +1147,12 @@ onMounted(async () => {
             </div>
           </div>
           <div class="flex items-center justify-between">
-            <p class="text-xs text-slate-500">Paste into any Ghost HTML card or text block</p>
-            <button type="button" @click="copyOverlay" class="flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50">
+            <p class="text-xs text-slate-500 dark:text-slate-400">Paste into any Ghost HTML card or text block</p>
+            <button type="button" @click="copyOverlay" class="flex items-center gap-1 rounded border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 py-1 text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/40">
               <svg v-if="!copiedOverlay" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
-              <svg v-else class="h-3 w-3 text-emerald-600" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+              <svg v-else class="h-3 w-3 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
               </svg>
               {{ copiedOverlay ? 'Copied' : 'Copy' }}
@@ -986,31 +1164,31 @@ onMounted(async () => {
       </section>
 
       <!-- Saved tables list (below editor) -->
-      <section v-if="tables.length > 0" class="rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div class="border-b border-slate-100 px-5 py-3">
-          <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Saved tables</p>
+      <section v-if="tables.length > 0" class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div class="border-b border-slate-100 dark:border-slate-800 px-5 py-3">
+          <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Saved tables</p>
         </div>
         <ul class="divide-y divide-slate-100">
           <li
             v-for="table in tables"
             :key="table.id"
-            class="flex items-center gap-2 px-5 py-3 hover:bg-slate-50 transition-colors"
-            :class="editingId === table.id ? 'bg-indigo-50/60' : ''"
+            class="flex items-center gap-2 px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+            :class="editingId === table.id ? 'bg-indigo-50/60 dark:bg-indigo-500/10' : ''"
           >
-            <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-500">
+            <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 dark:bg-indigo-500/10 text-indigo-500">
               <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0112 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375z" />
               </svg>
             </div>
             <div class="min-w-0 flex-1">
-              <p class="truncate text-sm font-medium text-slate-900">{{ table.name }}</p>
-              <p class="text-xs text-slate-400 capitalize">{{ table.template }} &middot; {{ table.tiers.length }} tier{{ table.tiers.length !== 1 ? 's' : '' }}</p>
+              <p class="truncate text-sm font-medium text-slate-900 dark:text-slate-100">{{ table.name }}</p>
+              <p class="text-xs text-slate-400 dark:text-slate-500 capitalize">{{ table.template }} &middot; {{ table.tiers.length }} tier{{ table.tiers.length !== 1 ? 's' : '' }}</p>
             </div>
             <button
               type="button"
               @click="startEdit(table)"
-              class="shrink-0 flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
-              :class="editingId === table.id ? 'border-indigo-300 bg-indigo-50 text-indigo-600' : ''"
+              class="shrink-0 flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 px-2.5 py-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
+              :class="editingId === table.id ? 'border-indigo-300 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400' : ''"
               title="Edit table"
             >
               <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -1022,7 +1200,7 @@ onMounted(async () => {
               type="button"
               :disabled="deletingId === table.id"
               @click.stop="deleteTable(table.id)"
-              class="shrink-0 rounded p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-50 transition-colors"
+              class="shrink-0 rounded p-1.5 text-slate-400 dark:text-slate-500 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-50 transition-colors"
               title="Delete table"
             >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">

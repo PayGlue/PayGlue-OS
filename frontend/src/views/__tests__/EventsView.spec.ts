@@ -47,8 +47,10 @@ const makeRouter = async () => {
 }
 
 const expandEvent = async (providerLabelText: string) => {
-  const [label] = screen.getAllByText(providerLabelText)
-  const header = label?.closest('button')
+  // The provider name can also appear as a <option> in the provider filter
+  // dropdown, so pick the match that's actually inside a row button.
+  const labels = screen.getAllByText(providerLabelText)
+  const header = labels.map(label => label.closest('button')).find(Boolean)
   if (!header) throw new Error(`No expandable header found for ${providerLabelText}`)
   await fireEvent.click(header)
 }

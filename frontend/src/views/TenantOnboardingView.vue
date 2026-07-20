@@ -7,7 +7,9 @@ import { useRouter, useRoute } from 'vue-router'
 import { useSessionStore } from '../stores/session'
 import { supabase } from '../lib/supabase'
 import { api, createTenant, updateIntegrationConfig, setIntegrationCredentials } from '../lib/api'
+import { isPlanLimitError, planKeyFromError } from '../lib/planUpgrade'
 import PayGlueLogo from '../components/PayGlueLogo.vue'
+import UpgradeBanner from '../components/UpgradeBanner.vue'
 
 const session = useSessionStore()
 const router = useRouter()
@@ -16,12 +18,13 @@ const route = useRoute()
 const initialStep = Number(route.query.step) as 1 | 2 | 3
 const step = ref<1 | 2 | 3>([1, 2, 3].includes(initialStep) ? initialStep : 1)
 
-// Step 1: Organization
+// Step 1: Publication
 const orgName = ref('')
 const slugAvailable = ref<boolean | null>(null)
 const checkingSlug = ref(false)
 const isCreating = ref(false)
 const createError = ref<string | null>(null)
+const createErrorPlan = ref<string | null>(null)
 
 const slug = computed(() =>
   orgName.value
@@ -61,6 +64,7 @@ const createOrg = async () => {
   if (!canProceed.value || isCreating.value) return
   isCreating.value = true
   createError.value = null
+  createErrorPlan.value = null
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) { createError.value = 'Not authenticated.'; isCreating.value = false; return }
@@ -85,7 +89,7 @@ const createOrg = async () => {
 
   const { data: { session: authSession } } = await supabase.auth.getSession()
   if (!authSession?.access_token) {
-    createError.value = 'Session lost — please reload and try again.'
+    createError.value = 'Session lost. Please reload and try again.'
     isCreating.value = false
     return
   }
@@ -97,7 +101,13 @@ const createOrg = async () => {
       err instanceof Error && err.message.toLowerCase().includes('already exists')
     if (!isAlreadyExists) {
       const status = (err as { status?: number })?.status
-      createError.value = `Backend sync failed [${status ?? '?'}]: ${err instanceof Error ? err.message : String(err)}`
+      if (isPlanLimitError(err)) {
+        createError.value = err.message
+        createErrorPlan.value = planKeyFromError(err)
+      } else {
+        createError.value = `Backend sync failed [${status ?? '?'}]: ${err instanceof Error ? err.message : String(err)}`
+        createErrorPlan.value = null
+      }
       isCreating.value = false
       return
     }
@@ -193,30 +203,48 @@ const providers = [
     key: 'paypal',
     name: 'PayPal',
     description: 'Widely trusted payment platform, available in 200+ countries and markets.',
-    status: 'deployment' as const,
+    status: 'available' as const,
   },
   {
     key: 'mollie',
     name: 'Mollie',
     description: 'European payment provider with support for cards, SEPA, iDEAL, and more. Hosted in the EU.',
-    status: 'deployment' as const,
+    status: 'planned' as const,
   },
   {
     key: 'paddle',
     name: 'Paddle',
     description: 'Merchant of record solution with built-in tax and compliance handling.',
-    status: 'planned' as const,
+    status: 'available' as const,
   },
   {
     key: 'gumroad',
     name: 'Gumroad',
     description: 'Simple digital product sales for creators.',
-    status: 'planned' as const,
+    status: 'available' as const,
   },
   {
     key: 'lemonsqueezy',
     name: 'Lemon Squeezy',
     description: 'All-in-one payments, subscriptions, and digital products platform.',
+    status: 'available' as const,
+  },
+  {
+    key: 'kofi',
+    name: 'Ko-fi',
+    description: 'Popular in the Ghost community for tips and memberships. No dashboard API to auto-fetch products.',
+    status: 'available' as const,
+  },
+  {
+    key: 'patreon',
+    name: 'Patreon',
+    description: 'Membership platform for creators. Map your Patreon tiers to Ghost access levels.',
+    status: 'available' as const,
+  },
+  {
+    key: 'creem',
+    name: 'Creem',
+    description: 'Modern checkout with built-in subscriptions and license keys.',
     status: 'available' as const,
   },
   {
@@ -266,7 +294,7 @@ const skipProvider = () => router.push(`/t/${slug.value}/dashboard`)
         <div class="flex items-center gap-2">
           <span class="flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold"
             :class="step >= 1 ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-500'">1</span>
-          <span class="text-sm font-medium" :class="step >= 1 ? 'text-slate-900' : 'text-slate-400'">Organization</span>
+          <span class="text-sm font-medium" :class="step >= 1 ? 'text-slate-900' : 'text-slate-400'">Publication</span>
         </div>
         <div class="h-px flex-1 bg-slate-200"></div>
         <div class="flex items-center gap-2">
@@ -285,13 +313,13 @@ const skipProvider = () => router.push(`/t/${slug.value}/dashboard`)
       <!-- Step 1 -->
       <div v-if="step === 1" class="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
         <p class="text-xs font-semibold uppercase tracking-widest text-indigo-500">Step 1 of 3</p>
-        <h1 class="mt-2 text-xl font-bold text-slate-900">Create your organization</h1>
+        <h1 class="mt-2 text-xl font-bold text-slate-900">Create your publication</h1>
         <p class="mt-1 text-sm text-slate-500">
-          An organization groups your Ghost blogs, team members, and payment mappings. You can have multiple.
+          A publication groups your Ghost blog, team members, and payment mappings. You can have multiple.
         </p>
 
         <div class="mt-6">
-          <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500">Organization name</label>
+          <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500">Publication name</label>
           <input
             v-model="orgName"
             type="text"
@@ -308,7 +336,8 @@ const skipProvider = () => router.push(`/t/${slug.value}/dashboard`)
           </div>
         </div>
 
-        <p v-if="createError" class="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">{{ createError }}</p>
+        <UpgradeBanner v-if="createError && createErrorPlan" class="mt-3" :message="createError" :plan-key="createErrorPlan" />
+        <p v-else-if="createError" class="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">{{ createError }}</p>
 
         <button
           class="mt-6 w-full rounded-xl bg-indigo-600 py-3 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-40"
@@ -434,9 +463,7 @@ const skipProvider = () => router.push(`/t/${slug.value}/dashboard`)
               :class="[
                 provider.status === 'planned'
                   ? 'cursor-not-allowed border-slate-100 bg-slate-50 opacity-50'
-                  : provider.status === 'deployment'
-                    ? 'cursor-not-allowed border-slate-100 bg-slate-50 opacity-50'
-                    : provider.status === 'visible'
+                  : provider.status === 'visible'
                       ? 'cursor-default border-slate-200 bg-white'
                       : selectedProvider === provider.key
                         ? 'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-500/20'
@@ -455,6 +482,7 @@ const skipProvider = () => router.push(`/t/${slug.value}/dashboard`)
                     <circle cx="12" cy="12" r="12" fill="#111827"/>
                     <path d="M5.5 8.5h2.3l4.2 4.5 4.2-4.5H18.5v7h-2.2v-4.6l-4 4.3-4-4.3v4.6H5.5V8.5Z" fill="white"/>
                   </svg>
+                  <img v-else-if="provider.key === 'creem'" src="https://www.creem.io/icon.png" alt="Creem" class="h-5 w-5" />
                   <img v-else :src="`https://cdn.simpleicons.org/${provider.key}/111827`" :alt="provider.name" class="h-5 w-5" />
                 </span>
                 <div class="min-w-0 flex-1">
@@ -463,7 +491,6 @@ const skipProvider = () => router.push(`/t/${slug.value}/dashboard`)
                       {{ provider.name }}
                     </span>
                     <span v-if="provider.key === 'mollie'" class="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600">EU</span>
-                    <span v-if="provider.status === 'deployment'" class="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">In deployment</span>
                     <span v-if="provider.status === 'planned'" class="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-500">Planned</span>
                   </div>
                   <p class="mt-0.5 text-xs" :class="provider.status === 'available' || provider.status === 'visible' ? 'text-slate-500' : 'text-slate-400'">

@@ -12,11 +12,16 @@ from payglue_backend.core.interfaces import (
 )
 from payglue_backend.core.orchestrator import WebhookOrchestrator
 from payglue_backend.core.registry import AdapterRegistry
+from payglue_backend.webhooks.adapters.creem import CreemPaymentAdapter
 from payglue_backend.webhooks.adapters.ghost import (
     GhostCmsAdapter,
     UrllibHttpApiClient,
 )
+from payglue_backend.webhooks.adapters.gumroad import GumroadPaymentAdapter
+from payglue_backend.webhooks.adapters.kofi import KofiPaymentAdapter
 from payglue_backend.webhooks.adapters.lemon_squeezy import LemonSqueezyPaymentAdapter
+from payglue_backend.webhooks.adapters.paddle import PaddlePaymentAdapter
+from payglue_backend.webhooks.adapters.patreon import PatreonPaymentAdapter
 from payglue_backend.webhooks.adapters.paypal import PayPalPaymentAdapter
 from payglue_backend.webhooks.adapters.polar import PolarPaymentAdapter
 from payglue_backend.webhooks.credentials import DbCredentialProvider
@@ -27,7 +32,7 @@ from payglue_backend.webhooks.models import IntegrationConfig
 from payglue_backend.webhooks.resolver import DbProductMappingResolver
 
 _DEFAULT_CMS_PROVIDER_KEY = "ghost"
-_SUPPORTED_PAYMENT_PROVIDER_KEYS = {"polar", "lemonsqueezy", "paypal"}
+_SUPPORTED_PAYMENT_PROVIDER_KEYS = {"polar", "lemonsqueezy", "paypal", "gumroad", "paddle", "kofi", "creem", "patreon"}
 _SUPPORTED_CMS_PROVIDER_KEYS = {_DEFAULT_CMS_PROVIDER_KEY}
 _orchestrator: WebhookOrchestrator | None = None
 _credential_provider: CredentialProvider | None = None
@@ -67,6 +72,21 @@ def get_webhook_orchestrator() -> WebhookOrchestrator:
     )
     registry.register_payment(
         "paypal", PayPalPaymentAdapter(credential_provider=credential_provider)
+    )
+    registry.register_payment(
+        "gumroad", GumroadPaymentAdapter(credential_provider=credential_provider)
+    )
+    registry.register_payment(
+        "paddle", PaddlePaymentAdapter(credential_provider=credential_provider)
+    )
+    registry.register_payment(
+        "kofi", KofiPaymentAdapter(credential_provider=credential_provider)
+    )
+    registry.register_payment(
+        "creem", CreemPaymentAdapter(credential_provider=credential_provider)
+    )
+    registry.register_payment(
+        "patreon", PatreonPaymentAdapter(credential_provider=credential_provider)
     )
     registry.register_cms(
         _DEFAULT_CMS_PROVIDER_KEY,
@@ -123,6 +143,31 @@ def get_payment_adapter(provider_key: str) -> PaymentAdapter:
             credential_provider=get_credential_provider(),
             provider_key=provider_key,
         )
+    if provider_key == "gumroad":
+        return GumroadPaymentAdapter(
+            credential_provider=get_credential_provider(),
+            provider_key=provider_key,
+        )
+    if provider_key == "paddle":
+        return PaddlePaymentAdapter(
+            credential_provider=get_credential_provider(),
+            provider_key=provider_key,
+        )
+    if provider_key == "kofi":
+        return KofiPaymentAdapter(
+            credential_provider=get_credential_provider(),
+            provider_key=provider_key,
+        )
+    if provider_key == "creem":
+        return CreemPaymentAdapter(
+            credential_provider=get_credential_provider(),
+            provider_key=provider_key,
+        )
+    if provider_key == "patreon":
+        return PatreonPaymentAdapter(
+            credential_provider=get_credential_provider(),
+            provider_key=provider_key,
+        )
     raise ValueError(f"Unsupported payment provider '{provider_key}'.")
 
 
@@ -144,11 +189,28 @@ def get_tenant_cms_provider_key(tenant_slug: str) -> str:
 def validate_endpoint_token(
     tenant_slug: str, payment_provider: str, endpoint_token: str
 ) -> bool:
-    configured_token = get_expected_endpoint_token(tenant_slug, payment_provider)
-    if configured_token is None:
-        return False
+    tenant_secret = get_tenant_webhook_secret(tenant_slug)
+    if tenant_secret is not None and secrets.compare_digest(tenant_secret, endpoint_token):
+        return True
 
-    return secrets.compare_digest(configured_token, endpoint_token)
+    # Legacy fallback: tenants whose configured webhook URL (in their payment
+    # provider's dashboard) still uses the old shared token, from before each
+    # tenant had its own. New tenants only ever see the per-tenant URL.
+    legacy_token = get_expected_endpoint_token(tenant_slug, payment_provider)
+    if legacy_token is not None and secrets.compare_digest(legacy_token, endpoint_token):
+        return True
+
+    return False
+
+
+def get_tenant_webhook_secret(tenant_slug: str) -> str | None:
+    from payglue_backend.tenants.models import Tenant
+
+    return (
+        Tenant.objects.filter(slug=tenant_slug)
+        .values_list("webhook_secret", flat=True)
+        .first()
+    )
 
 
 def get_expected_endpoint_token(tenant_slug: str, payment_provider: str) -> str | None:

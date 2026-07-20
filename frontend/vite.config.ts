@@ -23,5 +23,13 @@ export default defineVitestConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/test/setup.ts',
+    // lib/supabase.ts throws at import time when these are unset. The private
+    // repo satisfies them via local .env files, which never reach this repo
+    // (and must not). Dummy values are all the test suite needs -- no test
+    // talks to a real Supabase.
+    env: {
+      VITE_SUPABASE_URL: 'http://localhost:54321',
+      VITE_SUPABASE_ANON_KEY: 'test-anon-key-not-real',
+    },
   },
 })

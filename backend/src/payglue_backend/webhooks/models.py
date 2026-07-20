@@ -154,6 +154,12 @@ class BuyButton(models.Model):
     border_radius = models.CharField(max_length=8, choices=BorderRadius.choices, default=BorderRadius.MD)
     width = models.CharField(max_length=8, choices=Width.choices, default=Width.AUTO)
     alignment = models.CharField(max_length=8, choices=Alignment.choices, default=Alignment.LEFT)
+    # Which provider product this button is linked to, persisted so the editor
+    # restores "Link to a product" directly instead of guessing by matching
+    # target_url against live product lists -- that guess raced product
+    # loading and failed outright for Ko-fi/Gumroad on every re-edit.
+    product_provider = models.CharField(max_length=32, blank=True, default="")
+    product_id = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -206,6 +212,12 @@ class PricingTier(models.Model):
     cta_label = models.CharField(max_length=128, default="Get started")
     cta_url = models.CharField(max_length=512, blank=True, default="")
     features = models.JSONField(default=list)
+    # Which provider product this tier is linked to, persisted so the editor
+    # restores "Link to a product" directly instead of guessing by matching
+    # cta_url against live product lists -- same fix as BuyButton (527d75d),
+    # needed here too since that guess never worked for Ko-fi.
+    product_provider = models.CharField(max_length=32, blank=True, default="")
+    product_id = models.CharField(max_length=255, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

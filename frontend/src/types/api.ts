@@ -10,15 +10,19 @@ export interface SessionUser {
 export interface TenantMembership {
   tenant_slug: string
   role: 'owner' | 'admin' | 'billing_admin' | 'support_readonly'
+  status: 'active' | 'suspended' | 'disabled' | 'paused'
+}
+
+export interface SessionBillingInfo {
+  plan: string
+  downgrade_detected_at: string | null
+  grace_period_ends_at: string | null
 }
 
 export interface AuthSessionResponse {
   user: SessionUser
   memberships: TenantMembership[]
-}
-
-export interface InvitationValidationResponse {
-  valid: boolean
+  billing: SessionBillingInfo | null
 }
 
 export interface TenantCreateResponse {
@@ -30,6 +34,9 @@ export interface ProductMappingMetadata {
   ghost_email_types?: Array<'signup' | 'signin' | 'subscribe'>
   ghost_email_type?: 'signup' | 'signin' | 'subscribe' | null
   ghost_labels?: string[]
+  source_type?: string
+  source_name?: string
+  source_tier?: string
 }
 
 export interface ProductMapping {
@@ -51,6 +58,8 @@ export interface TeamMember {
   role: TenantMembership['role']
   created_at: string
   updated_at: string
+  /** True when adding this member provisioned a brand-new PayGlue account and sent them a sign-in email. */
+  invited_new_account?: boolean
 }
 
 export interface PricingPlan {
@@ -84,6 +93,8 @@ export interface PricingTierData {
   cta_label: string
   cta_url: string
   features: PricingFeature[]
+  product_provider?: string
+  product_id?: string
 }
 
 export interface PricingTableData {
@@ -99,19 +110,23 @@ export interface PricingTableData {
 }
 
 export interface IntegrationConfig {
-  provider_key: 'payment' | 'cms'
+  provider_key: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'cms'
   enabled: boolean
   provider_type: string
   metadata: Record<string, unknown>
 }
 
 export interface IntegrationCredentialWriteResult {
-  provider_key: 'payment' | 'cms'
+  provider_key: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'cms'
   provider_type: string
   credential_ref: {
     backend: string
     masked_keys: string[]
     updated_at?: string
+  }
+  webhook_registration?: {
+    registered: string[]
+    failed: string[]
   }
 }
 
@@ -159,4 +174,20 @@ export interface BillingProfile {
   billing_email: string
   country_code: string
   tax_id: string
+}
+
+export interface ServicePin {
+  code: string
+  created_at: string
+  expires_at: string
+  revoked_at: string | null
+}
+
+export interface SupportRequestSummary {
+  id: number
+  reference: string
+  topic: string
+  status: 'open' | 'in_progress' | 'done' | 'cancelled'
+  status_label: string
+  created_at: string
 }

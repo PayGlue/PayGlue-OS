@@ -65,7 +65,7 @@ describe('TeamView', () => {
     })
   })
 
-  it('shows inline validation when neither email nor user ID provided', async () => {
+  it('shows inline validation when no email is provided', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -92,7 +92,7 @@ describe('TeamView', () => {
     submitButton.click()
 
     await waitFor(() => {
-      expect(container.textContent).toContain('Provide email or user ID for the member.')
+      expect(container.textContent).toContain('Enter the email address of the person you want to add.')
     })
   })
 })

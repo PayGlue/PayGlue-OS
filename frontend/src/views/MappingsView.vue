@@ -4,14 +4,54 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import AppShell from '../components/AppShell.vue'
-import { listMappings } from '../lib/api'
+import { PageHeader, UiCard, UiButton, StatusPill, EmptyState, ProviderLogo } from '../components/ui'
+import { PROVIDER_BRAND } from '../lib/providers'
+import { listMappings, testMapping, type TestMappingResult } from '../lib/api'
 import { useSessionStore } from '../stores/session'
 import type { ProductMapping } from '../types/api'
+
+const hasLogo = (key: string) => key in PROVIDER_BRAND
 
 const session = useSessionStore()
 const mappings = ref<ProductMapping[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
+
+// PG-193: send a synthetic event through the real pipeline to verify a
+// connection end to end without a real purchase.
+const testTarget = ref<ProductMapping | null>(null)
+const testEmail = ref('')
+const testRunning = ref(false)
+const testResult = ref<TestMappingResult | null>(null)
+const testError = ref<string | null>(null)
+
+const openTest = (m: ProductMapping) => {
+  testTarget.value = m
+  testEmail.value = session.user?.email ?? ''
+  testResult.value = null
+  testError.value = null
+}
+
+const closeTest = () => {
+  testTarget.value = null
+  testRunning.value = false
+}
+
+const runTest = async () => {
+  const slug = session.activeTenantSlug
+  const token = session.idToken
+  if (!slug || !token || !testTarget.value) return
+  testRunning.value = true
+  testResult.value = null
+  testError.value = null
+  try {
+    testResult.value = await testMapping(slug, token, testTarget.value.id, testEmail.value.trim())
+  } catch (e) {
+    testError.value = e instanceof Error ? e.message : 'Test failed to run.'
+  } finally {
+    testRunning.value = false
+  }
+}
 
 const load = async () => {
   const slug = session.activeTenantSlug
@@ -52,56 +92,115 @@ const sourceLabel = (m: ProductMapping) => {
 
 <template>
   <AppShell>
-    <div class="mx-auto max-w-4xl px-4 py-8 sm:px-6">
-      <div class="mb-6">
-        <h1 class="text-xl font-semibold text-slate-900">Product Mapping</h1>
-        <p class="mt-1 text-sm text-slate-500">Ghost actions assigned to each product. Edit them in the Button, Paywall, or Pricing Table editors.</p>
-      </div>
+    <div class="space-y-5">
+      <PageHeader title="Product Mapping" description="Ghost actions assigned to each product. Edit them in the Button, Paywall, or Pricing Table editors." />
 
-      <div v-if="loading" class="text-sm text-slate-400">Loading...</div>
-      <div v-else-if="error" class="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{{ error }}</div>
-      <div v-else-if="mappings.length === 0" class="rounded-lg border border-slate-200 bg-white px-6 py-10 text-center">
-        <p class="text-sm text-slate-500">No mappings configured yet.</p>
-        <p class="mt-1 text-xs text-slate-400">Link a product in the Buy Button, Paywall, or Pricing Table editor to create a mapping.</p>
-      </div>
+      <p v-if="loading" class="px-1 text-sm text-slate-500 dark:text-slate-400">Loading...</p>
+      <p v-else-if="error" class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">{{ error }}</p>
 
-      <div v-else class="overflow-hidden rounded-xl border border-slate-200 bg-white">
-        <table class="w-full text-sm">
-          <thead class="border-b border-slate-100 bg-slate-50">
-            <tr>
-              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Provider</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Product ID</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Used in</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Trigger</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Newsletter</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Welcome email</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-100">
-            <tr v-for="m in mappings" :key="m.id" class="hover:bg-slate-50">
-              <td class="px-4 py-3 capitalize text-slate-700">{{ m.payment_provider }}</td>
-              <td class="px-4 py-3 font-mono text-xs text-slate-500">{{ m.external_product_id }}</td>
-              <td class="px-4 py-3 text-slate-700">
-                <span v-if="sourceLabel(m)" class="text-sm text-slate-700">{{ sourceLabel(m) }}</span>
-                <span v-else class="text-xs text-slate-400">-</span>
-              </td>
-              <td class="px-4 py-3 text-slate-700">{{ eventLabel(m.event_type) }}</td>
-              <td class="px-4 py-3 text-slate-700">
-                {{ (m.metadata as any)?.ghost_subscribed === false ? 'No' : 'Yes' }}
-              </td>
-              <td class="px-4 py-3 text-slate-700">
-                {{ emailLabel((m.metadata as any)?.ghost_email_type) }}
-              </td>
-              <td class="px-4 py-3">
-                <span
-                  class="rounded-full px-2 py-0.5 text-[11px] font-medium"
-                  :class="m.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'"
-                >{{ m.is_active ? 'Active' : 'Inactive' }}</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      <UiCard v-else-if="mappings.length === 0" :padded="false">
+        <EmptyState title="No mappings configured yet" message="Link a product in the Buy Button, Paywall, or Pricing Table editor to create a mapping.">
+          <template #icon>
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4L19 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          </template>
+        </EmptyState>
+      </UiCard>
+
+      <UiCard v-else :padded="false">
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-[720px] text-sm">
+            <thead class="border-b border-slate-100 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-800/40">
+              <tr>
+                <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Provider</th>
+                <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Product ID</th>
+                <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Used in</th>
+                <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Trigger</th>
+                <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Welcome email</th>
+                <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Status</th>
+                <th class="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Test</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+              <tr v-for="m in mappings" :key="m.id" class="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                <td class="px-4 py-3">
+                  <span class="flex items-center gap-2">
+                    <ProviderLogo v-if="hasLogo(m.payment_provider)" :provider="m.payment_provider" size="sm" />
+                    <span class="font-medium capitalize text-slate-700 dark:text-slate-200">{{ m.payment_provider }}</span>
+                  </span>
+                </td>
+                <td class="px-4 py-3 font-mono text-xs text-slate-500 dark:text-slate-400">{{ m.external_product_id }}</td>
+                <td class="px-4 py-3">
+                  <span v-if="sourceLabel(m)" class="text-sm text-slate-700 dark:text-slate-200">{{ sourceLabel(m) }}</span>
+                  <span v-else class="text-xs text-slate-400 dark:text-slate-500">-</span>
+                </td>
+                <td class="px-4 py-3 text-slate-700 dark:text-slate-200">{{ eventLabel(m.event_type) }}</td>
+                <td class="px-4 py-3 text-slate-700 dark:text-slate-200">{{ emailLabel((m.metadata as any)?.ghost_email_type) }}</td>
+                <td class="px-4 py-3">
+                  <StatusPill :tone="m.is_active ? 'good' : 'neutral'">{{ m.is_active ? 'Active' : 'Inactive' }}</StatusPill>
+                </td>
+                <td class="px-4 py-3 text-right">
+                  <UiButton
+                    size="sm"
+                    variant="default"
+                    :disabled="!m.is_active"
+                    :title="m.is_active ? 'Send a test event through the full pipeline' : 'Activate the mapping to test it'"
+                    @click="openTest(m)"
+                  >
+                    Send test
+                  </UiButton>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </UiCard>
+    </div>
+
+    <!-- PG-193: test-event modal -->
+    <div
+      v-if="testTarget"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4"
+      @click.self="closeTest"
+    >
+      <div class="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+        <h2 class="text-base font-semibold text-slate-900 dark:text-slate-100">Send a test event</h2>
+        <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          Simulates a
+          <span class="font-medium text-slate-700 dark:text-slate-200">{{ eventLabel(testTarget.event_type) }}</span>
+          event for
+          <span class="font-mono text-xs text-slate-600 dark:text-slate-300">{{ testTarget.external_product_id }}</span>
+          ({{ testTarget.payment_provider }}) through the full pipeline, with no real purchase needed.
+        </p>
+        <p class="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
+          This grants real access to the address below in your Ghost site. Use an email you control (e.g. <span class="font-medium">you+test@yourdomain.com</span>).
+        </p>
+
+        <label class="mt-4 block text-xs font-medium text-slate-600 dark:text-slate-300">Test email</label>
+        <input
+          v-model="testEmail"
+          type="email"
+          placeholder="you+test@yourdomain.com"
+          class="pg-input mt-1"
+          @keyup.enter="runTest"
+        />
+
+        <!-- Result -->
+        <div v-if="testResult?.ok" class="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
+          ✅ Test member granted in Ghost ({{ testResult.entitlements.map(e => e.entitlement_key).join(', ') }}). Check your Ghost members list to confirm.
+        </div>
+        <div v-else-if="testResult && !testResult.ok" class="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+          ❌ {{ testResult.error }}
+        </div>
+        <div v-else-if="testError" class="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+          {{ testError }}
+        </div>
+
+        <div class="mt-5 flex justify-end gap-2">
+          <UiButton variant="ghost" @click="closeTest">Close</UiButton>
+          <UiButton variant="primary" :disabled="testRunning || !testEmail.trim()" @click="runTest">
+            {{ testRunning ? 'Sending…' : 'Send test event' }}
+          </UiButton>
+        </div>
       </div>
     </div>
   </AppShell>
