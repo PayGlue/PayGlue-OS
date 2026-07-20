@@ -35,13 +35,12 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       DJANGO_DEBUG: "1"
-      FIREBASE_AUTH_ENABLED: ${FIREBASE_AUTH_ENABLED:-0}
-      GOOGLE_APPLICATION_CREDENTIALS: /app/secrets/firebase-admin.json
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_JWKS_URL: ${SUPABASE_JWKS_URL:-}
       CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-bWFzdGVya2V5Zm9ybG9jYWxkZXZlbG9wbWVudG9ubHk=}
       HOME: /tmp
     volumes:
       - ./backend:/app
-      - ./secrets:/app/secrets:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,13 +60,8 @@ services:
     environment:
       VITE_API_BASE_URL: ''
       VITE_DEV_PROXY_TARGET: http://web:8000
-      VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:-}
-      VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN:-}
-      VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID:-}
-      VITE_FIREBASE_STORAGE_BUCKET: ${VITE_FIREBASE_STORAGE_BUCKET:-}
-      VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID:-}
-      VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID:-}
-      VITE_ENABLE_MANUAL_TOKEN_FALLBACK: ${VITE_ENABLE_MANUAL_TOKEN_FALLBACK:-0}
+      VITE_SUPABASE_URL: ${SUPABASE_URL:-}
+      VITE_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
     depends_on:
       web:
         condition: service_started
@@ -79,15 +73,14 @@ services:
     command: celery -A payglue_backend.config worker --loglevel=info
     volumes:
       - ./backend:/app
-      - ./secrets:/app/secrets:ro
     environment:
       DJANGO_SETTINGS_MODULE: payglue_backend.config.settings
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ghost_glue
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       DJANGO_DEBUG: "1"
-      FIREBASE_AUTH_ENABLED: ${FIREBASE_AUTH_ENABLED:-0}
-      GOOGLE_APPLICATION_CREDENTIALS: /app/secrets/firebase-admin.json
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_JWKS_URL: ${SUPABASE_JWKS_URL:-}
       CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-bWFzdGVya2V5Zm9ybG9jYWxkZXZlbG9wbWVudG9ubHk=}
       HOME: /tmp
     depends_on:

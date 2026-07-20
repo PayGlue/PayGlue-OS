@@ -37,6 +37,7 @@
   },
   "overrides": {
     "js-cookie": "^3.0.7",
-    "yaml": "^2.8.3"
+    "yaml": "^2.8.3",
+    "brace-expansion": "^2.1.2"
   }
 }
