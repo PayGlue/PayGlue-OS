@@ -15,10 +15,13 @@
 </p>
 
 ---
+<img width="1280" height="640" alt="payglue-oss" src="https://github.com/user-attachments/assets/b1f19366-a040-4a62-a115-420fedf75c7a" />
 
-I run a Ghost blog and wanted to accept payments through Polar, not Stripe. Ghost said no. So I built PayGlue: a relay that receives signed webhooks from your payment provider and syncs membership state into Ghost via the Admin API. Someone pays, they get access. Someone cancels, access is revoked. No Ghost code changes, no manual syncing, no spreadsheet of shame.
+## 📝 The Story
 
-**Eight providers, one relay:** Polar · Lemon Squeezy · PayPal · Gumroad · Paddle · Ko-fi · Creem · Patreon
+I run a several german Ghost blogs and wanted to accept payments through LemonSqueezy, not Stripe. Ghost said no. So I built PayGlue: a relay that receives signed webhooks from your payment provider and syncs membership state into Ghost via the Admin API. Someone pays, they get access. Someone cancels, access is revoked. No Ghost code changes, no manual syncing, no spreadsheet of shame.
+
+**Eight providers, one relay:** Polar · LemonSqueezy · PayPal · Gumroad · Paddle · Ko-fi · Creem · Patreon
 
 Your existing Stripe setup stays untouched. PayGlue runs next to it and only covers what Ghost can't do natively.
 
