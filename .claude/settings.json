@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cat <<'EOF'\nInstructions for this session:\n- Do NOT add any signature, footer, co-author tag, session link, \"Generated with Claude\" or \"Co-Authored-By\" mention in commits, GitHub PR descriptions, PR or issue comments, reviews, or files.\n- In the public PayGlue-OS mirror, do not name the maintainer personally in commits, PR titles or PR bodies. Write in the team voice. The copyright headers are the one exception and stay as they are.\n- Never use em dashes or en dashes in copy, UI text, commit messages or PR bodies. Rephrase, or use a comma or a full stop.\n- Be concise. Get to the point, no preamble, no recap of what was just said.\n- Write like a human: direct, plain, no marketing language.\nEOF"
+          }
+        ]
+      }
+    ]
+  }
+}
