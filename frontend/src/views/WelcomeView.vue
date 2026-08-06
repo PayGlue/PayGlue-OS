@@ -4,6 +4,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { supabase } from '../lib/supabase'
+import { supportEmail } from '../lib/publicUrls'
 
 const status = ref<'loading' | 'error'>('loading')
 const errorMessage = ref('')
@@ -24,7 +25,10 @@ onMounted(async () => {
 
   if (error || !data?.action_link) {
     status.value = 'error'
-    errorMessage.value = 'We could not verify your purchase. Please contact support@payglue.io'
+    const contact = supportEmail()
+    errorMessage.value = contact
+      ? `We could not verify your purchase. Please contact ${contact}`
+      : 'We could not verify your purchase. Please contact support.'
     return
   }
 

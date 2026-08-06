@@ -8,7 +8,7 @@ creator proactively when their Ghost delivery breaks (a rotated/expired Ghost
 Admin API key, Ghost down, ...). It fails silently -- new purchases stop
 unlocking -- until someone checks the event log or members complain.
 
-Threshold (chosen with André): a tenant's Ghost delivery is "failing" when the
+Threshold: a tenant's Ghost delivery is "failing" when the
 last 3 *terminal* delivery outcomes within the last 24h are all failed/
 dead_letter. Terminal = processed (success) or failed/dead_letter (failure);
 received/processing (in flight) and skipped (not for us) are ignored. A single

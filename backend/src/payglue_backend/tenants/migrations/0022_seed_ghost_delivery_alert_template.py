@@ -1,7 +1,7 @@
 # Copyright (c) 2026 PayGlue by André Nünninghoff
 # Licensed under the Business Source License 1.1, see LICENSE.md
-"""PG-192: seed the ghost_delivery_failing email template so André can edit its
-subject/body in Django Admin alongside the subscription lifecycle templates.
+"""PG-192: seed the ghost_delivery_failing email template so its subject and body
+are editable in Django Admin alongside the subscription lifecycle templates.
 
 Unlike the subscription placeholder templates (seeded disabled in 0017/0019,
 "nothing sends until reviewed"), this one is seeded ENABLED with real copy: the

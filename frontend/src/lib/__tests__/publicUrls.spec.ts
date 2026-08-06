@@ -2,7 +2,14 @@
 // Licensed under the Business Source License 1.1, see LICENSE.md
 
 import { describe, expect, it } from 'vitest'
-import { apiBaseUrl, appBaseUrl, appDisplayHost, embedScript, webhookUrl } from '../publicUrls'
+import {
+  apiBaseUrl,
+  appBaseUrl,
+  appDisplayHost,
+  embedScript,
+  supportEmail,
+  webhookUrl,
+} from '../publicUrls'
 
 // These assert properties rather than literal addresses on purpose. The whole
 // point of the change is that the address depends on where the install runs, so
@@ -51,6 +58,15 @@ describe('public URLs', () => {
     expect(webhookUrl('polar', 'acme', 'whk_secret')).toContain('&key=whk_secret')
     expect(webhookUrl('polar', 'acme', null)).not.toContain('key=')
     expect(webhookUrl('polar', 'acme', '')).not.toContain('key=')
+  })
+
+  it('never invents a support address', () => {
+    // Unset means unset. Three places used to name ours, so an unrelated
+    // installation pointed its own customers at our inbox (PG-239). Callers
+    // hide the contact when this is empty, which only works if it stays empty.
+    const contact = supportEmail()
+    expect(contact === '' || contact.includes('@')).toBe(true)
+    expect(contact).not.toMatch(/payglue\.io|ghostglue\.io/)
   })
 
   it('strips the scheme for the bare display host', () => {

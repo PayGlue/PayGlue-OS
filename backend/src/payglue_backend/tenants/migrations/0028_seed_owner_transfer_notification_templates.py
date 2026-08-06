@@ -9,8 +9,7 @@ reviewed) these are transactional -- a proposed owner who never hears about the
 nomination is the exact gap this fixes, so shipping them off would be pointless.
 
 The sign-off pass only rewrites rows that still hold the exact seeded copy, the
-same guard 0027 used: anything André already edited in the admin is his and
-stays untouched.
+same guard 0027 used: anything already edited in the admin stays untouched.
 """
 from django.db import migrations
 

@@ -4,7 +4,7 @@
 edit in Django Admin (same reasoning as 0017 -- the admin intentionally
 disallows adding/deleting rows, only fixed choices from
 LifecycleEmailTemplate.Trigger). Disabled by default -- placeholder copy,
-nothing should send until André reviews and turns each one on. The day-1
+nothing should send until someone reviews and turns each one on. The day-1
 notice itself reuses the existing SUBSCRIPTION_ENDED template (seeded in
 0017), no new trigger needed for that one."""
 from django.db import migrations

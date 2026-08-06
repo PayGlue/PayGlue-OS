@@ -106,8 +106,8 @@ def delete_supabase_user(supabase_user_id: str) -> None:
 def create_supabase_user(email: str, password: str) -> str:
     """Creates an auto-confirmed Supabase Auth user with the given password.
 
-    For development/testing accounts where André signs in with a password
-    he chose himself, rather than a magic link. Returns the new user's id.
+    For development and testing accounts that sign in with a chosen password
+    rather than a magic link. Returns the new user's id.
     """
     body = {"email": email, "password": password, "email_confirm": True}
     return _post_admin("/auth/v1/admin/users", body)["id"]

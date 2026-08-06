@@ -50,6 +50,18 @@ export function appDisplayHost(): string {
   return appBaseUrl().replace(/^https?:\/\//, '')
 }
 
+/**
+ * The address this installation answers support mail at, or an empty string.
+ *
+ * Empty on purpose when unset. The three places that offer a support contact
+ * used to name ours, so an unrelated installation invited its own customers to
+ * write to us about a product we do not run for them (PG-239). Callers hide the
+ * contact rather than substitute a stand-in.
+ */
+export function supportEmail(): string {
+  return ((import.meta.env.VITE_SUPPORT_EMAIL as string | undefined) ?? '').trim()
+}
+
 /** The `<script>` tag that embeds one of the public assets. */
 export function embedScript(file: string, attributes: Record<string, string>): string {
   const attrs = Object.entries(attributes)

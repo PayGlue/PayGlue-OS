@@ -22,7 +22,7 @@ today for the Plans page and the Billing card -- to read each account's
   the literal Creem status to tell them apart: only "canceled" starts the
   30-day deletion grace period (SUBSCRIPTION_ENDED fires as the day-1
   notice); anything else flags BillingAccount.needs_admin_review and alerts
-  André instead of guessing -- he can check Creem directly. There's
+  the operator instead of guessing, who can check Creem directly. There's
   deliberately no "no active plan" state for an owner (team members never
   have their own BillingAccount), so a confirmed cancellation eventually
   means full account deletion (delete_lapsed_accounts), not a downgrade.
@@ -138,7 +138,7 @@ class Command(BaseCommand):
             return
 
         # past_due / unpaid / paused / unrecognized / fetch failed -- could
-        # be a temporary payment retry, not a real cancellation. Only André
+        # be a temporary payment retry, not a real cancellation. Only a human
         # (checking Creem directly) can tell the difference, so nothing
         # automatic starts the deletion clock. Only notify on the
         # False -> True transition, not on every daily poll while unresolved.

@@ -3,7 +3,7 @@
 """Seed the two team-member-removal emails so they show up in Django Admin.
 
 PG-210 shipped them with built-in fallback copy only, which works but leaves
-André unable to see or edit the wording anywhere -- the admin list showed ten
+the wording invisible and uneditable anywhere -- the admin list showed ten
 templates and no sign these two existed. Every other transactional email is
 editable there, so these are too.
 

@@ -300,7 +300,7 @@ const performDelete = async (stepUpToken: string) => {
     // standing on it the sign-out handler has nothing to do.
     //
     // hasRoute rather than a hard reference: GoodbyeView is a hosted-PayGlue
-    // page (it carries our own win-back copy and a mailto to André) and is not
+    // page (it carries our own win-back copy and a personal mailto) and is not
     // synced to the open-source repo, whose router therefore has no such
     // route. Self-hosters land on the login page instead of a dead link, and
     // nobody has to remember to patch a second router by hand.

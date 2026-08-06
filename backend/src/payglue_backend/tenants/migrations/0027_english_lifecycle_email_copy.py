@@ -3,7 +3,7 @@
 """PG-202: the owner_transfer_requested and ghost_delivery_failing templates were
 seeded in German. PayGlue's product language is English, so rewrite the two
 customer-facing rows. Only touches rows still holding the exact German seed copy
--- if André already edited one in the admin, his version is left untouched."""
+-- if one was already edited in the admin, that version is left untouched."""
 from django.db import migrations
 
 _GERMAN_OWNER_SUBJECT = "PayGlue: Owner-Wechsel angefordert fuer $tenant"
@@ -39,7 +39,7 @@ _GHOST_BODY = (
 
 def to_english(apps, schema_editor):
     Template = apps.get_model("tenants", "LifecycleEmailTemplate")
-    # Match on the German subject so a template André already re-worded is skipped.
+    # Match on the German subject so an already re-worded template is skipped.
     Template.objects.filter(
         trigger="owner_transfer_requested", subject=_GERMAN_OWNER_SUBJECT
     ).update(subject=_OWNER_SUBJECT, body=_OWNER_BODY)

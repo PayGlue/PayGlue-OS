@@ -40,7 +40,10 @@ SECRET_KEY = _secret_key
 def _parse_allowed_hosts() -> list[str]:
     raw = os.environ.get(
         "DJANGO_ALLOWED_HOSTS",
-        "localhost,127.0.0.1,0.0.0.0,dev.payglue.io,dev2.payglue.io,hooks.payglue.io,hooks2.payglue.io",
+        # Loopback only. This used to name four of our own hostnames, which
+        # every installation then accepted Host headers for. Whoever runs this
+        # sets their own domain here.
+        "localhost,127.0.0.1,0.0.0.0",
     )
     return [host.strip() for host in raw.split(",") if host.strip()]
 
@@ -249,22 +252,31 @@ EMAIL_BACKEND = os.environ.get(
 )
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 
-# PG-208: when set, ResendAPIEmailBackend rewrites every recipient to this one
-# address. Meant for staging, where seeded accounts carry invented addresses:
-# the nightly cron would otherwise send lifecycle mail to them, and the bounces
-# would land on payglue.io's sending reputation and hurt real customer mail.
-# Empty in production, and it must stay that way.
+# When set, the mail backend rewrites every recipient to this one address.
+# Meant for staging, where seeded accounts carry invented addresses: the nightly
+# cron would otherwise send lifecycle mail to them, and the bounces would land
+# on your sending reputation and hurt real customer mail. Empty in production,
+# and it must stay that way.
 EMAIL_REDIRECT_TO = os.environ.get("EMAIL_REDIRECT_TO", "")
-# team@, not noreply@: the onboarding mails ask people to hit reply and say
-# "I read every email myself", which a no-reply sender quietly contradicts.
-# Resend verifies the domain rather than each address, so this needs no new
-# sender setup -- but it does mean replies now land in a real inbox.
-DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "PayGlue <team@payglue.io>")
-# PG-190: where send_lifecycle_emails alerts André when a subscription's
-# Creem status is ambiguous (past_due/unpaid/paused/fetch failure) rather
-# than a confirmed cancellation -- an internal ops notification, not a
-# customer-facing LifecycleEmailTemplate.
-INTERNAL_ADMIN_EMAIL = os.environ.get("INTERNAL_ADMIN_EMAIL", "team@payglue.io")
+# The sender every customer-facing email goes out as. No default belonging to
+# anyone: an installation that does not set this would otherwise send from a
+# domain it does not own, which fails the mail provider's domain check anyway
+# and puts somebody else's address in front of its customers.
+# Prefer a real inbox over a no-reply one. The onboarding copy asks people to
+# hit reply, and a no-reply sender quietly contradicts that.
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "PayGlue <noreply@localhost>")
+# Sender for pure system notices, where a reply has no human meaning. Falls back
+# to the address above rather than carrying a second literal, so configuring one
+# address is already correct here too.
+SYSTEM_NOTICE_FROM_EMAIL = (
+    os.environ.get("SYSTEM_NOTICE_FROM_EMAIL", "").strip() or DEFAULT_FROM_EMAIL
+)
+# Where internal operational notices go: a subscription status this backend
+# cannot classify, a support request, an account deletion. Empty by default,
+# because these notices carry customer email addresses and a default would mail
+# one installation's customer data to whoever owns that address. Unset simply
+# means the notices are skipped.
+INTERNAL_ADMIN_EMAIL = os.environ.get("INTERNAL_ADMIN_EMAIL", "")
 
 # Support requests from the dashboard open an issue on this Linear team, so a
 # request has a reference number without us paying for Linear Ask. All three

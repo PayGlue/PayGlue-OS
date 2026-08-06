@@ -15,7 +15,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('enabled', models.BooleanField(default=False, help_text='Off until the connection has passed a health check at least once.')),
-                ('ghost_api_base_url', models.URLField(help_text='e.g. https://blog.payglue.io (no trailing path)')),
+                ('ghost_api_base_url', models.URLField(help_text='e.g. https://blog.example.com (no trailing path)')),
                 ('ghost_admin_api_key_enc', models.TextField(blank=True, default='', help_text='Encrypted at rest, shown as dots once saved.')),
                 ('creem_store_id', models.CharField(default='sto_3MX9ng1a4C6U5PVWJVbuQm', help_text='Only checkouts from this store are considered.', max_length=64)),
                 ('optin_field_key', models.CharField(default='newsletteroptin', max_length=64)),

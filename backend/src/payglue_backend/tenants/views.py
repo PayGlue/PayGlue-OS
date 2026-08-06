@@ -1809,7 +1809,7 @@ class CreemCheckoutSessionView(_PolarBaseMixin, APIView):
                                 "detail": (
                                     "This subscription is still in its trial period, and Creem doesn't allow "
                                     "changing plans until the trial ends and billing begins. If you need to "
-                                    "switch sooner, contact us at team@payglue.io or via Support "
+                                    "switch sooner, get in touch via Support "
                                     f"({app_url(f'/t/{tenant_slug}/support')}) and we'll sort it out."
                                 )
                             },

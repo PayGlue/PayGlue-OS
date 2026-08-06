@@ -3,7 +3,7 @@
 """PG-148: seeds the 3 fixed trigger rows so they exist to edit in Django
 Admin (the admin intentionally disallows adding/deleting rows, only fixed
 choices from LifecycleEmailTemplate.Trigger). Disabled by default -- these
-are placeholder copy, nothing should send until André reviews and turns
+are placeholder copy, nothing should send until someone reviews and turns
 each one on."""
 from django.db import migrations
 
