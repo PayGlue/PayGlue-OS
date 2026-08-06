@@ -12,9 +12,11 @@ import {
   revokeServicePin,
 } from '../lib/api'
 import { useSessionStore } from '../stores/session'
+import { supportEmail } from '../lib/publicUrls'
 import type { ServicePin, SupportRequestSummary } from '../types/api'
 
 const session = useSessionStore()
+const contactEmail = supportEmail()
 
 const canManagePin = computed(() => {
   const role = session.activeMembership?.role
@@ -124,7 +126,9 @@ async function submitContact() {
     requests.value = [created, ...requests.value]
     sent.value = true
   } catch {
-    contactError.value = 'Something went wrong. Please email us directly.'
+    contactError.value = contactEmail
+      ? 'Something went wrong. Please email us directly.'
+      : 'Something went wrong. Please try again in a moment.'
   } finally {
     sending.value = false
   }
@@ -236,8 +240,14 @@ const formatDate = (iso: string) => {
       <section class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <h2 class="text-base font-semibold text-slate-900 dark:text-slate-100">Contact support</h2>
         <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Questions or an issue with your integration? We read everything and reply personally to
-          <a class="text-indigo-600 dark:text-indigo-400 hover:underline" href="mailto:team@payglue.io">team@payglue.io</a>.
+          <template v-if="contactEmail">
+            Questions or an issue with your integration? We read everything and reply personally to
+            <a class="text-indigo-600 dark:text-indigo-400 hover:underline" :href="`mailto:${contactEmail}`">{{ contactEmail }}</a>.
+          </template>
+          <template v-else>
+            Questions or an issue with your integration? Send it through here and it reaches whoever
+            runs this installation.
+          </template>
         </p>
 
         <!-- Topic cards first: picking the lane is easier than writing the
@@ -309,7 +319,8 @@ const formatDate = (iso: string) => {
             ></textarea>
           </div>
           <p v-if="contactError" class="rounded-lg bg-rose-50 dark:bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
-            {{ contactError }} <a href="mailto:team@payglue.io" class="underline">team@payglue.io</a>
+            {{ contactError }}
+            <a v-if="contactEmail" :href="`mailto:${contactEmail}`" class="underline">{{ contactEmail }}</a>
           </p>
           <button
             type="button"

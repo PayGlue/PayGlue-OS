@@ -12,6 +12,8 @@ from datetime import timedelta
 
 import json
 
+import os
+
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
@@ -40,7 +42,7 @@ from payglue_backend.webhooks.models import (
 )
 
 DEMO_SLUG = "demo"
-DEMO_OWNER_EMAIL = "demo@payglue.io"
+DEMO_OWNER_EMAIL = os.environ.get("DEMO_OWNER_EMAIL", "demo@example.com")
 
 
 class Command(BaseCommand):

@@ -15,7 +15,7 @@ harmless direction; discovering it afterwards and having to correct a "your
 data is gone" email is not.
 
 Rewrites only rows still holding the exact 0035 copy, the same guard 0028 used:
-anything edited in the admin is André's and stays his.
+anything already edited in the admin stays untouched.
 """
 from django.db import migrations
 

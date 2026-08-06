@@ -109,5 +109,5 @@ class ResendAPIEmailBackend(BaseEmailBackend):
         except error.HTTPError as exc:
             body = exc.read().decode("utf-8") if exc.fp else ""
             # Surface Resend's own message (unverified domain, bad key, ...) --
-            # that's exactly what the admin test button shows André.
+            # that's exactly what the admin test button shows the operator.
             raise RuntimeError(f"Resend API {exc.code}: {body}") from exc

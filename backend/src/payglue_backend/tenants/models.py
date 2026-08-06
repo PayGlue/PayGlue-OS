@@ -202,7 +202,7 @@ class BillingAccount(models.Model):
     # active/trialing/scheduled_cancel NOR a confirmed "canceled" -- e.g.
     # past_due/unpaid/paused, or the raw status fetch itself failed. These
     # can be a transient payment retry, not a real cancellation, and only
-    # André (checking Creem directly) can tell the difference -- so nothing
+    # a human (checking Creem directly) can tell the difference -- so nothing
     # here starts the deletion clock automatically.
     needs_admin_review = models.BooleanField(default=False)
     admin_review_reason = models.CharField(max_length=64, blank=True, default="")
@@ -296,7 +296,7 @@ class LifecycleEmailLog(models.Model):
     """PG-148: audit trail of every lifecycle email actually sent. Not used
     for dedup logic itself -- that's handled by comparing against
     BillingAccount.last_known_* before ever calling send_lifecycle_email --
-    this is purely for André to see what went out and when."""
+    this is purely so the operator can see what went out and when."""
 
     billing_account = models.ForeignKey(
         BillingAccount, on_delete=models.CASCADE, related_name="lifecycle_email_log"
@@ -327,7 +327,7 @@ class LicenseCode(models.Model):
     purchase. Grants a chosen plan's limits as a "Tester" for a fixed window (or
     forever). When a limited window ends, the account enters the same 30-day
     deletion grace as a real cancelled subscription (PG-190), nudging the tester
-    to pick a plan before deletion. André shares these on Reddit/socials/DMs with
+    to pick a plan before deletion. They get handed out on socials and in DMs with
     a max-activation count ("5x, first come first served")."""
 
     class AccessDuration(models.IntegerChoices):
@@ -859,7 +859,7 @@ class NewsletterRouting(models.Model):
         help_text="Off until the connection has passed a health check at least once.",
     )
     ghost_api_base_url = models.URLField(
-        help_text="e.g. https://blog.payglue.io (no trailing path)"
+        help_text="e.g. https://blog.example.com (no trailing path)"
     )
     ghost_admin_api_key_enc = models.TextField(
         blank=True, default="", help_text="Encrypted at rest, shown as dots once saved."
@@ -905,7 +905,7 @@ class NewsletterRouting(models.Model):
 class SupportRequest(models.Model):
     """A support request raised from the dashboard, mirrored into Linear.
 
-    We have no helpdesk, only André's inbox and Linear. Rather than pay for
+    We have no helpdesk, only an inbox and Linear. Rather than pay for
     Linear Ask, every request opens an issue on the support team and keeps the
     identifier (PG-231 and so on) so both sides can name the same thing.
 

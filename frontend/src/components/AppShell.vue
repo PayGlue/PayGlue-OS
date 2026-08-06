@@ -11,6 +11,11 @@ import { useSessionStore } from '../stores/session'
 import { checkHeaderScript, getGhostStripeStatus, getIntegrationConfig } from '../lib/api'
 import { useHeaderScriptStatus } from '../composables/useHeaderScriptStatus'
 import { useTheme } from '../composables/useTheme'
+import { supportEmail } from '../lib/publicUrls'
+
+// Empty unless this installation configures one, in which case the header's
+// support shortcut is hidden rather than pointed at somebody else (PG-239).
+const contactEmail = supportEmail()
 
 const { mode: themeMode, cycle: cycleTheme } = useTheme()
 const themeLabel = computed(() =>
@@ -751,7 +756,8 @@ watch(
 
             <div class="flex items-center gap-1">
               <a
-                href="mailto:team@payglue.io"
+                v-if="contactEmail"
+                :href="`mailto:${contactEmail}`"
                 title="Support"
                 class="grid h-8 w-8 place-items-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               >

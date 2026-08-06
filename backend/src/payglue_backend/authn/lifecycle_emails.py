@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # PG-202: wrap every lifecycle email in PayGlue's branded HTML shell (the dark
 # card from the Supabase signup email) so they stop looking like raw plain text.
-# The editable template body stays plain text -- André edits words in the admin,
+# The editable template body stays plain text -- words are edited in the admin,
 # never HTML -- and this renders it into the shell at send time. The plain-text
 # body is still sent as the fallback part for text-only clients.
 # Served by the dashboard, so it only resolves once the dashboard address is
@@ -105,7 +105,16 @@ def _send_branded(
 
     `from_email` lets pure system notices come from noreply@ instead of the
     default team@, which invites replies (see SYSTEM_NOTICE_FROM_EMAIL).
+
+    Blank recipients are dropped, and with none left this does nothing. Every
+    internal notice addresses settings.INTERNAL_ADMIN_EMAIL, which is empty
+    unless an installation configures it (PG-239), and handing the mail API an
+    empty address would turn "nobody wants these notices" into a logged error
+    on every run.
     """
+    recipients = [r for r in recipients if r and r.strip()]
+    if not recipients:
+        return
     message = EmailMultiAlternatives(
         subject,
         body,
@@ -189,10 +198,10 @@ def send_lifecycle_email(billing_account: BillingAccount, trigger: str) -> bool:
 
 
 def notify_admin_review_needed(billing_account: BillingAccount, reason: str) -> None:
-    """PG-190: alerts André (settings.INTERNAL_ADMIN_EMAIL) when a
+    """PG-190: alerts the operator (settings.INTERNAL_ADMIN_EMAIL) when a
     subscription's Creem status can't be classified as either "still fine"
     or "confirmed canceled" -- e.g. past_due/unpaid/paused, or the raw
-    status fetch itself failed. Only André can tell a temporary payment
+    status fetch itself failed. Only a human can tell a temporary payment
     retry apart from a real problem by checking Creem directly, so nothing
     here starts the deletion clock. Deliberately not a LifecycleEmailTemplate
     (this isn't customer-facing, doesn't need admin-editable copy) and not
@@ -200,15 +209,15 @@ def notify_admin_review_needed(billing_account: BillingAccount, reason: str) -> 
     caller dedups this via BillingAccount.needs_admin_review itself, only
     calling this on the False -> True transition). Best-effort: a failure
     here is logged, not raised -- it must never block the poll command."""
-    subject = f"PayGlue: Creem-Status unklar fuer {billing_account.owner.email} ({reason})"
+    subject = f"PayGlue: unclear Creem status for {billing_account.owner.email} ({reason})"
     body = (
         f"Account: {billing_account.owner.email}\n"
         f"Plan: {billing_account.plan.name}\n"
-        f"Creem-Status: {reason}\n\n"
-        "Automatisch nicht eindeutig einer Kuendigung zuordenbar (z.B. Zahlung "
-        "fehlgeschlagen, pausiert, oder der Status-Abruf selbst ist gescheitert). "
-        "Bitte direkt in Creem pruefen -- die 30-Tage-Loeschfrist startet erst, "
-        "wenn der Status eindeutig 'canceled' ist."
+        f"Creem status: {reason}\n\n"
+        "This could not be read as a cancellation either way (payment failed, "
+        "paused, or the status fetch itself did not come back). Check it in "
+        "Creem directly. The 30-day deletion window only starts once the "
+        "status is unambiguously 'canceled'."
     )
     try:
         _send_branded(subject, body, [settings.INTERNAL_ADMIN_EMAIL])
@@ -289,7 +298,7 @@ def notify_admin_account_deleted(
 # Fallback copy used only if the admin-editable GHOST_DELIVERY_FAILING template
 # row is somehow missing entirely (it is seeded by migration). Keeps the alert
 # working even then -- an alert going silent is the exact failure we're guarding
-# against. If André *disables* the template in the admin, that's respected (no
+# against. If the template is *disabled* in the admin, that's respected (no
 # send); this fallback is only for the no-row edge.
 _GHOST_ALERT_FALLBACK_SUBJECT = "PayGlue: Your Ghost connection is failing"
 _GHOST_ALERT_FALLBACK_BODY = (
@@ -335,7 +344,7 @@ def send_test_lifecycle_email_error(template: LifecycleEmailTemplate, recipient:
     audit trail is for real customer sends only.
 
     Returns "" on success or the error message (e.g. the raw SMTP failure) so
-    the admin can show André exactly why a test send failed -- typically a
+    the admin can show exactly why a test send failed -- typically a
     RESEND_API_KEY / verified-sender-domain problem -- instead of a generic
     'failed'. Never raises."""
     context = {**_test_render_context(), "email": recipient}
@@ -485,8 +494,8 @@ def send_ghost_delivery_alert(owner_email: str, tenant_slug: str) -> bool:
 
     The copy is admin-editable via the GHOST_DELIVERY_FAILING
     LifecycleEmailTemplate (edited alongside the subscription templates in
-    Django Admin). Placeholders: $email, $tenant, $url. If André disables that
-    template the alert is intentionally silenced; if the row is missing
+    Django Admin). Placeholders: $email, $tenant, $url. Disabling that template
+    intentionally silences the alert; if the row is missing
     entirely we fall back to the built-in copy so the alert never goes dark by
     accident. Best-effort and fail-safe: a send failure is logged, never
     raised. The command dedups (only calls this on the healthy -> failing

@@ -8,7 +8,7 @@ one-off-product-based, and it puts the trigger type in a header
 body. The body is JSON:API (``data``/``attributes``/``relationships`` +
 ``included``).
 
-Mapping model (confirmed with André, 2026-07-18):
+Mapping model (confirmed 2026-07-18):
 - Grant is tier-specific: a patron entitled to tier X grants whatever Ghost
   access the creator mapped tier X to. One canonical line item per tier id
   in ``currently_entitled_tiers``.
