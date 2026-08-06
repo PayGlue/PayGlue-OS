@@ -178,15 +178,19 @@ def test_event_replay_rejects_invalid_state_and_missing_events(
         role=TenantMembership.Role.OWNER,
         uid_suffix="replay-invalid",
     )
+    # Processed became replayable, because "processed, but nothing granted" is
+    # exactly the case you want to run again after fixing a mapping. The only
+    # genuinely invalid state left is one that is still mid-flight, where a
+    # replay would race the worker.
     invalid_state_event = WebhookInboundEvent.objects.create(
         tenant_slug="tenant-a",
         provider="polar",
-        status=WebhookInboundEvent.Status.PROCESSED,
+        status=WebhookInboundEvent.Status.PROCESSING,
         payload_raw=b"{}",
         payload_snapshot={},
         headers_snapshot={"Content-Type": "application/json"},
         endpoint_path="/t/tenant-a/webhooks/polar/[redacted]/",
-        endpoint_token_hash="hash-processed",
+        endpoint_token_hash="hash-processing",
         endpoint_metadata={"method": "POST"},
     )
     other_tenant_event = WebhookInboundEvent.objects.create(

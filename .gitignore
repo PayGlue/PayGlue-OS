@@ -18,3 +18,7 @@ secrets/
 
 # BMAD generated output artifacts
 _bmad-output/
+
+# Local agent and editor configuration. Working instructions for whoever is
+# building this are not part of the product.
+.claude/

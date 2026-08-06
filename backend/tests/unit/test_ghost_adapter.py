@@ -118,7 +118,11 @@ def test_apply_entitlement_creates_new_member() -> None:
     assert member["comped"] is False
     assert {"name": "source:payglue"} in member["labels"]
     assert {"name": "product:tier-basic"} in member["labels"]
-    assert {"name": "payglue-active:payglue"} in member["labels"]
+    # Two labels, not one. The marker that grants access is bare, so a reader
+    # who bought through one provider and renewed through another keeps access
+    # instead of silently losing it; the provider is recorded separately.
+    assert {"name": "payglue-active"} in member["labels"]
+    assert {"name": "payglue-provider:payglue"} in member["labels"]
     _assert_ghost_auth(post["headers"])
 
 
