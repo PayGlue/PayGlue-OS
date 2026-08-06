@@ -283,9 +283,38 @@ LOG_RETENTION_DAYS = int(os.environ.get("LOG_RETENTION_DAYS", "90"))
 # are scrubbed after this shorter window -- they're never re-read once an event
 # is terminally processed. See purge_expired_logs.
 PAYLOAD_RAW_RETENTION_DAYS = int(os.environ.get("PAYLOAD_RAW_RETENTION_DAYS", "7"))
+# Where this installation is reachable from the outside (PG-238).
+#
+# PUBLIC_API_BASE_URL is this backend's public origin. It shows up in webhook
+# URLs handed to payment providers, which have to be reachable from their
+# servers, so it cannot be derived from an incoming request: behind a proxy the
+# request host is the internal one. Empty falls back to the request origin,
+# which is right for a plain single-host install.
+#
+# PUBLIC_APP_BASE_URL is where the dashboard lives. It appears in emails, which
+# are sent from cron jobs where no request exists at all, so there is nothing to
+# derive it from. Empty means links are left out rather than pointed somewhere
+# wrong.
+#
+# The embedded scripts (paywall.js, button.js, pricing-table.js) need neither
+# setting: they read their origin from their own script tag, so whoever served
+# the file is the backend they talk to.
+PUBLIC_API_BASE_URL = os.environ.get("PUBLIC_API_BASE_URL", "").strip().rstrip("/")
+PUBLIC_APP_BASE_URL = os.environ.get("PUBLIC_APP_BASE_URL", "").strip().rstrip("/")
+
+# Extra hosts accepted as a checkout return_url, on top of PUBLIC_APP_BASE_URL
+# and loopback. return_url is attacker input in principle, so an unchecked
+# value would be an open redirect through the provider's hosted checkout.
+# Comma-separated, empty by default.
+CHECKOUT_RETURN_HOSTS = os.environ.get("CHECKOUT_RETURN_HOSTS", "")
+
+# Addresses that skip the invite gate in profile_gate.resolve_profile_with_invite_gate.
+# Empty by default, on purpose: a baked-in address would give every install an
+# account that needs no invitation. Whoever wants the shortcut configures it
+# themselves, same rule as DEV_BYPASS_LICENSE_KEY below.
 DEV_BYPASS_EMAILS: set[str] = {
     e.strip().lower()
-    for e in os.environ.get("DEV_BYPASS_EMAILS", "dev@payglue.io").split(",")
+    for e in os.environ.get("DEV_BYPASS_EMAILS", "").split(",")
     if e.strip()
 }
 

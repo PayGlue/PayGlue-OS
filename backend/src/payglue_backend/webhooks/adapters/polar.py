@@ -231,10 +231,18 @@ class PolarPaymentAdapter:
         for item in items_raw:
             if not isinstance(item, dict):
                 raise InvalidWebhookPayloadError("line item must be an object")
-            # Use product_id from data.product; fall back to item.id (price ID)
-            item_product_id = product_id or self._optional_str(item.get("product_id")) or self._optional_str(item.get("id"))
+            # PG-231: data.product.id first, then a product_id on the item.
+            # There used to be a third fallback to item.id, which is the order
+            # item's own id: unique per purchase, so it can never match a
+            # mapping. Nothing errored, the event was recorded as processed,
+            # and every purchase silently granted nothing. Failing here is the
+            # better outcome, because a failed event is visible and replayable.
+            item_product_id = product_id or self._optional_str(item.get("product_id"))
             if not item_product_id:
-                raise InvalidWebhookPayloadError("cannot resolve product_id from order item")
+                raise InvalidWebhookPayloadError(
+                    "cannot resolve a product id: payload has neither data.product.id "
+                    "nor product_id on the order item"
+                )
             raw_amount = item.get("amount")
             amount = raw_amount if isinstance(raw_amount, int) else 0
             line_items.append(

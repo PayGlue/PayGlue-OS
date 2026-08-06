@@ -18,12 +18,15 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from payglue_backend.authn.step_up import StepUpError, require_step_up
-from payglue_backend.authn.authentication import FirebaseBearerAuthentication
+from payglue_backend.authn.authentication import SupabaseBearerAuthentication
 from payglue_backend.authn.rbac import resolve_tenant_membership
 from payglue_backend.core.errors import PlanLimitExceededError
 from payglue_backend.core.models import TenantContext
 from payglue_backend.tenants import support
 from payglue_backend.tenants.audit import write_public_audit_event
+# Canonical list of every slug-string-keyed model; maintained for the delete
+# cascade (PG-187), reused here so a rename can't silently miss one.
+from payglue_backend.tenants.cascade_delete import TENANT_SLUG_CONTENT_MODELS, WEBHOOK_LOG_MODELS
 from datetime import timedelta
 
 from payglue_backend.authn.lifecycle_emails import (
@@ -45,6 +48,8 @@ from payglue_backend.tenants.models import (
     UserProfile,
     StepUpChallenge,
 )
+from django.conf import settings
+from payglue_backend.core.public_urls import app_host, app_url
 from payglue_backend.tenants.plan_limits import check_new_tenant_limit, check_resource_limit
 from payglue_backend.tenants.serializers import (
     BillingProfileSerializer,
@@ -93,7 +98,7 @@ class OwnerOrAdminOnly(BasePermission):
 
 
 class TenantDetailView(APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [HasUserProfile]
 
     def _get_owner_membership(self, request: Request, tenant_slug: str) -> "TenantMembership | None":
@@ -149,7 +154,19 @@ class TenantDetailView(APIView):
                 return Response({"slug": ["This slug is already taken."]}, status=status.HTTP_400_BAD_REQUEST)
             if not re.match(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", new_slug):
                 return Response({"slug": ["Slug must use lowercase letters, numbers, and hyphens."]}, status=status.HTTP_400_BAD_REQUEST)
-            Tenant.objects.filter(pk=tenant.pk).update(slug=new_slug, updated_at=timezone.now())
+            old_slug = tenant.slug
+            # Everything in TENANT_SLUG_CONTENT_MODELS/WEBHOOK_LOG_MODELS hangs
+            # on the slug *string*, not a ForeignKey. Renaming only the Tenant
+            # row (as this did until 2026-07-26) orphaned every saved provider
+            # credential, config, mapping and event log under the old slug --
+            # the dashboard then showed all connections as never configured.
+            # One transaction, so a partial re-key can't strand half the data.
+            with transaction.atomic():
+                Tenant.objects.filter(pk=tenant.pk).update(slug=new_slug, updated_at=timezone.now())
+                for _label, model, _display in TENANT_SLUG_CONTENT_MODELS:
+                    model.objects.filter(tenant_slug=old_slug).update(tenant_slug=new_slug)
+                for _label, model in WEBHOOK_LOG_MODELS:
+                    model.objects.filter(tenant_slug=old_slug).update(tenant_slug=new_slug)
             tenant.slug = new_slug
         return Response({"slug": tenant.slug})
 
@@ -173,7 +190,7 @@ class TenantDetailView(APIView):
 
 
 class TenantSlugCheckView(APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [HasUserProfile]
 
     def get(self, request: Request) -> Response:
@@ -185,7 +202,7 @@ class TenantSlugCheckView(APIView):
 
 
 class TenantCollectionView(APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [HasUserProfile]
 
     def get(self, request: Request) -> Response:
@@ -233,7 +250,7 @@ class TenantCollectionView(APIView):
 
 
 class TeamCollectionView(APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [HasUserProfile]
 
     def _require_tenant_context(self, request: Request, tenant_slug: str) -> Tenant:
@@ -433,7 +450,7 @@ class TeamCollectionView(APIView):
 
 
 class TeamMembershipDetailView(APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [HasUserProfile]
 
     def _require_tenant_context(self, request: Request, tenant_slug: str) -> Tenant:
@@ -655,7 +672,7 @@ class OwnershipTransferView(_TenantContextMixin, APIView):
     request one. Requesting is allowed for owners and admins; the current
     owner alone confirms/rejects it (see OwnershipTransferActionView)."""
 
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [HasUserProfile]
 
     def _pending(self, tenant: Tenant) -> OwnershipTransferRequest | None:
@@ -761,7 +778,7 @@ class OwnershipTransferActionView(_TenantContextMixin, APIView):
     done by the requester or any owner/admin. On confirm the new member becomes
     owner and the old owner becomes billing_admin (billing stays with them)."""
 
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [HasUserProfile]
 
     def post(self, request: Request, tenant_slug: str) -> Response:
@@ -884,7 +901,7 @@ class OwnershipTransferActionView(_TenantContextMixin, APIView):
 
 
 class BillingProfileView(_TenantContextMixin, APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [BillingReadBillingAdminOrOwnerWrite]
 
     def get(self, request: Request, tenant_slug: str) -> Response:
@@ -927,7 +944,7 @@ class BillingProfileView(_TenantContextMixin, APIView):
 
 
 class ServicePinView(APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [OwnerOrAdminOnly]
 
     def _require_tenant_context(self, request: Request, tenant_slug: str) -> Tenant:
@@ -1018,7 +1035,7 @@ class ServicePinView(APIView):
 
 
 class _PolarBaseMixin:
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [BillingReadBillingAdminOrOwnerWrite]
 
     def _require_tenant_context(self, request: Request, tenant_slug: str) -> "Tenant":
@@ -1627,14 +1644,21 @@ class CreemCancelSubscriptionView(_PolarBaseMixin, APIView):
 # Only these hosts may be used as a checkout success_url -- it's attacker
 # input in principle (POST body), so an unchecked value would be an open
 # redirect via Creem's own hosted checkout page.
-_ALLOWED_RETURN_HOSTS = {
-    "app.payglue.io",
-    "payglue.io",
-    "dev.payglue.io",
-    "dev2.payglue.io",
-    "localhost",
-    "127.0.0.1",
-}
+# Loopback only by default. Any real host has to come from PUBLIC_APP_BASE_URL
+# plus CHECKOUT_RETURN_HOSTS, because a baked-in list means a self-hosted
+# install cannot complete a checkout at all while ours sits in the public
+# source as a ready-made redirect target (PG-238).
+def _allowed_return_hosts() -> set[str]:
+    hosts = {"localhost", "127.0.0.1"}
+    configured = app_host()
+    if configured:
+        hosts.add(configured)
+    hosts.update(
+        h.strip().lower()
+        for h in getattr(settings, "CHECKOUT_RETURN_HOSTS", "").split(",")
+        if h.strip()
+    )
+    return hosts
 
 
 class CreemCheckoutSessionView(_PolarBaseMixin, APIView):
@@ -1661,7 +1685,7 @@ class CreemCheckoutSessionView(_PolarBaseMixin, APIView):
             return Response({"detail": "Invalid plan_key."}, status=status.HTTP_400_BAD_REQUEST)
         if interval not in {"monthly", "annual"}:
             return Response({"detail": "Invalid interval."}, status=status.HTTP_400_BAD_REQUEST)
-        if not return_url or parse.urlparse(return_url).hostname not in _ALLOWED_RETURN_HOSTS:
+        if not return_url or parse.urlparse(return_url).hostname not in _allowed_return_hosts():
             return Response({"detail": "Invalid return_url."}, status=status.HTTP_400_BAD_REQUEST)
 
         plan = Plan.objects.filter(key=plan_key).first()
@@ -1786,7 +1810,7 @@ class CreemCheckoutSessionView(_PolarBaseMixin, APIView):
                                     "This subscription is still in its trial period, and Creem doesn't allow "
                                     "changing plans until the trial ends and billing begins. If you need to "
                                     "switch sooner, contact us at team@payglue.io or via Support "
-                                    f"(https://app.payglue.io/t/{tenant_slug}/support) and we'll sort it out."
+                                    f"({app_url(f'/t/{tenant_slug}/support')}) and we'll sort it out."
                                 )
                             },
                             status=status.HTTP_400_BAD_REQUEST,
@@ -2379,7 +2403,7 @@ class SupportRequestView(APIView):
     thing that comes from somebody who is not the owner.
     """
 
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [HasUserProfile]
 
     MAX_MESSAGE = 5000

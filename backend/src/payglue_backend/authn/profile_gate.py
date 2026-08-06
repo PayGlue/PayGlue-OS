@@ -3,7 +3,7 @@
 """Shared invite-gated UserProfile resolution.
 
 Used by both AuthSessionView (the explicit POST /api/v1/auth/session call)
-and FirebaseBearerAuthentication (every other authenticated request) so a
+and SupabaseBearerAuthentication (every other authenticated request) so a
 brand-new Supabase identity is provisioned a PayGlue profile exactly once,
 through the same invite-gate check, no matter which endpoint it first hits.
 """

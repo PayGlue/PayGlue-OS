@@ -16,9 +16,10 @@ import re
 from string import Template
 
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
 
 from payglue_backend.tenants.models import BillingAccount, LifecycleEmailLog, LifecycleEmailTemplate
+from payglue_backend.core.public_urls import app_url
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,10 @@ logger = logging.getLogger(__name__)
 # The editable template body stays plain text -- André edits words in the admin,
 # never HTML -- and this renders it into the shell at send time. The plain-text
 # body is still sent as the fallback part for text-only clients.
-_EMAIL_LOGO_URL = "https://app.payglue.io/email-icon.png"
+# Served by the dashboard, so it only resolves once the dashboard address is
+# configured. Empty means the shell renders without a logo rather than with a
+# broken image pointing at somebody else's server (PG-238).
+_EMAIL_LOGO_PATH = "email-icon.png"
 _URL_RE = re.compile(r"https?://[^\s<]+")
 
 _EMAIL_SHELL = """\
@@ -78,18 +82,39 @@ def _render_branded_email(subject: str, body: str) -> str:
         blocks.append(
             f'<p style="margin:0 0 16px;font-size:15px;color:#cbd5e1;line-height:1.7;">{escaped}</p>'
         )
-    return _EMAIL_SHELL.format(subject=_html.escape(subject), logo=_EMAIL_LOGO_URL, content="".join(blocks))
+    return _EMAIL_SHELL.format(
+        subject=_html.escape(subject),
+        logo=app_url(_EMAIL_LOGO_PATH),
+        content="".join(blocks),
+    )
 
 
-def _send_branded(subject: str, body: str, recipients: list[str]) -> None:
-    """send_mail with the branded HTML part attached; plain text stays the fallback."""
-    send_mail(
+def _send_branded(
+    subject: str,
+    body: str,
+    recipients: list[str],
+    reply_to: list[str] | None = None,
+    from_email: str | None = None,
+) -> None:
+    """Branded HTML part attached; plain text stays the fallback.
+
+    `reply_to` is for the notifications we send to ourselves. The support alert
+    goes from team@ to team@, so without it, hitting Reply in a mail client
+    answers us instead of the customer who wrote in. The Resend backend
+    forwards the header and its staging redirect leaves it alone.
+
+    `from_email` lets pure system notices come from noreply@ instead of the
+    default team@, which invites replies (see SYSTEM_NOTICE_FROM_EMAIL).
+    """
+    message = EmailMultiAlternatives(
         subject,
         body,
-        settings.DEFAULT_FROM_EMAIL,
+        from_email or settings.DEFAULT_FROM_EMAIL,
         recipients,
-        html_message=_render_branded_email(subject, body),
+        reply_to=reply_to or None,
     )
+    message.attach_alternative(_render_branded_email(subject, body), "text/html")
+    message.send()
 
 
 # The closing every customer-facing email ends with. Kept in one place so the
@@ -193,6 +218,74 @@ def notify_admin_review_needed(billing_account: BillingAccount, reason: str) -> 
         )
 
 
+def notify_admin_license_redeemed(license_code, email: str) -> None:
+    """Tell us when somebody signs up with one of our own PAYGLUE invite codes.
+
+    A Creem purchase already announces itself by email; a code we handed out on
+    Reddit or in a DM did not, so those signups landed silently and we only saw
+    them by chance in the admin. Same shape as the notice above: not
+    customer-facing, not a LifecycleEmailTemplate, and best-effort -- a signup
+    must never fail because a notification could not be sent.
+
+    Called once per fresh redemption. Retries of the same redemption are
+    idempotent upstream and never reach this.
+    """
+    used = license_code.activation_count
+    cap = license_code.max_activations
+    remaining = "unlimited" if cap is None else f"{max(cap - used, 0)} of {cap} left"
+    duration = (
+        "never expires"
+        if license_code.access_days == 0
+        else f"{license_code.access_days} days"
+    )
+    # Address in the subject on purpose: it makes the mail searchable in the
+    # inbox, which is how you find the account again weeks later.
+    subject = f"New PayGlue signup: {email} (invite code {license_code.code})"
+    body = (
+        f"{email} just signed up with one of our own codes.\n\n"
+        f"User: {email}\n"
+        f"Code: {license_code.code}\n"
+        f"Label: {license_code.label or '(none)'}\n"
+        f"Plan: {license_code.plan.name}\n"
+        f"Access: {duration}\n"
+        f"Activations: {used} used, {remaining}\n\n"
+        "No payment involved, this is a tester on a code we gave out."
+    )
+    try:
+        _send_branded(subject, body, [settings.INTERNAL_ADMIN_EMAIL])
+    except Exception:
+        logger.exception("Failed to send license-redeemed notification for %s", email)
+
+
+def notify_admin_account_deleted(
+    email: str, tenants_deleted: int, tenants_left: int
+) -> None:
+    """Tell us when somebody deletes their whole account, not just a tenant.
+
+    The customer gets their own receipt (send_account_deleted_email); this is
+    the other half, so a departure isn't something we notice by chance. Counts
+    come from the caller because the rows are gone by the time this runs.
+
+    Same shape as the other admin notices: hard-wired copy, no
+    LifecycleEmailTemplate, no LifecycleEmailLog, best-effort. The account is
+    already deleted when this fires -- throwing here would turn a successful
+    deletion into a 500 for something that did succeed.
+    """
+    subject = f"PayGlue account deleted: {email}"
+    body = (
+        f"{email} deleted their entire PayGlue account, not just a workspace.\n\n"
+        f"User: {email}\n"
+        f"Workspaces deleted with them: {tenants_deleted}\n"
+        f"Workspaces they only left (other owners remain): {tenants_left}\n\n"
+        "Self-service deletion, so it is already done and cannot be undone. "
+        "Worth a look at why if this person was a paying customer."
+    )
+    try:
+        _send_branded(subject, body, [settings.INTERNAL_ADMIN_EMAIL])
+    except Exception:
+        logger.exception("Failed to send account-deleted notification for %s", email)
+
+
 # Fallback copy used only if the admin-editable GHOST_DELIVERY_FAILING template
 # row is somehow missing entirely (it is seeded by migration). Keeps the alert
 # working even then -- an alert going silent is the exact failure we're guarding
@@ -215,14 +308,22 @@ _GHOST_ALERT_FALLBACK_BODY = (
 
 # Dummy placeholder values so any template (subscription or ghost-alert) renders
 # in a test send. `email` is overridden with the real recipient at send time.
-_TEST_RENDER_CONTEXT = {
-    "email": "you@example.com",
-    "plan": "Studio",
-    "tenant": "your-publication",
-    "url": "https://app.payglue.io/t/your-publication/connection/ghost",
-    "new_owner": "teammate@example.com",
-    "previous_owner": "you@example.com",
-}
+def _test_render_context() -> dict[str, str]:
+    """Placeholder values for the admin's "send me a test" button.
+
+    A function rather than a module-level dict because "url" depends on
+    PUBLIC_APP_BASE_URL. Evaluated at import time it would freeze whatever the
+    setting happened to be when Django loaded, which for a worker started
+    before its configuration is the empty string, permanently.
+    """
+    return {
+        "email": "you@example.com",
+        "plan": "Studio",
+        "tenant": "your-publication",
+        "url": app_url("/t/your-publication/connection/ghost"),
+        "new_owner": "teammate@example.com",
+        "previous_owner": "you@example.com",
+    }
 
 
 def send_test_lifecycle_email_error(template: LifecycleEmailTemplate, recipient: str) -> str:
@@ -237,7 +338,7 @@ def send_test_lifecycle_email_error(template: LifecycleEmailTemplate, recipient:
     the admin can show André exactly why a test send failed -- typically a
     RESEND_API_KEY / verified-sender-domain problem -- instead of a generic
     'failed'. Never raises."""
-    context = {**_TEST_RENDER_CONTEXT, "email": recipient}
+    context = {**_test_render_context(), "email": recipient}
     subject = "[Test] " + Template(template.subject).safe_substitute(context)
     body = Template(template.body).safe_substitute(context)
     try:
@@ -309,7 +410,7 @@ def _transfer_context(
         "new_owner": new_owner_email,
         "previous_owner": current_owner_email,
         "tenant": tenant_slug,
-        "url": f"https://app.payglue.io/t/{tenant_slug}/team",
+        "url": app_url(f"/t/{tenant_slug}/team"),
     }
 
 
@@ -395,7 +496,7 @@ def send_ghost_delivery_alert(owner_email: str, tenant_slug: str) -> bool:
         {
             "email": owner_email,
             "tenant": tenant_slug,
-            "url": f"https://app.payglue.io/t/{tenant_slug}/connection/ghost",
+            "url": app_url(f"/t/{tenant_slug}/connection/ghost"),
         },
         [owner_email],
         _GHOST_ALERT_FALLBACK_SUBJECT,
@@ -453,7 +554,7 @@ def send_team_member_removed_emails(
         "role": removed_role,
         "actor": actor_email,
         "tenant": tenant_slug,
-        "url": f"https://app.payglue.io/t/{tenant_slug}/team",
+        "url": app_url(f"/t/{tenant_slug}/team"),
     }
     to_removed = _send_templated(
         LifecycleEmailTemplate.Trigger.TEAM_MEMBER_REMOVED,

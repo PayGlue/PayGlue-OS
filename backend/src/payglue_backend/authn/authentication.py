@@ -24,7 +24,7 @@ _BEARER_PATTERN = re.compile(
 )
 
 
-class FirebaseBearerAuthentication(BaseAuthentication):
+class SupabaseBearerAuthentication(BaseAuthentication):
     def authenticate_header(self, request: object) -> str:
         del request
         return "Bearer"

@@ -8,6 +8,7 @@ import { PageHeader, UiCard, StatusPill } from '../components/ui'
 import { useSessionStore } from '../stores/session'
 import { useHeaderScriptStatus } from '../composables/useHeaderScriptStatus'
 import { checkHeaderScript } from '../lib/api'
+import { embedScript } from '../lib/publicUrls'
 
 const session = useSessionStore()
 const { isInstalled, markInstalled, markNotInstalled } = useHeaderScriptStatus()
@@ -34,7 +35,7 @@ async function runCheck() {
 
 const headerScript = computed(() => {
   const slug = session.activeTenantSlug ?? 'YOUR-TENANT-SLUG'
-  return `<script src="https://api.payglue.io/paywall.js"\n  data-org="${slug}"><\/script>`
+  return embedScript('paywall.js', { 'data-org': slug })
 })
 
 async function copyScript() {

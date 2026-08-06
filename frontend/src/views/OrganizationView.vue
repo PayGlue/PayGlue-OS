@@ -7,7 +7,10 @@ import { useRouter } from 'vue-router'
 import AppShell from '../components/AppShell.vue'
 import { api, deleteTenant, updateTenant } from '../lib/api'
 import { useSessionStore } from '../stores/session'
+import { appDisplayHost, apiBaseUrl } from '../lib/publicUrls'
 
+const appHost = appDisplayHost()
+const apiBase = apiBaseUrl()
 const session = useSessionStore()
 const router = useRouter()
 
@@ -177,7 +180,7 @@ const deleteOrg = async () => {
                   : slugAvailable === false ? 'border-rose-300 bg-rose-50 dark:bg-rose-500/10 text-slate-700 dark:text-slate-200'
                   : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 text-slate-400 dark:text-slate-500'"
               >
-                <span>app.payglue.io/t/<strong>{{ slugInput.trim() }}</strong></span>
+                <span>{{ appHost }}/t/<strong>{{ slugInput.trim() }}</strong></span>
                 <span v-if="checkingSlug" class="text-xs text-slate-400 dark:text-slate-500">Checking...</span>
                 <span v-else-if="!slugValid" class="text-xs font-semibold text-rose-500">Invalid</span>
                 <span v-else-if="slugAvailable === true" class="text-xs font-semibold text-emerald-600 dark:text-emerald-400">Available</span>
@@ -198,7 +201,7 @@ const deleteOrg = async () => {
                   After saving, the webhook URL changes for every connected payment provider. You must update the URL in each provider's dashboard manually. Otherwise incoming webhooks will fail and members won't receive access.
                 </p>
                 <div class="mt-2 rounded bg-amber-100 px-3 py-1.5 font-mono text-xs text-amber-900 dark:text-amber-200">
-                  https://api.payglue.io/webhooks/{provider}?tenant=<strong>{{ slugInput.trim() }}</strong>
+                  {{ apiBase }}/webhooks/{provider}?tenant=<strong>{{ slugInput.trim() }}</strong>
                 </div>
                 <div class="mt-3 space-y-2">
                   <label class="flex items-start gap-2 cursor-pointer">

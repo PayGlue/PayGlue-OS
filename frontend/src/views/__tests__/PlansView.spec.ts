@@ -77,7 +77,7 @@ describe('PlansView', () => {
     const originalLocation = window.location
     Object.defineProperty(window, 'location', {
       configurable: true,
-      value: { ...originalLocation, href: '', origin: 'https://app.payglue.io' },
+      value: { ...originalLocation, href: '', origin: 'https://dashboard.example.com' },
     })
 
     render(PlansView, { global: { plugins: [router] } })
@@ -89,7 +89,7 @@ describe('PlansView', () => {
       expect(createCreemCheckoutSession).toHaveBeenCalledWith('tenant-a', 'fake-access-token', {
         planKey: 'studio',
         interval: 'monthly',
-        returnUrl: 'https://app.payglue.io/t/tenant-a/billing',
+        returnUrl: 'https://dashboard.example.com/t/tenant-a/billing',
       })
     })
     expect(window.location.href).toBe('https://creem.io/checkout/sess_abc')

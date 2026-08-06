@@ -20,11 +20,13 @@ const themeLabel = computed(() =>
 // "What's new" shown in the notifications popup. Add an entry whenever
 // something worth surfacing ships; the popup links to the public changelog
 // and roadmap. An unread dot shows on the bell while there are entries.
+// Newest first, and drop the oldest when you add one: the popup renders the
+// whole list in a 16rem column, so it grows until it is unreadable.
 const newsItems = [
+  { title: 'A missing mapping is now impossible to miss', body: 'It shows red in the editor, a failed save says so instead of reporting success, and a processed event can be replayed once you add it.' },
+  { title: 'The blog moved to payglue.io/blog', body: '36 articles on setup, migration and picking a provider, now on the product domain. blog.payglue.io stays live as the demo you can walk into.' },
   { title: 'Get paid for your recommendations', body: 'Settings, Affiliate: 40% of every payment your referrals make. The calculator uses the real plan prices, so you can see what it is worth before you join.' },
   { title: 'Confirming no longer means logging out', body: 'Ownership transfers and account deletion now confirm in an overlay, with your authenticator app or a code by email.' },
-  { title: 'Support got a rebuild', body: 'Pick a topic before you write, and find the docs, roadmap and status page right beside the form.' },
-  { title: 'Your DPA is one click away', body: 'Settings, Documents: download the signed data processing agreement. Everyone who touches your data is now listed publicly too.' },
 ]
 const hasNews = computed(() => newsItems.length > 0)
 

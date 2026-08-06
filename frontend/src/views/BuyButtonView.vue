@@ -25,9 +25,17 @@ import {
   updateMapping,
   type BuyButtonData,
 } from '../lib/api'
+import { findOwnMapping, missingMappings } from '../lib/mappingKeys'
+import { embedScript } from '../lib/publicUrls'
 import type { ProductMapping } from '../types/api'
 
 const session = useSessionStore()
+
+// Buy buttons are not positional, so unlike pricing tiers (PG-233) their key
+// stays fixed. It still belongs in the lookup: a paywall pointing at the same
+// product owns a different mapping, and matching on the product alone made the
+// two overwrite each other.
+const BUTTON_ENTITLEMENT_KEY = 'button'
 
 interface Product { id: string; name: string; checkout_url?: string }
 
@@ -284,7 +292,7 @@ async function loadMappings() {
 }
 
 function syncMappingState(productId: string) {
-  const m = mappings.value.find(m => m.external_product_id === productId)
+  const m = findOwnMapping(mappings.value, productId, BUTTON_ENTITLEMENT_KEY)
   if (m) {
     existingMappingId.value = m.id
     mappingEventType.value = (m.event_type as 'order.paid' | 'subscription.active') || 'order.paid'
@@ -428,7 +436,7 @@ async function save() {
         payment_provider: selectedProvider.value,
         event_type: mappingEventType.value,
         external_product_id: selectedProductId.value,
-        entitlement_key: 'button',
+        entitlement_key: BUTTON_ENTITLEMENT_KEY,
         action: 'grant' as const,
         quantity: 1,
         is_active: true,
@@ -443,7 +451,25 @@ async function save() {
           existingMappingId.value = created.id
           mappings.value = [created, ...mappings.value]
         }
-      } catch { /* mapping save non-fatal */ }
+      // A saved widget whose mapping did not save looks finished and grants
+      // nothing on purchase: the event arrives, resolves to no instruction,
+      // and the log shows a green "processed". Swallowing this silently cost
+      // a real test purchase, so it is reported instead.
+      } catch (e: unknown) {
+        saveError.value = `Button saved, but the Ghost mapping did not: ${e instanceof Error ? e.message : 'unknown error'}. Buying this product will not grant access until the mapping exists.`
+        saveErrorPlan.value = isPlanLimitError(e) ? planKeyFromError(e) : null
+        return
+      }
+      // Nothing threw, which is not the same as the mapping existing. Read it
+      // back from the server before calling the save a success.
+      await loadMappings()
+      const missing = missingMappings(mappings.value, [
+        { productId: selectedProductId.value, entitlementKey: BUTTON_ENTITLEMENT_KEY, label: 'this button' },
+      ])
+      if (missing.length) {
+        saveError.value = 'Button saved, but it still has no Ghost mapping. Buying this product will not grant access. Save again, or add the mapping under Analytics.'
+        return
+      }
     }
     saveSuccess.value = true
     setTimeout(() => { saveSuccess.value = false }, 2500)
@@ -466,7 +492,7 @@ async function remove(btn: BuyButtonData) {
 }
 
 function embedSnippet(btn: BuyButtonData) {
-  return `<script src="https://api.payglue.io/button.js" data-id="${btn.id}"><\/script>`
+  return embedScript('button.js', { 'data-id': btn.id })
 }
 
 async function copyRowSnippet(btn: BuyButtonData) {
@@ -638,7 +664,7 @@ watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = '
                 <svg class="h-2.5 w-2.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
                 Mapped
               </span>
-              <span v-else class="inline-flex items-center rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-500 dark:text-slate-400">Not mapped</span>
+              <span v-else class="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"><svg class="h-2.5 w-2.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>Not mapped</span>
             </div>
             <!-- Trigger event -->
             <div class="space-y-1.5">

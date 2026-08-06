@@ -121,7 +121,7 @@ describe('EventsView', () => {
     })
   })
 
-  it('replays failed events for owner/admin roles', async () => {
+  it('replays failed events for owner/admin roles, once the confirmation is accepted', async () => {
     setupSession('admin')
     const router = await makeRouter()
 
@@ -133,7 +133,14 @@ describe('EventsView', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /replay event/i })).toBeInTheDocument()
     })
+
+    // PG-230: the first click opens the confirmation and must not call out yet.
     await fireEvent.click(screen.getByRole('button', { name: /replay event/i }))
+    await screen.findByText(/replay this event\?/i)
+    expect(replayWebhookEvent).not.toHaveBeenCalled()
+
+    const [, confirmButton] = screen.getAllByRole('button', { name: /replay event/i })
+    await fireEvent.click(confirmButton)
 
     await waitFor(() => {
       expect(replayWebhookEvent).toHaveBeenCalledWith('tenant-a', 'fake-access-token', 10)

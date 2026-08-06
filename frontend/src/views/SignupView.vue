@@ -7,6 +7,8 @@ import { useRoute, useRouter, RouterLink } from 'vue-router'
 import Turnstile from 'cfturnstile-vue3'
 import signupHeroImage from '../assets/signup-hero.jpg'
 import { supabase } from '../lib/supabase'
+import { usesPasswordSignIn } from '../lib/passwordSignIn'
+import { captureEvent } from '../lib/posthog'
 import { useSessionStore } from '../stores/session'
 import PayGlueLogo from '../components/PayGlueLogo.vue'
 
@@ -41,11 +43,9 @@ const otpInputs = ref<(HTMLInputElement | null)[]>([])
 const verifying = ref(false)
 const otpError = ref<string | null>(null)
 
-// Matches nuenni+anything@gmail.com so André can create and password-sign-in
-// distinct test accounts right after "purchase" without depending on the
-// magic-link flow -- same pattern as LoginView's dev-email detection.
-const DEV_EMAIL_PATTERN = /^nuenni\+[^@]+@gmail\.com$/
-const isDevEmail = computed(() => DEV_EMAIL_PATTERN.test(email.value.trim().toLowerCase()))
+// Same list LoginView uses, configured through VITE_PASSWORD_SIGNIN_EMAILS.
+// These accounts set a password here instead of waiting for a magic link.
+const isDevEmail = computed(() => usesPasswordSignIn(email.value))
 
 const hasUppercase = computed(() => /[A-Z]/.test(password.value))
 const hasLowercase = computed(() => /[a-z]/.test(password.value))
@@ -125,6 +125,31 @@ const submit = async () => {
       isSending.value = false
       return
     }
+
+    // The moment the funnel was missing: somebody came back with a code the
+    // backend accepts. Everything before this is intent.
+    //
+    // `code_kind` is not cosmetic. Our own PAYGLUE- invite codes redeem through
+    // this exact endpoint, so without it a free Reddit tester would be
+    // indistinguishable from a paying customer and would quietly inflate the
+    // purchase funnel. Prefix check mirrors the backend's own
+    // (`license_key.strip().upper().startswith("PAYGLUE-")`); it only labels
+    // the event, it decides nothing.
+    //
+    // Fired here rather than after account creation on purpose -- those are
+    // different questions, and the gap between them (people who pay but never
+    // finish the magic-link step) is worth seeing, so `signup_completed` below
+    // stays a separate event.
+    const isPayglueInvite = key.toUpperCase().startsWith('PAYGLUE-')
+    captureEvent('signup_code_accepted', {
+      code_kind: isPayglueInvite
+        ? 'payglue_invite'
+        : isCheckoutId
+          ? 'creem_checkout'
+          : 'license_key',
+      paid: !isPayglueInvite,
+      sandbox: isSandbox,
+    })
   }
 
   // Step 2: create the account
@@ -152,6 +177,7 @@ const submit = async () => {
       error.value = 'This email already has an account. Please sign in instead, or use its existing password.'
       return
     }
+    captureEvent('signup_completed', { method: 'password' })
     await session.bootstrap()
     router.replace({ name: 'tenant-select' })
     return
@@ -214,6 +240,7 @@ const verifyCode = async () => {
   // Stay disabled (verifying=true) through bootstrap/navigation below -- codes
   // are single-use, so a stray second click here would resubmit an already-
   // consumed token and show a scary "expired" error over a real success.
+  captureEvent('signup_completed', { method: 'email_otp' })
   await session.bootstrap()
   router.replace({ name: 'tenant-select' })
 }

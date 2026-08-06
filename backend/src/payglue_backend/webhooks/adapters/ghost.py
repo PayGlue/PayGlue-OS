@@ -178,10 +178,18 @@ class GhostCmsAdapter:
             {"name": "source:payglue"},
             {"name": f"product:{_slugify(instruction.entitlement_key)}"},
         ] + [{"name": lbl} for lbl in extra_labels if lbl]
-        # Without Stripe, track access via label so the JS paywall can verify it.
-        if not stripe_connected and is_grant:
-            provider_slug = _slugify(meta.get("_provider", "payglue"))
-            labels.append({"name": f"payglue-active:{provider_slug}"})
+        # PG-229: status and provider are two facts, so they are two labels.
+        # Carrying both in one string (payglue-active:polar) forced every reader
+        # to prefix-match, and that is how the paywall ended up with an
+        # unreachable branch comparing the provider against a product id.
+        #
+        # Written on every grant, not only when Ghost has no Stripe account.
+        # The stripe_connected lookup above is a network call that falls back to
+        # False when it fails, so tying the label to it made the member's state
+        # depend on whether an unrelated request succeeded.
+        if is_grant:
+            labels.append({"name": "payglue-active"})
+            labels.append({"name": f"payglue-provider:{_slugify(meta.get('_provider', 'payglue'))}"})
         provider = meta.get("_provider", "payglue")
         product_id = meta.get("_product_id", instruction.entitlement_key)
         event_id = meta.get("_event_id", "")
@@ -415,11 +423,22 @@ class GhostCmsAdapter:
             return {"active": False}
 
         member = members[0]
-        if member.get("comped"):
+
+        # PG-229: Ghost has three member states and the gate has to cover all of
+        # them. "paid" is a genuine Stripe subscriber: not comped, and carrying
+        # no PayGlue label because PayGlue never touched them. Leaving it out
+        # locked a publication's longest-paying readers out of its own paywall,
+        # while yesterday's PayGlue buyer walked straight in.
+        if member.get("comped") or member.get("status") in ("paid", "comped"):
             return {"active": True, "type": "subscription"}
 
         for label in member.get("labels", []):
-            if str(label.get("name", "")).startswith("payglue-active:"):
+            name = str(label.get("name", ""))
+            # Both shapes: the bare status label written from PG-229 on, and
+            # payglue-active:<provider> from before it. There is deliberately no
+            # backfill in customer publications, so the old one has to keep
+            # working for as long as those members exist.
+            if name == "payglue-active" or name.startswith("payglue-active:"):
                 return {"active": True, "type": "one_time"}
 
         return {"active": False}

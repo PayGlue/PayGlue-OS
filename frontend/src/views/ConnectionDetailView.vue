@@ -7,6 +7,7 @@ import AppShell from '../components/AppShell.vue'
 import CopyButton from '../components/CopyButton.vue'
 import UpgradeBanner from '../components/UpgradeBanner.vue'
 import { PageHeader, UiCard, UiButton, FormField, ProviderLogo } from '../components/ui'
+import { webhookUrl as buildWebhookUrl } from '../lib/publicUrls'
 import {
   ApiHttpError,
   getIntegrationConfig,
@@ -68,8 +69,14 @@ const canWrite = computed(() => {
   return r === 'owner' || r === 'admin'
 })
 
-const webhookUrl = computed(
-  () => `https://api.payglue.io/webhooks/${props.provider}?tenant=${session.activeTenantSlug}&key=${session.webhookSecret ?? ''}`,
+// Empty string until the tenant's key is actually known. The URL is worthless
+// without it, and the previous `?? ''` fallback rendered a copyable URL ending
+// in a bare "&key=" that the provider then rejected (PG-219). The template
+// shows a retry in place of the field rather than a URL that cannot work.
+const webhookUrl = computed(() =>
+  session.webhookSecret
+    ? buildWebhookUrl(props.provider, session.activeTenantSlug ?? '', session.webhookSecret)
+    : '',
 )
 
 const pendingRenameKey = computed(() =>
@@ -135,7 +142,6 @@ const load = async () => {
     if (meta.value.renameBanner && pendingRenameKey.value) {
       hasPendingRename.value = localStorage.getItem(pendingRenameKey.value) === '1'
     }
-    await session.getWebhookSecret()
   } catch (e) {
     if (e instanceof ApiHttpError && e.status === 404) return
     errorMessage.value = e instanceof Error ? e.message : 'Unable to load.'
@@ -256,7 +262,21 @@ const startEditing = (key: string) => {
 
 const showStore = computed(() => meta.value.hasStore && (stored['api_key'] || (form['api_key'] ?? '').trim()))
 
-onMounted(load)
+// Deliberately not part of load(). The webhook secret is tenant-level and has
+// nothing to do with this provider's config, but it used to be fetched as the
+// last statement of load()'s try block -- so a provider that had never been
+// configured 404'd on the config and returned early, skipping the fetch and
+// leaving the webhook URL with an empty "&key=" (PG-219). That hit every
+// first-time setup, on all eight providers, and looked fine until the provider
+// rejected the webhook.
+const loadWebhookSecret = () => {
+  void session.getWebhookSecret()
+}
+
+onMounted(() => {
+  load()
+  loadWebhookSecret()
+})
 // Re-load when navigating between providers without unmounting the view.
 watch(() => props.provider, () => {
   Object.assign(config, { provider_key: props.provider, enabled: false, provider_type: props.provider, metadata: {} })
@@ -267,6 +287,9 @@ watch(() => props.provider, () => {
   selectedStoreId.value = ''
   hasPendingRename.value = false
   load()
+  // Cached per tenant in the store, so this is a no-op once loaded -- but it
+  // gives a failed earlier fetch another chance instead of staying broken.
+  loadWebhookSecret()
 })
 </script>
 
@@ -282,7 +305,8 @@ watch(() => props.provider, () => {
           <div class="flex-1">
             <p class="font-semibold text-amber-900 dark:text-amber-200">Publication renamed, update your webhook URL</p>
             <p class="mt-1 text-sm text-amber-800 dark:text-amber-300/90">Your publication slug changed. Please update the endpoint URL in your {{ meta.name }} dashboard to:</p>
-            <code class="mt-2 block rounded-lg bg-amber-100 px-3 py-1.5 font-mono text-xs text-amber-900 dark:bg-amber-500/20 dark:text-amber-200">{{ webhookUrl }}</code>
+            <code v-if="webhookUrl" class="mt-2 block rounded-lg bg-amber-100 px-3 py-1.5 font-mono text-xs text-amber-900 dark:bg-amber-500/20 dark:text-amber-200">{{ webhookUrl }}</code>
+            <p v-else class="mt-2 text-sm text-amber-800 dark:text-amber-300/90">Loading your webhook URL, it appears below in a moment.</p>
             <label class="mt-3 flex cursor-pointer items-center gap-2">
               <input v-model="renameConfirmed" type="checkbox" class="h-4 w-4 accent-amber-600" @change="renameConfirmed && dismissRenameWarning()" />
               <span class="text-sm text-amber-900 dark:text-amber-200">I have updated the webhook URL in {{ meta.name }}. Dismiss this warning.</span>
@@ -309,10 +333,15 @@ watch(() => props.provider, () => {
           <div class="space-y-4">
             <!-- Webhook URL -->
             <FormField label="Webhook URL" :hint="WEBHOOK_URL_HINT">
-              <div class="flex gap-2">
+              <div v-if="webhookUrl" class="flex gap-2">
                 <input :value="webhookUrl" readonly class="pg-input pg-mono" />
                 <CopyButton :text="webhookUrl" />
               </div>
+              <div v-else-if="session.webhookSecretError" class="flex items-center gap-3">
+                <p class="text-sm text-rose-600 dark:text-rose-400">Could not load your webhook key. The URL is incomplete without it, so please retry before copying.</p>
+                <UiButton size="sm" variant="default" class="shrink-0" @click="loadWebhookSecret">Retry</UiButton>
+              </div>
+              <p v-else class="text-sm text-slate-500 dark:text-slate-400">Loading your webhook URL...</p>
             </FormField>
 
             <!-- Credential fields -->

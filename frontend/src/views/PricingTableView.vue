@@ -24,6 +24,8 @@ import {
   createMapping,
   updateMapping,
 } from '../lib/api'
+import { entitlementKeyForProduct, findOwnMapping, missingMappings } from '../lib/mappingKeys'
+import { embedScript } from '../lib/publicUrls'
 import type { PricingTableData, PricingFeatureIcon, ProductMapping } from '../types/api'
 
 const session = useSessionStore()
@@ -302,7 +304,7 @@ async function loadMappings() {
 
 function syncTierMappingState(tier: LocalTier) {
   if (!tier.selectedProductId) return
-  const m = mappings.value.find(m => m.external_product_id === tier.selectedProductId)
+  const m = findOwnMapping(mappings.value, tier.selectedProductId, entitlementKeyForProduct(tier.selectedProductId))
   if (m) {
     tier.existingMappingId = m.id
     tier.mappingEventType = (m.event_type as 'order.paid' | 'subscription.active') || 'order.paid'
@@ -385,7 +387,7 @@ function startEdit(table: PricingTableData) {
     const { id: pId, provider: pProv } = persisted
       ? { id: t.product_id!, provider: t.product_provider as LocalTier['selectedProvider'] }
       : productIdForUrl(t.cta_url)
-    const em = pId ? mappings.value.find(m => m.external_product_id === pId) : undefined
+    const em = pId ? findOwnMapping(mappings.value, pId, entitlementKeyForProduct(pId)) : undefined
     const emEmailTypes = em?.metadata?.ghost_email_types ?? (em?.metadata?.ghost_email_type ? [em.metadata.ghost_email_type] : ['signin'])
     return defaultTier({
       id: t.id,
@@ -522,14 +524,25 @@ async function save() {
       editingId.value = saved.id
     }
     justSaved.value = saved
+    const failedMappings: string[] = []
+    const expected: { productId: string; entitlementKey: string; label: string }[] = []
+    // Two tiers may point at the same product. Since PG-233 the key comes from
+    // the product, so they would describe one and the same mapping and the
+    // second write would collide with the first on the unique constraint.
+    const handledProducts = new Set<string>()
     for (const [tierIdx, tier] of formTiers.value.entries()) {
       if (!tier.selectedProductId) continue
+      const label = tier.name || `Tier ${tierIdx + 1}`
+      const entitlementKey = entitlementKeyForProduct(tier.selectedProductId)
+      expected.push({ productId: tier.selectedProductId, entitlementKey, label })
+      if (handledProducts.has(tier.selectedProductId)) continue
+      handledProducts.add(tier.selectedProductId)
       const emailTypes = tier.mappingEmailType ? [tier.mappingEmailType as 'signin' | 'signup' | 'subscribe'] : []
       const mappingPayload = {
         payment_provider: tier.selectedProvider,
         event_type: tier.mappingEventType,
         external_product_id: tier.selectedProductId,
-        entitlement_key: `pricing-tier-${tierIdx + 1}`,
+        entitlement_key: entitlementKey,
         action: 'grant' as const,
         quantity: 1,
         is_active: true,
@@ -543,7 +556,22 @@ async function save() {
           tier.existingMappingId = created.id
           mappings.value = [created, ...mappings.value]
         }
-      } catch { /* mapping save non-fatal */ }
+      } catch (e: unknown) {
+        failedMappings.push(`${label} (${e instanceof Error ? e.message : 'unknown error'})`)
+      }
+    }
+    if (failedMappings.length) {
+      // See the note in BuyButtonView: a tier that saved without its mapping
+      // takes money and grants nothing, and the event log calls it processed.
+      saveError.value = `Table saved, but the Ghost mapping failed for ${failedMappings.join(', ')}. Buying those products will not grant access until the mapping exists.`
+    } else if (expected.length) {
+      // Nothing threw, which is not the same as every tier having a mapping.
+      // Read the state back from the server and say so if one is missing.
+      await loadMappings()
+      const missing = missingMappings(mappings.value, expected)
+      if (missing.length) {
+        saveError.value = `Table saved, but ${missing.join(', ')} still has no Ghost mapping. Buying those products will not grant access. Reopen the table and save again, or add the mapping under Analytics.`
+      }
     }
   } catch (e: unknown) {
     saveError.value = e instanceof Error ? e.message : 'Save failed.'
@@ -568,7 +596,7 @@ async function deleteTable(id: string) {
 const embedSnippet = computed(() => {
   const id = justSaved.value?.id ?? editingId.value ?? ''
   if (!id) return ''
-  return `<script src="https://api.payglue.io/pricing-table.js" data-table-id="${id}" defer><\/script>`
+  return embedScript('pricing-table.js', { 'data-table-id': id, defer: '' })
 })
 
 const overlaySnippet = computed(() => {
@@ -578,7 +606,14 @@ const overlaySnippet = computed(() => {
   const color = overlayBgColor.value || '#4f46e5'
   const radius = overlayRadius.value || 'md'
   const align = overlayAlign.value || 'center'
-  return `<script src="https://api.payglue.io/pricing-table.js" data-table-id="${id}" data-overlay-label="${label}" data-overlay-color="${color}" data-overlay-radius="${radius}" data-overlay-align="${align}" defer><\/script>`
+  return embedScript('pricing-table.js', {
+    'data-table-id': id,
+    'data-overlay-label': label,
+    'data-overlay-color': color,
+    'data-overlay-radius': radius,
+    'data-overlay-align': align,
+    defer: '',
+  })
 })
 
 async function copySnippet() {
@@ -928,7 +963,7 @@ onMounted(async () => {
                         <svg class="h-2 w-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
                         Mapped
                       </span>
-                      <span v-else class="inline-flex items-center rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 dark:text-slate-400">Not mapped</span>
+                      <span v-else class="inline-flex items-center gap-0.5 rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"><svg class="h-2 w-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>Not mapped</span>
                     </div>
                     <!-- Trigger -->
                     <div class="grid grid-cols-2 gap-1">

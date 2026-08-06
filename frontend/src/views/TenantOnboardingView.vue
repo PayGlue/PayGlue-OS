@@ -10,7 +10,9 @@ import { api, createTenant, updateIntegrationConfig, setIntegrationCredentials }
 import { isPlanLimitError, planKeyFromError } from '../lib/planUpgrade'
 import PayGlueLogo from '../components/PayGlueLogo.vue'
 import UpgradeBanner from '../components/UpgradeBanner.vue'
+import { appDisplayHost } from '../lib/publicUrls'
 
+const appHost = appDisplayHost()
 const session = useSessionStore()
 const router = useRouter()
 const route = useRoute()
@@ -329,7 +331,7 @@ const skipProvider = () => router.push(`/t/${slug.value}/dashboard`)
 
           <div v-if="slug" class="mt-3 flex items-center justify-between rounded-lg border px-3 py-2"
             :class="checkingSlug ? 'border-slate-200 bg-slate-50' : slugAvailable === true ? 'border-emerald-200 bg-emerald-50' : slugAvailable === false ? 'border-rose-200 bg-rose-50' : 'border-slate-200 bg-slate-50'">
-            <span class="font-mono text-xs text-slate-500">app.payglue.io/t/<strong class="text-slate-700">{{ slug }}</strong></span>
+            <span class="font-mono text-xs text-slate-500">{{ appHost }}/t/<strong class="text-slate-700">{{ slug }}</strong></span>
             <span v-if="checkingSlug" class="text-xs text-slate-400">Checking...</span>
             <span v-else-if="slugAvailable === true" class="text-xs font-semibold text-emerald-600">Available</span>
             <span v-else-if="slugAvailable === false" class="text-xs font-semibold text-rose-600">Taken</span>

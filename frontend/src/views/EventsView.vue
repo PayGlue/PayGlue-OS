@@ -73,11 +73,20 @@ const loadAudit = async () => {
 
 const canReplayEvent = (event: WebhookEvent) => {
   if (!canReplay.value) return false
-  return event.status === 'failed' || event.status === 'dead_letter' || event.status === 'skipped'
+  // PG-230: processed is here on purpose. An event whose product had no
+  // mapping resolves to nothing and is still recorded as processed, and that
+  // is exactly the case somebody wants to run again after adding the mapping.
+  return event.status === 'failed' || event.status === 'dead_letter'
+    || event.status === 'skipped' || event.status === 'processed'
 }
+
+// Replaying is safe but not obvious, so it asks first and says what to expect
+// rather than firing on a single click.
+const confirmingReplay = ref<WebhookEvent | null>(null)
 
 const replay = async (event: WebhookEvent) => {
   if (!canReplayEvent(event)) return
+  confirmingReplay.value = null
   replaying.value[event.id] = true
   errorMessage.value = null
   try {
@@ -290,7 +299,7 @@ onMounted(async () => {
               </div>
 
               <div v-if="canReplayEvent(event)">
-                <UiButton variant="danger" size="sm" :disabled="replaying[event.id]" @click.stop="replay(event)">
+                <UiButton variant="danger" size="sm" :disabled="replaying[event.id]" @click.stop="confirmingReplay = event">
                   {{ replaying[event.id] ? 'Replaying...' : 'Replay event' }}
                 </UiButton>
               </div>
@@ -350,6 +359,45 @@ onMounted(async () => {
         </ul>
         <p v-else-if="!auditLoading" class="mt-4 text-sm text-slate-500 dark:text-slate-400">No audit events found.</p>
       </UiCard>
+    </div>
+
+    <!-- Replay confirmation. Not destructive, but it calls out to Ghost and to
+         the provider's data again, so it says what will happen first. -->
+    <div
+      v-if="confirmingReplay"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+      @click.self="confirmingReplay = null"
+    >
+      <div class="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+        <h2 class="text-base font-semibold text-slate-900 dark:text-slate-100">Replay this event?</h2>
+        <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          {{ confirmingReplay.provider }} · {{ eventType(confirmingReplay) }} · event {{ confirmingReplay.id }}
+        </p>
+
+        <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-700 dark:bg-slate-800/50">
+          <p class="font-medium text-slate-800 dark:text-slate-100">What happens</p>
+          <ul class="mt-2 list-inside list-disc space-y-1 text-slate-600 dark:text-slate-300">
+            <li>The stored payload runs through again, as if it had just arrived.</li>
+            <li>If the product is mapped, the member is created or updated in Ghost.</li>
+            <li>If the member already has this access, nothing changes.</li>
+          </ul>
+          <p class="mt-3 text-slate-600 dark:text-slate-300">
+            No payment is taken and nothing is charged again. Replay only re-runs what
+            your provider already sent us.
+          </p>
+        </div>
+
+        <p class="mt-4 text-sm text-slate-600 dark:text-slate-300">
+          Afterwards, check the event status here and the member in Ghost Admin. If the
+          event was processed but granted nothing, the usual cause is a missing product
+          mapping, so add it before replaying.
+        </p>
+
+        <div class="mt-6 flex justify-end gap-3">
+          <UiButton variant="ghost" size="sm" @click="confirmingReplay = null">Cancel</UiButton>
+          <UiButton variant="danger" size="sm" @click="replay(confirmingReplay)">Replay event</UiButton>
+        </div>
+      </div>
     </div>
   </AppShell>
 </template>

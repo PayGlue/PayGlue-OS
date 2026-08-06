@@ -141,6 +141,11 @@ export const useSessionStore = defineStore('session', () => {
   // across tabs for the exact same underlying value. Centralized here: fetch
   // once per tenant, cache, share across every view.
   const webhookSecret = ref<string | null>(null)
+  // A failed fetch used to be swallowed here, which left the secret null and
+  // the webhook URL rendering a bare "&key=" that every provider rejects
+  // (PG-219). Callers read this flag to offer a retry instead of handing out a
+  // URL that looks complete but is not.
+  const webhookSecretError = ref(false)
   let webhookSecretPromise: Promise<string> | null = null
   let webhookSecretTenant: string | null = null
 
@@ -155,12 +160,14 @@ export const useSessionStore = defineStore('session', () => {
     }
     if (webhookSecret.value) return webhookSecret.value
     if (!webhookSecretPromise) {
+      webhookSecretError.value = false
       webhookSecretPromise = getTenantWebhookSecret(tenantSlug, token)
         .then((res) => {
           webhookSecret.value = res.webhook_secret
           return res.webhook_secret
         })
         .catch(() => {
+          webhookSecretError.value = true
           webhookSecretPromise = null
           return ''
         })
@@ -195,6 +202,7 @@ export const useSessionStore = defineStore('session', () => {
     isAuthenticated,
     billing,
     webhookSecret,
+    webhookSecretError,
     getWebhookSecret,
     bootstrap,
     setActiveTenant,

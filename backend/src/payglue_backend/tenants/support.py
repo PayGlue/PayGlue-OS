@@ -9,6 +9,7 @@ request lost to a Linear timeout is gone for good.
 from __future__ import annotations
 
 import logging
+from email.utils import formataddr
 
 from django.conf import settings
 from django.utils import timezone
@@ -101,17 +102,64 @@ def _notify(request: SupportRequest, tenant: Tenant) -> None:
             f"Publication: {tenant.slug}\n\n"
             f"---\n\n{request.message}",
             [settings.INTERNAL_ADMIN_EMAIL],
+            # Both From and To are our own team address, so Reply would answer
+            # ourselves. Point it at the customer instead, name included, so
+            # replying from the mail client just works.
+            reply_to=[formataddr((request.name or "", request.email))],
         )
     except Exception:  # noqa: BLE001
         logger.exception("support: internal notification failed for %s", request.pk)
 
 
+# Customer-facing wording per status, matching what the dashboard shows.
+_STATUS_LABELS = dict(SupportRequest.STATUS_CHOICES)
+
+# What the new status means for the customer, in one sentence. Keyed by the
+# status the request just moved TO; a transition without an entry (back to
+# "open", say) is persisted but not emailed -- an "update" mail that only says
+# "still open" would read as noise.
+_STATUS_MAIL_LINES = {
+    SupportRequest.STATUS_IN_PROGRESS: "We are on it. You will hear from us by email as soon as there is something to share.",
+    SupportRequest.STATUS_DONE: "We consider this resolved. If anything still looks off, just reply to the email thread and we will pick it right back up.",
+    SupportRequest.STATUS_CANCELLED: "This request has been closed. If that comes as a surprise, reply to the email thread and we will take another look.",
+}
+
+
+def _notify_status_change(request: SupportRequest) -> None:
+    """Tell the customer their ticket moved, from noreply@ (a pure system
+    notice -- replies belong in the human email thread, which the body says).
+
+    Best-effort like every mail here: the status change itself is already
+    persisted, a mail hiccup must not undo or block that.
+    """
+    line = _STATUS_MAIL_LINES.get(request.status)
+    if not line:
+        return
+    label = _STATUS_LABELS.get(request.status, request.status)
+    try:
+        _send_branded(
+            f"Your request {request.reference} is now: {label}",
+            f"Hi{' ' + request.name if request.name else ''},\n\n"
+            f"Quick update on your support request {request.reference}: "
+            f"its status changed to {label}.\n\n"
+            f"{line}\n\n"
+            "You can always check the current status under Settings, Support "
+            "in your dashboard.\n\n"
+            "__\nCheers,\nPayGlue - Team",
+            [request.email],
+            from_email=settings.SYSTEM_NOTICE_FROM_EMAIL,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("support: status change email failed for %s", request.pk)
+
+
 def sync_statuses(requests: list[SupportRequest]) -> list[SupportRequest]:
     """Refresh statuses from Linear in one call, and persist what changed.
 
-    Called when the customer opens the support page. That is rare enough to
-    not need caching, and it means André changing a status in Linear shows up
-    without any webhook to maintain.
+    Called when the customer opens the support page, and by the
+    sync_support_statuses cron so a status change reaches the customer by
+    email without them having to look. Either path persists a transition
+    exactly once, so the notification cannot double-send.
     """
     pending = [
         r for r in requests if r.linear_issue_id and r.status not in _TERMINAL
@@ -122,6 +170,7 @@ def sync_statuses(requests: list[SupportRequest]) -> list[SupportRequest]:
     statuses = linear.fetch_statuses([r.linear_issue_id for r in pending])
     now = timezone.now()
     changed = []
+    transitioned = []
     for request in pending:
         new_status = statuses.get(request.linear_issue_id)
         if not new_status:
@@ -129,8 +178,13 @@ def sync_statuses(requests: list[SupportRequest]) -> list[SupportRequest]:
         request.status_synced_at = now
         if new_status != request.status:
             request.status = new_status
+            transitioned.append(request)
         changed.append(request)
 
     if changed:
         SupportRequest.objects.bulk_update(changed, ["status", "status_synced_at"])
+    # Only after the persist: a mail about a change that failed to save would
+    # promise a status the dashboard then contradicts.
+    for request in transitioned:
+        _notify_status_change(request)
     return requests

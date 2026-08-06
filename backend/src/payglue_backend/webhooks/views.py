@@ -19,7 +19,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from payglue_backend.authn.authentication import FirebaseBearerAuthentication
+from payglue_backend.authn.authentication import SupabaseBearerAuthentication
 from payglue_backend.authn.rbac import (
     TenantReadOwnerAdminWrite,
     resolve_tenant_membership,
@@ -272,7 +272,7 @@ def _integration_provider_key_allowlist() -> dict[str, set[str]]:
 
 
 class TenantIntegrationConfigView(APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
 
     def _require_tenant_context(self, request: Request, tenant_slug: str) -> None:
@@ -329,7 +329,7 @@ class TenantIntegrationConfigView(APIView):
 
 
 class TenantProductMappingView(APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
 
     def _require_tenant_context(self, request: Request, tenant_slug: str) -> None:
@@ -407,7 +407,7 @@ class TenantProductMappingView(APIView):
 
 
 class TenantIntegrationCredentialsView(APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
     throttle_classes = [DynamicScopedRateThrottle]
     throttle_scope = "integration_credentials_write"
@@ -490,9 +490,13 @@ class TenantIntegrationCredentialsView(APIView):
 
             try:
                 adapter = GumroadPaymentAdapter(credential_provider=provider)
+                # Gumroad calls this from its own servers, so it has to be the
+                # public origin of this installation, not the request host,
+                # which is the internal one behind a proxy (PG-238).
+                api_base = settings.PUBLIC_API_BASE_URL or request.build_absolute_uri("/").rstrip("/")
                 webhook_registration = adapter.register_webhook_subscriptions(
                     tenant_ctx,
-                    f"https://api.payglue.io/webhooks/gumroad?tenant={tenant_slug}",
+                    f"{api_base}/webhooks/gumroad?tenant={tenant_slug}",
                 )
             except Exception as exc:
                 logger.warning("gumroad: webhook auto-registration failed: %s", exc)
@@ -509,7 +513,7 @@ class TenantIntegrationCredentialsView(APIView):
 
 
 class TenantIntegrationHealthView(APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
     throttle_classes = [DynamicScopedRateThrottle]
     throttle_scope = "integration_health"
@@ -623,7 +627,7 @@ class TenantIntegrationHealthView(APIView):
 
 
 class TenantGhostStripeStatusView(APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
     throttle_classes = [DynamicScopedRateThrottle]
     throttle_scope = "integration_health"
@@ -650,7 +654,7 @@ class TenantGhostStripeStatusView(APIView):
 
 class CheckHeaderScriptView(APIView):
     """Check whether the paywall.js header script is present on the tenant's Ghost site."""
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
     throttle_classes = [DynamicScopedRateThrottle]
     throttle_scope = "integration_health"
@@ -698,8 +702,37 @@ class CheckHeaderScriptView(APIView):
         except Exception as e:
             return Response({"installed": False, "error": f"Could not reach {root_url}: {e}", "url": root_url})
 
-        installed = "api.payglue.io/paywall.js" in html
+        # Match the path, not a host. This used to look for
+        # "api.payglue.io/paywall.js", so a self-hosted install serving the
+        # script from its own domain was told the script was missing no matter
+        # how correctly it was embedded (PG-238).
+        installed = "/paywall.js" in html
         return Response({"installed": installed, "url": root_url, "error": None})
+
+
+def _api_origin_js(script_name: str) -> str:
+    """JS that works out which backend served this script.
+
+    The origin used to be a literal, which meant a self-hosted install handed
+    its readers a snippet pointing at our servers (PG-238). Reading it from the
+    script tag's own src needs no configuration at all and stays correct behind
+    any proxy: whoever served the file is the backend to talk to.
+
+    `document.currentScript` is null when the tag was injected rather than
+    parsed, so there is a fallback that scans for the script by filename. If
+    both fail the script bails loudly instead of guessing an origin.
+    """
+    return (
+        "var API=(function(){try{"
+        "var src=(s&&s.src)||'';"
+        "if(!src){var all=document.getElementsByTagName('script');"
+        "for(var i=all.length-1;i>=0;i--){"
+        f"if(all[i].src&&all[i].src.indexOf('/{script_name}')>-1)"
+        "{src=all[i].src;break;}}}"
+        "return src?new URL(src,location.href).origin:'';"
+        "}catch(e){return '';}})();"
+        f"if(!API){{console.warn('[PayGlue] could not determine the API origin from the {script_name} script tag');return;}}"
+    )
 
 
 _PAYWALL_JS = r"""(function(){
@@ -709,7 +742,7 @@ _PAYWALL_JS = r"""(function(){
   /* Guard: prevent double-init if script tag is included more than once */
   if(window.__payglueInit){return;}
   window.__payglueInit=true;
-  var API='https://api.payglue.io';
+  __PAYGLUE_API_ORIGIN__
   var DBG=typeof localStorage!=='undefined'&&localStorage.getItem('payglueDebug')==='1';
   function dbg(){if(DBG)console.log.apply(console,['[PayGlue]'].concat(Array.prototype.slice.call(arguments)));}
   var ROOTS='.gh-content,.post-content,.entry-content,.article-content,.kg-post-content,[class*="post-body"],[class*="article-body"]';
@@ -870,14 +903,23 @@ _PAYWALL_JS = r"""(function(){
     document.querySelectorAll('[data-payglue-gate]').forEach(function(el){el.remove();});
   }
 
-  function hasAccess(member,productId){
+  /* PG-229: access is a yes/no question here, deliberately not scoped to the
+     product. The server has already decided (paywall/check) and the label
+     below is what it decided, not what Ghost stores: Ghost's Portal API
+     returns no labels at all, so run() synthesises one from the answer.
+
+     A previous version compared a label against the product id. It could
+     never match, because the label named the provider rather than the
+     product, and it sat behind a prefix check that always won first. Per
+     product gating needs the check endpoint to take a product, which it does
+     not, so this stays a single question until that changes. */
+  function hasAccess(member){
     if(!member||!member.email){dbg('hasAccess: no member or email',member);return false;}
     var labels=member.labels||[];
-    dbg('hasAccess: checking',labels.length,'labels for productId='+productId,labels);
+    dbg('hasAccess: checking',labels.length,'labels',labels);
     for(var i=0;i<labels.length;i++){
       var n=labels[i].name||labels[i].slug||'';
-      if(n.indexOf('payglue-active:')===0){dbg('hasAccess: matched label',n);return true;}
-      if(productId&&n==='payglue-active:'+productId){dbg('hasAccess: matched product label',n);return true;}
+      if(n==='payglue-active'||n.indexOf('payglue-active:')===0){dbg('hasAccess: matched label',n);return true;}
     }
     dbg('hasAccess: no matching label found');
     return false;
@@ -906,11 +948,11 @@ _PAYWALL_JS = r"""(function(){
        lock immediately, then check member access. */
     var pending=markers.length;
     var memberResult=undefined; /* undefined = not yet fetched */
-    var markerData=[]; /* [{marker, cfg, productId}] */
+    var markerData=[]; /* [{marker, cfg}] */
 
     function tryUnlock(){
       if(pending>0||memberResult===undefined)return;
-      var allAccess=markerData.every(function(d){return hasAccess(memberResult,d.productId);});
+      var allAccess=markerData.every(function(){return hasAccess(memberResult);});
       dbg('tryUnlock: allAccess='+allAccess,'pending='+pending,'markerCount='+markerData.length);
       if(allAccess)unlock();
     }
@@ -929,9 +971,10 @@ _PAYWALL_JS = r"""(function(){
 
       function applyConfig(cfg){
         var merged=cfg||inlineCfg;
-        var pid=merged.product_id||productId;
         lockMarker(marker,merged);
-        markerData.push({marker:marker,cfg:merged,productId:pid});
+        /* The product id stays on cfg for the button URL. It is not kept here
+           because nothing gates on it; see hasAccess. */
+        markerData.push({marker:marker,cfg:merged});
         pending--;
         tryUnlock();
       }
@@ -958,7 +1001,7 @@ _PAYWALL_JS = r"""(function(){
           .then(function(d){
             dbg('access check result',d);
             /* If backend confirms active, fake a label on the member so hasAccess passes */
-            if(d&&d.active){m.labels=[{name:'payglue-active:verified'}];}
+            if(d&&d.active){m.labels=[{name:'payglue-active'}];}
             memberResult=m;tryUnlock();
           })
           .catch(function(e){dbg('access check error',e);memberResult=m;tryUnlock();});
@@ -969,11 +1012,12 @@ _PAYWALL_JS = r"""(function(){
   if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',run);}else{run();}
 })();
 """
+_PAYWALL_JS = _PAYWALL_JS.replace("__PAYGLUE_API_ORIGIN__", _api_origin_js("paywall.js"))
 
 
 class PaywallConfigListView(APIView):
     """CRUD for saved paywall configs (per tenant)."""
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
 
     def get(self, request: Request, tenant_slug: str) -> Response:
@@ -1007,7 +1051,7 @@ class PaywallConfigListView(APIView):
 
 class PaywallConfigDetailView(APIView):
     """Update or delete a single paywall config."""
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
 
     def _get_config(self, tenant_slug: str, config_id: str) -> PaywallConfig:
@@ -1089,7 +1133,7 @@ _BUTTON_JS = r"""(function(){
   var s=document.currentScript;
   var buttonId=s&&s.getAttribute('data-id');
   if(!buttonId){console.warn('[PayGlue] data-id missing on button script');return;}
-  var API='https://api.payglue.io';
+  __PAYGLUE_API_ORIGIN__
   fetch(API+'/api/v1/buttons/'+encodeURIComponent(buttonId))
     .then(function(r){return r.ok?r.json():null;})
     .then(function(cfg){
@@ -1120,6 +1164,7 @@ _BUTTON_JS = r"""(function(){
     .catch(function(e){console.warn('[PayGlue] button load failed',e);});
 })();
 """
+_BUTTON_JS = _BUTTON_JS.replace("__PAYGLUE_API_ORIGIN__", _api_origin_js("button.js"))
 
 
 class ButtonJsView(View):
@@ -1134,7 +1179,7 @@ class ButtonJsView(View):
 
 class BuyButtonListView(APIView):
     """List and create buy buttons for a tenant."""
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
 
     def get(self, request: Request, tenant_slug: str) -> Response:
@@ -1168,7 +1213,7 @@ class BuyButtonListView(APIView):
 
 class BuyButtonDetailView(APIView):
     """Update or delete a single buy button."""
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
 
     def _get_button(self, tenant_slug: str, button_id: str) -> BuyButton:
@@ -1276,7 +1321,7 @@ class PaywallCheckView(APIView):
 
 
 class TenantAuditEventListView(APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
 
     def _require_tenant_context(self, request: Request, tenant_slug: str) -> None:
@@ -1338,7 +1383,7 @@ class TenantAuditEventListView(APIView):
 
 
 class TenantEventListView(APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
 
     def _require_tenant_context(self, request: Request, tenant_slug: str) -> None:
@@ -1356,13 +1401,24 @@ class TenantEventListView(APIView):
 
 
 class TenantEventReplayView(APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
 
+    # PG-230: "processed" belongs here, and leaving it out made replay useless
+    # for the most common support case. An event whose product had no mapping
+    # resolves to no instruction and is recorded as processed, because nothing
+    # errored. The publisher adds the mapping and then has no way to run the
+    # purchase through again, so a paying customer has to be granted access by
+    # hand or asked to buy a second time.
+    #
+    # Applying an entitlement is idempotent: the Ghost adapter looks the member
+    # up by email and updates rather than duplicates, so a second run over an
+    # already-granted member changes nothing.
     _REPLAYABLE_STATUSES = {
         WebhookInboundEvent.Status.FAILED,
         WebhookInboundEvent.Status.DEAD_LETTER,
         WebhookInboundEvent.Status.SKIPPED,
+        WebhookInboundEvent.Status.PROCESSED,
     }
 
     def _require_tenant_context(self, request: Request, tenant_slug: str) -> None:
@@ -1388,7 +1444,7 @@ class TenantEventReplayView(APIView):
             if event.status not in self._REPLAYABLE_STATUSES:
                 return Response(
                     {
-                        "detail": "Only failed or dead_letter events can be replayed.",
+                        "detail": "This event cannot be replayed while it is still being processed.",
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
@@ -1461,7 +1517,7 @@ _PRICING_TABLE_JS = r"""(function(){
   var overlayColor=(s&&s.getAttribute('data-overlay-color'))||'#4f46e5';
   var overlayRadius=(s&&s.getAttribute('data-overlay-radius'))||'md';
   var overlayAlign=(s&&s.getAttribute('data-overlay-align'))||'center';
-  var API='https://api.payglue.io';
+  __PAYGLUE_API_ORIGIN__
   fetch(API+'/api/v1/pricing-tables/'+encodeURIComponent(tableId)+'/public')
     .then(function(r){return r.ok?r.json():null;})
     .then(function(cfg){
@@ -1630,6 +1686,7 @@ _PRICING_TABLE_JS = r"""(function(){
   }
 })();
 """
+_PRICING_TABLE_JS = _PRICING_TABLE_JS.replace("__PAYGLUE_API_ORIGIN__", _api_origin_js("pricing-table.js"))
 
 
 def _serialize_pricing_table(table: PricingTable) -> dict:
@@ -1699,7 +1756,7 @@ class PricingTableJsView(View):
 
 
 class PricingTableListView(APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
 
     def get(self, request: Request, tenant_slug: str) -> Response:
@@ -1727,7 +1784,7 @@ class PricingTableListView(APIView):
 
 
 class PricingTableDetailView(APIView):
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
 
     def _get_table(self, tenant_slug: str, table_id: str) -> PricingTable:
@@ -1778,7 +1835,7 @@ class TenantMappingTestView(APIView):
     the real resolve + Ghost-apply pipeline, so a creator can verify a
     connection end to end without a real purchase. Owner/Admin only."""
 
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
 
     def post(self, request: Request, tenant_slug: str, mapping_id: int) -> Response:

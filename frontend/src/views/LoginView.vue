@@ -7,6 +7,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import Turnstile from 'cfturnstile-vue3'
 import loginHeroImage from '../assets/login-hero.jpg'
 import { supabase } from '../lib/supabase'
+import { usesPasswordSignIn } from '../lib/passwordSignIn'
 import { useSessionStore } from '../stores/session'
 import PayGlueLogo from '../components/PayGlueLogo.vue'
 
@@ -19,10 +20,10 @@ const session = useSessionStore()
 // via the "open PayGlue" link in a sign-in code email -- a plain deep link
 // to this step, not a magic auto-login link, so it carries no token and
 // can't hit the PKCE issues that got magic links removed here in the first
-// place (PG-142). A dev-email link would be pointless since that branch
-// never sends this email at all, but jumping straight to the (unreachable,
-// since isDevEmail short-circuits to the password form) code screen for one
-// isn't harmful either -- not worth a second regex check here.
+// place (PG-142). For a password-sign-in address the link would be pointless
+// since that branch never sends this email at all, but jumping straight to
+// the (unreachable, because the password form short-circuits it) code screen
+// for one isn't harmful either -- not worth a second check here.
 const email = ref((route.query.email as string) || '')
 const password = ref('')
 const captchaToken = ref<string | null>(null)
@@ -61,16 +62,9 @@ const signInWithOAuth = async (provider: 'google' | 'github') => {
   // nothing further to do here.
 }
 
-const DEV_EMAILS = ['nuenni@gmail.com']
-// Matches nuenni+anything@gmail.com (Gmail plus-addressing) so André can
-// password-test multiple distinct user accounts without depending on the
-// magic-link flow at all -- each nuenni+x address is a separate Supabase
-// user but shares André's own inbox for setup/verification.
-const DEV_EMAIL_PATTERN = /^nuenni\+[^@]+@gmail\.com$/
-const isDevEmail = computed(() => {
-  const e = email.value.trim().toLowerCase()
-  return e.endsWith('@payglue.io') || DEV_EMAILS.includes(e) || DEV_EMAIL_PATTERN.test(e)
-})
+// Configured through VITE_PASSWORD_SIGNIN_EMAILS, empty unless an operator
+// names addresses. See lib/passwordSignIn.ts for the reasoning and the syntax.
+const isDevEmail = computed(() => usesPasswordSignIn(email.value))
 
 const canSubmit = computed(() => {
   if (!email.value.trim().includes('@')) return false

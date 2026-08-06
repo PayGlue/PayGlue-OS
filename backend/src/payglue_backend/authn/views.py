@@ -17,7 +17,7 @@ from rest_framework.response import Response
 from rest_framework.serializers import CharField, EmailField, Serializer
 from rest_framework.views import APIView
 
-from payglue_backend.authn.authentication import FirebaseBearerAuthentication
+from payglue_backend.authn.authentication import SupabaseBearerAuthentication
 from payglue_backend.authn.invitations import normalize_email
 from payglue_backend.authn.creem_access import (
     AccessValidationResult as CreemAccessValidationResult,
@@ -64,7 +64,11 @@ from payglue_backend.tenants.cascade_delete import (
     delete_tenant_cascade,
     sole_and_shared_tenants,
 )
-from payglue_backend.authn.lifecycle_emails import send_account_deleted_email
+from payglue_backend.authn.lifecycle_emails import (
+    notify_admin_account_deleted,
+    notify_admin_license_redeemed,
+    send_account_deleted_email,
+)
 from payglue_backend.tenants.supabase_admin import SupabaseAdminError, delete_supabase_user
 from payglue_backend.tenants.models import (
     AccessRedemption,
@@ -639,6 +643,11 @@ class AccessValidateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Set only on the branch that actually consumes an activation, so a
+        # retry of an already-redeemed code stays silent instead of mailing us
+        # again. Read after the transaction commits.
+        redeemed_code: LicenseCode | None = None
+
         with transaction.atomic():
             # Prevent the same checkout/key from creating two accounts
             if AccessRedemption.objects.filter(redemption_id=redemption_id).exists():
@@ -664,6 +673,7 @@ class AccessValidateView(APIView):
                         )
                     payglue_code.activation_count += 1
                     payglue_code.save(update_fields=["activation_count"])
+                    redeemed_code = payglue_code
                 elif creem_license_key:
                     # Mark the key redeemed at Creem (dashboard accuracy). Our
                     # AccessRedemption above is the real reuse guard, so a Creem
@@ -708,6 +718,11 @@ class AccessValidateView(APIView):
                 defaults=grant_defaults,
             )
 
+        # After the commit on purpose: a Creem purchase mails us by itself, our
+        # own invite codes did not, so this is the only signal for those.
+        if redeemed_code is not None:
+            notify_admin_license_redeemed(redeemed_code, provided_email)
+
         return Response({"valid": True}, status=status.HTTP_200_OK)
 
 
@@ -728,7 +743,7 @@ class MfaBackupCodesView(APIView):
     codes from a previous batch.
     """
 
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [HasUserProfile]
 
     def get(self, request: Request) -> Response:
@@ -765,7 +780,7 @@ class MfaBackupCodeVerifyView(APIView):
     possession of a valid recovery code for this account.
     """
 
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [HasUserProfile]
     throttle_classes = [DynamicScopedRateThrottle]
     throttle_scope = "auth_mfa_backup_code_verify"
@@ -816,7 +831,7 @@ class StepUpRequestView(APIView):
     whether to show "open your authenticator" or "check your email".
     """
 
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     throttle_classes = [DynamicScopedRateThrottle]
     throttle_scope = "auth_step_up_request"
 
@@ -837,7 +852,7 @@ class StepUpRequestView(APIView):
 class StepUpVerifyView(APIView):
     """Check the code and hand back a single-use grant token (PG-203)."""
 
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     throttle_classes = [DynamicScopedRateThrottle]
     throttle_scope = "auth_step_up_verify"
 
@@ -880,7 +895,7 @@ class DeleteAccountView(APIView):
     rollback that resurrects deleted tenants.
     """
 
-    authentication_classes = [FirebaseBearerAuthentication]
+    authentication_classes = [SupabaseBearerAuthentication]
     throttle_classes = [DynamicScopedRateThrottle]
     throttle_scope = "auth_step_up_verify"
 
@@ -911,5 +926,10 @@ class DeleteAccountView(APIView):
         # account that is already gone. Address captured before the delete,
         # since the row it lived on no longer exists.
         send_account_deleted_email(deleted_email)
+        # And the same news to us, so a departure isn't something we notice by
+        # chance. Counts are passed in for the same reason as the address.
+        notify_admin_account_deleted(
+            deleted_email, len(sole_owner_tenants), len(shared_tenants)
+        )
 
         return Response(status=status.HTTP_204_NO_CONTENT)
