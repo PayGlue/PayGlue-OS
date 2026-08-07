@@ -170,3 +170,56 @@ def test_tenants_api_returns_clean_error_for_duplicate_slug(
 
     assert response.status_code == 400
     assert response.json() == {"slug": ["Tenant slug already exists."]}
+
+
+def test_renaming_a_slug_takes_the_configured_connections_along(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The provider configs, credentials and logs hang on the slug *string*,
+    not a ForeignKey. Until 2026-07-26 a rename moved only the Tenant row, so
+    every saved connection was orphaned under the old slug and the dashboard
+    greeted the owner with 'Not connected' on all of them."""
+    from payglue_backend.webhooks.models import (
+        IntegrationConfig,
+        TenantProviderCredential,
+        WebhookInboundEvent,
+    )
+
+    client = Client()
+    tenant = Tenant.objects.create(slug="tst", schema_name="tst")
+    profile = UserProfile.objects.create(firebase_uid="uid-rename", email="rename@example.com")
+    TenantMembership.objects.create(
+        tenant=tenant, user_profile=profile, role=TenantMembership.Role.OWNER
+    )
+    IntegrationConfig.objects.create(
+        tenant_slug="tst", provider_key="polar", provider_type="polar", enabled=True
+    )
+    TenantProviderCredential.objects.create(
+        tenant_slug="tst", provider_key="polar", credentials_enc="gAAAA-encrypted"
+    )
+    WebhookInboundEvent.objects.create(
+        tenant_slug="tst",
+        provider="polar",
+        status=WebhookInboundEvent.Status.PROCESSED,
+        payload_raw=b"{}",
+        endpoint_path="/t/tst/webhooks/polar/x/",
+    )
+    headers = _auth_headers(monkeypatch, "uid-rename", "rename@example.com")
+
+    response = client.patch(
+        "/api/v1/tenants/tst",
+        data={"slug": "pg-219"},
+        content_type="application/json",
+        **headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"slug": "pg-219"}
+    # The connection still belongs to the tenant under its new name...
+    assert IntegrationConfig.objects.filter(tenant_slug="pg-219", enabled=True).count() == 1
+    assert TenantProviderCredential.objects.filter(tenant_slug="pg-219").count() == 1
+    assert WebhookInboundEvent.objects.filter(tenant_slug="pg-219").count() == 1
+    # ...and nothing is left stranded under the old one.
+    assert not IntegrationConfig.objects.filter(tenant_slug="tst").exists()
+    assert not TenantProviderCredential.objects.filter(tenant_slug="tst").exists()
+    assert not WebhookInboundEvent.objects.filter(tenant_slug="tst").exists()

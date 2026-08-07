@@ -113,16 +113,12 @@ def test_apply_entitlement_creates_new_member() -> None:
     member = post["json_body"]["members"][0]  # type: ignore[index]
     assert member["email"] == "user@example.com"
     # Stub's default GET response has no stripe_connect_account_id in settings,
-    # so Ghost's own Stripe isn't connected -> comped stays False and access is
-    # tracked via a payglue-active label instead (see GhostCmsAdapter.apply_entitlement).
+    # so Ghost's own Stripe isn't connected and comped stays False. Access is
+    # carried by the label either way (see GhostCmsAdapter.apply_entitlement).
     assert member["comped"] is False
     assert {"name": "source:payglue"} in member["labels"]
     assert {"name": "product:tier-basic"} in member["labels"]
-    # Two labels, not one. The marker that grants access is bare, so a reader
-    # who bought through one provider and renewed through another keeps access
-    # instead of silently losing it; the provider is recorded separately.
     assert {"name": "payglue-active"} in member["labels"]
-    assert {"name": "payglue-provider:payglue"} in member["labels"]
     _assert_ghost_auth(post["headers"])
 
 
@@ -247,3 +243,88 @@ def test_health_check_raises_for_missing_required_credentials() -> None:
 
     with pytest.raises(MissingCredentialsError):
         adapter.health_check(_ctx())
+
+
+# --- paywall_check: who the gate lets through (PG-229) ---
+#
+# Ghost knows three member states: free, paid, comped. All three plus the
+# label have to be covered, because the gate is the only thing between a
+# reader and content somebody paid for.
+
+
+def _member_response(**fields: object) -> StubResponse:
+    member: dict[str, object] = {"email": "user@example.com", "status": "free", "labels": []}
+    member.update(fields)
+    return StubResponse(200, json.dumps({"members": [member]}))
+
+
+def _check(response: StubResponse) -> dict[str, object]:
+    adapter = GhostCmsAdapter(
+        http_client=StubHttpClient(get_response=response),
+        credential_provider=StubCredentialProvider(),
+    )
+    return adapter.paywall_check(email="user@example.com", tenant_ctx=_ctx())
+
+
+def test_paywall_check_lets_a_stripe_subscriber_through() -> None:
+    # A real Stripe subscriber is status "paid" and NOT comped, and carries no
+    # PayGlue label because PayGlue never touched them. Before PG-229 they were
+    # locked out of a paywall on their own publication.
+    assert _check(_member_response(status="paid", comped=False))["active"] is True
+
+
+def test_paywall_check_lets_a_comped_member_through() -> None:
+    assert _check(_member_response(status="comped", comped=True))["active"] is True
+
+
+def test_paywall_check_lets_the_bare_status_label_through() -> None:
+    # The label written from PG-229 onwards: status only, no provider in it.
+    assert _check(
+        _member_response(labels=[{"name": "payglue-active"}, {"name": "payglue-provider:polar"}])
+    )["active"] is True
+
+
+def test_paywall_check_still_lets_the_old_provider_label_through() -> None:
+    # Members created before PG-229 carry payglue-active:<provider>. There is
+    # deliberately no backfill in customer publications, so the old shape has
+    # to keep working for as long as those members exist.
+    assert _check(_member_response(labels=[{"name": "payglue-active:polar"}]))["active"] is True
+
+
+def test_paywall_check_keeps_a_free_member_out() -> None:
+    result = _check(_member_response(labels=[{"name": "source:payglue"}]))
+    assert result["active"] is False
+
+
+def test_paywall_check_keeps_an_unknown_email_out() -> None:
+    response = StubResponse(200, json.dumps({"members": []}))
+    assert _check(response)["active"] is False
+
+
+# --- labels written on grant and removed on revoke (PG-229) ---
+
+
+def test_grant_writes_status_and_provider_as_separate_labels() -> None:
+    client = StubHttpClient()
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+
+    adapter.apply_entitlement(_customer(), _instruction(), _ctx())
+
+    labels = client.post_calls[0]["json_body"]["members"][0]["labels"]  # type: ignore[index]
+    assert {"name": "payglue-active"} in labels
+    assert {"name": "payglue-provider:payglue"} in labels
+
+
+def test_revoke_removes_the_status_label() -> None:
+    # The PUT sends the full label set, so leaving payglue-active out of it is
+    # what actually removes access. Nothing else revokes it, which is why this
+    # has a test of its own.
+    client = StubHttpClient(
+        get_response=StubResponse(200, json.dumps({"members": [{"id": "m1"}]})),
+    )
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+
+    adapter.apply_entitlement(_customer(), _instruction(action="revoke"), _ctx())
+
+    labels = client.put_calls[0]["json_body"]["members"][0]["labels"]  # type: ignore[index]
+    assert {"name": "payglue-active"} not in labels

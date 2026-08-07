@@ -178,10 +178,8 @@ def test_event_replay_rejects_invalid_state_and_missing_events(
         role=TenantMembership.Role.OWNER,
         uid_suffix="replay-invalid",
     )
-    # Processed became replayable, because "processed, but nothing granted" is
-    # exactly the case you want to run again after fixing a mapping. The only
-    # genuinely invalid state left is one that is still mid-flight, where a
-    # replay would race the worker.
+    # PG-230: processed became replayable, so the invalid state here is one
+    # that is genuinely mid-flight. Replaying that would race the worker.
     invalid_state_event = WebhookInboundEvent.objects.create(
         tenant_slug="tenant-a",
         provider="polar",
@@ -219,6 +217,41 @@ def test_event_replay_rejects_invalid_state_and_missing_events(
         **headers,
     )
     assert cross_tenant_response.status_code == 404
+
+
+@pytest.mark.django_db
+def test_event_replay_accepts_a_processed_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PG-230: the case replay exists for.
+
+    An event whose product had no mapping resolves to no instruction and is
+    recorded as processed, because nothing errored. The publisher adds the
+    mapping and needs to run that purchase through again. Refusing it meant
+    granting access by hand or asking a paying customer to buy twice.
+    """
+    client = Client()
+    headers = _auth_headers(
+        monkeypatch,
+        tenant_slug="tenant-a",
+        role=TenantMembership.Role.OWNER,
+        uid_suffix="replay-processed",
+    )
+    event = WebhookInboundEvent.objects.create(
+        tenant_slug="tenant-a",
+        provider="polar",
+        status=WebhookInboundEvent.Status.PROCESSED,
+        payload_raw=b"{}",
+        payload_snapshot={},
+        headers_snapshot={"Content-Type": "application/json"},
+        endpoint_path="/t/tenant-a/webhooks/polar/[redacted]/",
+        endpoint_token_hash="hash-processed-replayable",
+        endpoint_metadata={"method": "POST"},
+    )
+
+    response = client.post(f"/t/tenant-a/api/v1/events/{event.id}/replay", **headers)
+
+    assert response.status_code == 202
+    event.refresh_from_db()
+    assert event.status != WebhookInboundEvent.Status.PROCESSED
 
 
 def test_event_replay_returns_503_when_queue_publish_fails(
