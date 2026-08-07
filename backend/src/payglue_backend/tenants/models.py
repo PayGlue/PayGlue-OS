@@ -98,6 +98,16 @@ class Tenant(TenantMixin):
 class UserProfile(models.Model):
     firebase_uid = models.CharField(max_length=255, unique=True)
     email = models.EmailField(unique=True)
+    # PG-237: only ever set where the identity lives on this server instead of
+    # in a hosted provider. A Django password hash, empty for every account
+    # whose credentials are somebody else's problem. Deliberately on this model
+    # rather than in a second user table: firebase_uid is already the one key
+    # everything joins on, and a parallel identity table would only need
+    # keeping in step.
+    password = models.CharField(max_length=128, blank=True, default="")
+    # Read by Django's password-reset token generator, which folds it into the
+    # hash so a token stops working once it has been used to sign in.
+    last_login = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

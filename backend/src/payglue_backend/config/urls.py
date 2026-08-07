@@ -17,6 +17,14 @@ from payglue_backend.authn.views import (
     StepUpVerifyView,
     DeleteAccountView,
 )
+from payglue_backend.authn.local_views import (
+    LocalAuthStatusView,
+    LocalBootstrapView,
+    LocalPasswordChangeView,
+    LocalPasswordResetConfirmView,
+    LocalPasswordResetRequestView,
+    LocalTokenView,
+)
 from payglue_backend.http.health import (
     CacheHealthView,
     DatabaseHealthView,
@@ -98,6 +106,23 @@ urlpatterns = [
     path("api/v1/auth/account", DeleteAccountView.as_view(), name="auth-account-delete"),
     path("api/v1/auth/step-up/request", StepUpRequestView.as_view(), name="auth-step-up-request"),
     path("api/v1/auth/step-up/verify", StepUpVerifyView.as_view(), name="auth-step-up-verify"),
+    # Accounts on this server. All six answer 404 unless LOCAL_AUTH_ENABLED,
+    # so an installation using a hosted identity provider behaves as if they
+    # were never wired up.
+    path("api/v1/auth/local/status", LocalAuthStatusView.as_view(), name="auth-local-status"),
+    path("api/v1/auth/local/token", LocalTokenView.as_view(), name="auth-local-token"),
+    path("api/v1/auth/local/bootstrap", LocalBootstrapView.as_view(), name="auth-local-bootstrap"),
+    path("api/v1/auth/local/password", LocalPasswordChangeView.as_view(), name="auth-local-password"),
+    path(
+        "api/v1/auth/local/password/reset",
+        LocalPasswordResetRequestView.as_view(),
+        name="auth-local-password-reset",
+    ),
+    path(
+        "api/v1/auth/local/password/reset/confirm",
+        LocalPasswordResetConfirmView.as_view(),
+        name="auth-local-password-reset-confirm",
+    ),
     path("api/v1/auth/access/validate", AccessValidateView.as_view(), name="auth-access-validate"),
     path("api/v1/auth/access/checkout-info", CheckoutInfoView.as_view(), name="auth-access-checkout-info"),
     path("api/v1/auth/webhooks/creem-checkout", CreemCheckoutWebhookView.as_view(), name="auth-creem-checkout-webhook"),

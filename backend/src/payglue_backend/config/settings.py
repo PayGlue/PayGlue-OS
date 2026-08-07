@@ -217,6 +217,36 @@ WEBHOOK_ALLOW_GLOBAL_ENDPOINT_TOKEN = (
     os.environ.get("WEBHOOK_ALLOW_GLOBAL_ENDPOINT_TOKEN", "0") == "1"
 )
 FIREBASE_AUTH_ENABLED = os.environ.get("FIREBASE_AUTH_ENABLED", "0") == "1"
+# Accounts on this server rather than in a hosted identity provider, so that
+# running this yourself does not begin with signing up somewhere else. Set it
+# to 1 and the setup wizard creates the first account; leave it off and the
+# Supabase path works exactly as before. Explicit rather than inferred from
+# whether Supabase happens to be configured: an installation must not change
+# where it looks for identities because an environment variable went missing.
+LOCAL_AUTH_ENABLED = os.environ.get("LOCAL_AUTH_ENABLED", "0") == "1"
+# Signs the tokens local accounts get. Empty means the Django secret key, which
+# is one less thing to configure, and rotating that invalidating every token is
+# the behaviour you would want anyway.
+LOCAL_AUTH_JWT_SECRET = os.environ.get("LOCAL_AUTH_JWT_SECRET", "")
+LOCAL_AUTH_TOKEN_TTL_HOURS = int(os.environ.get("LOCAL_AUTH_TOKEN_TTL_HOURS", "12"))
+
+# Applies only to passwords chosen on this server. Django's standard four,
+# which is a better answer than a rule invented here: they reject the password
+# that is the email address, the one that is eight digits, and the twenty
+# thousand that appear in every leak.
+AUTH_PASSWORD_VALIDATORS = [
+    {
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
+        "OPTIONS": {"user_attributes": ("email",)},
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "OPTIONS": {"min_length": 10},
+    },
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
 SUPABASE_JWKS_URL = os.environ.get("SUPABASE_JWKS_URL", "")
 SUPABASE_JWKS_KEYS = os.environ.get("SUPABASE_JWKS_KEYS", "")
@@ -441,6 +471,16 @@ REST_FRAMEWORK = {
         "auth_step_up_verify": os.environ.get("DRF_THROTTLE_AUTH_STEP_UP_VERIFY", "10/minute"),
         "auth_mfa_backup_code_verify": os.environ.get(
             "DRF_THROTTLE_AUTH_MFA_BACKUP_CODE_VERIFY", "10/minute"
+        ),
+        # Local sign-in. The only endpoint here where guessing repeatedly
+        # gets you in, so it is the tightest of the lot. The reset leg sends
+        # mail and is capped harder still.
+        "auth_local_token": os.environ.get("DRF_THROTTLE_AUTH_LOCAL_TOKEN", "10/minute"),
+        "auth_local_password_reset": os.environ.get(
+            "DRF_THROTTLE_AUTH_LOCAL_PASSWORD_RESET", "5/minute"
+        ),
+        "auth_local_bootstrap": os.environ.get(
+            "DRF_THROTTLE_AUTH_LOCAL_BOOTSTRAP", "10/minute"
         ),
     },
 }
