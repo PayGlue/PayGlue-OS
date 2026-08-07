@@ -223,10 +223,70 @@ class SupabaseJwtVerifier:
         return _extract_claims(payload)
 
 
+class LocalAuthTokenVerifier:
+    """Verifies tokens this installation issued itself (PG-237).
+
+    The fifth branch of the factory below, and the reason the other four were
+    written behind a protocol. Same HS256 shape as the legacy Supabase one,
+    with two additions that matter for an installation where we are the issuer:
+
+    * the `iss` claim has to say so, otherwise a token minted elsewhere against
+      a shared secret would be accepted here;
+    * the password fingerprint is compared against the row, so changing a
+      password retires every token that was issued before it. Costs one indexed
+      lookup per request, only in this mode, and it is what makes a password
+      change mean anything without a session table to clear.
+    """
+
+    def verify(self, token: str) -> VerifiedTokenClaims:
+        import hashlib
+        import hmac as hmac_mod
+
+        from payglue_backend.authn import local_identity
+
+        parts = token.split(".")
+        if len(parts) != 3:
+            raise InvalidAuthTokenError
+
+        header_b64, payload_b64, sig_b64 = parts
+        signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
+        secret = local_identity._signing_key()
+
+        expected_sig = hmac_mod.new(secret, signing_input, hashlib.sha256).digest()
+        try:
+            padding = "=" * (-len(sig_b64) % 4)
+            received_sig = base64.urlsafe_b64decode(sig_b64 + padding)
+        except Exception as exc:
+            raise InvalidAuthTokenError from exc
+        if not hmac_mod.compare_digest(expected_sig, received_sig):
+            raise InvalidAuthTokenError
+
+        payload = _decode_jwt_payload(payload_b64)
+        if payload.get("iss") != local_identity.ISSUER:
+            raise InvalidAuthTokenError
+
+        claims = _extract_claims(payload)
+
+        from payglue_backend.tenants.models import UserProfile
+
+        profile = UserProfile.objects.filter(firebase_uid=claims.firebase_uid).first()
+        if profile is None or not profile.password:
+            raise InvalidAuthTokenError
+        if payload.get("pwd") != local_identity.password_fingerprint(profile.password):
+            raise InvalidAuthTokenError
+
+        return claims
+
+
 @lru_cache(maxsize=1)
 def get_auth_token_verifier() -> AuthTokenVerifier:
     if getattr(settings, "FIREBASE_AUTH_ENABLED", False):
         return FirebaseAuthTokenVerifier()
+    # Ahead of the Supabase branches on purpose: an operator who switched this
+    # on has said where identity lives, and leftover Supabase settings from an
+    # earlier attempt should not quietly outrank that.
+    if getattr(settings, "LOCAL_AUTH_ENABLED", False):
+        return LocalAuthTokenVerifier()
     jwks_url = getattr(settings, "SUPABASE_JWKS_URL", "")
     jwks_keys_json = getattr(settings, "SUPABASE_JWKS_KEYS", "")
     if isinstance(jwks_url, str) and jwks_url:
