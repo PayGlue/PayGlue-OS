@@ -222,3 +222,53 @@ def test_health_check_maps_client_failures() -> None:
     assert result["ok"] is False
     assert result["code"] == "transport_error"
     assert "failed" in str(result["message"]).lower()
+
+
+def test_parse_event_takes_the_product_id_from_the_item_when_the_order_has_none() -> None:
+    """Polar puts the canonical product at data.product, but not in every shape."""
+    adapter = PolarPaymentAdapter(credential_provider=StubCredentialProvider())
+    payload = {
+        "id": "evt_124",
+        "type": "order.paid",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "data": {
+            "status": "paid",
+            "customer": {"id": "cus_001", "email": "owner@example.com"},
+            "currency": "usd",
+            "items": [{"amount": 1500, "product_id": "prod_from_item"}],
+        },
+    }
+
+    event = adapter.parse_event(
+        json.dumps(payload).encode("utf-8"), {}, TenantContext(tenant_slug="tenant-a")
+    )
+
+    assert event.line_items[0].external_product_id == "prod_from_item"
+
+
+def test_parse_event_refuses_to_invent_a_product_id_from_the_order_item(caplog) -> None:
+    """PG-231: this used to fall back to the order item's own id.
+
+    That id is unique per purchase, so it could never match a mapping. The
+    event was recorded as processed, nothing was granted, and no error was
+    raised anywhere. Failing is the better outcome: a failed event is visible
+    in the log and can be replayed once the payload shape is understood.
+    """
+    adapter = PolarPaymentAdapter(credential_provider=StubCredentialProvider())
+    payload = {
+        "id": "evt_125",
+        "type": "order.paid",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "data": {
+            "status": "paid",
+            "customer": {"id": "cus_001", "email": "owner@example.com"},
+            "currency": "usd",
+            # No data.product, and the item carries only its own id.
+            "items": [{"id": "66de50aa-ca54-4f40-bdcf-718969ed4995", "amount": 1500}],
+        },
+    }
+
+    with pytest.raises(InvalidWebhookPayloadError):
+        adapter.parse_event(
+            json.dumps(payload).encode("utf-8"), {}, TenantContext(tenant_slug="tenant-a")
+        )
