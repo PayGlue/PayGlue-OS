@@ -257,9 +257,12 @@ const settingsTabs = computed<TabItem[]>(() => {
   if (!slug) return []
   return [
     { label: 'Team', to: `/t/${slug}/team` },
-    { label: 'Billing', to: `/t/${slug}/billing` },
-    { label: 'Plans', to: `/t/${slug}/plans` },
-    { label: 'Affiliate', to: `/t/${slug}/affiliate` },
+    // Billing, Plans and Affiliate belong to the hosted service, not to the
+    // software. A self-hosted build has no such routes, so these three drop
+    // out the same way Documents does below.
+    ...(router.hasRoute('billing') ? [{ label: 'Billing', to: `/t/${slug}/billing` }] : []),
+    ...(router.hasRoute('plans') ? [{ label: 'Plans', to: `/t/${slug}/plans` }] : []),
+    ...(router.hasRoute('affiliate') ? [{ label: 'Affiliate', to: `/t/${slug}/affiliate` }] : []),
     { label: 'Preferences', to: `/t/${slug}/preferences` },
     { label: 'Publication', to: `/t/${slug}/organization` },
     { label: 'Support', to: `/t/${slug}/support` },

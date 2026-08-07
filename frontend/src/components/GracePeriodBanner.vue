@@ -3,9 +3,11 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { useSessionStore } from '../stores/session'
 
 const session = useSessionStore()
+const router = useRouter()
 
 // PG-141: downgrade_detected_at/grace_period_ends_at come from the same
 // AuthSessionView payload that populates memberships -- no separate fetch.
@@ -18,9 +20,12 @@ const daysLeft = computed(() => {
   return Math.max(0, Math.ceil(msLeft / (24 * 60 * 60 * 1000)))
 })
 
-const plansUrl = computed(() =>
-  session.activeTenantSlug ? `/t/${session.activeTenantSlug}/plans` : '/tenant/select',
-)
+// null where there is no price list: a self-hosted build has no plans route
+// (PG-240). The countdown still shows, only the button goes away.
+const plansUrl = computed(() => {
+  if (!router.hasRoute('plans')) return null
+  return session.activeTenantSlug ? `/t/${session.activeTenantSlug}/plans` : '/tenant/select'
+})
 </script>
 
 <template>
@@ -33,6 +38,7 @@ const plansUrl = computed(() =>
       on your grace period. Your workspaces stay fully active until then. After that, the newest ones beyond your plan's limit will be paused (not deleted) unless you upgrade back.
     </p>
     <RouterLink
+      v-if="plansUrl"
       :to="plansUrl"
       class="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
     >

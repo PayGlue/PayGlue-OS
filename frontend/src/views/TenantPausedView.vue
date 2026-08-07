@@ -3,11 +3,12 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import AppShell from '../components/AppShell.vue'
 import { useSessionStore } from '../stores/session'
 
 const route = useRoute()
+const router = useRouter()
 const session = useSessionStore()
 
 const tenantSlug = computed(() => String(route.params.tenantSlug ?? ''))
@@ -17,6 +18,16 @@ const displayName = computed(() =>
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' '),
 )
+
+// null in a self-hosted build, which has no price list to upgrade on
+// (PG-240). The explanation of why the workspace is paused still stands;
+// only the button that would lead nowhere is dropped.
+const plansUrl = computed(() => {
+  if (!router.hasRoute('plans')) return null
+  return session.activeTenantSlug && session.activeTenantSlug !== tenantSlug.value
+    ? `/t/${session.activeTenantSlug}/plans`
+    : '/tenant/select'
+})
 </script>
 
 <template>
@@ -36,7 +47,8 @@ const displayName = computed(() =>
       </p>
       <div class="mt-6 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
         <RouterLink
-          :to="session.activeTenantSlug && session.activeTenantSlug !== tenantSlug ? `/t/${session.activeTenantSlug}/plans` : '/tenant/select'"
+          v-if="plansUrl"
+          :to="plansUrl"
           class="inline-flex items-center gap-1.5 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
         >
           View plans and pricing
