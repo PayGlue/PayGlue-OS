@@ -98,9 +98,13 @@ INSTALLED_APPS = [*SHARED_APPS, *[app for app in TENANT_APPS if app not in SHARE
 
 MIDDLEWARE = [
     # SecurityMiddleware for the generic hardening headers (nosniff, HSTS).
-    # The private repo carries the full session/CSRF/OTP stack for its admin
-    # console; this API-only backend needs none of it.
+    # This backend serves an API plus a few GET-only embed endpoints, so it
+    # needs none of the session, CSRF or OTP stack a form-based admin does.
     "django.middleware.security.SecurityMiddleware",
+    # Clickjacking protection is not part of that stack, and it was missing
+    # here. It applies to every response the backend returns, including the
+    # HTML the embed endpoints serve.
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "payglue_backend.http.tenant.TenantPathMiddleware",
 ]
 
