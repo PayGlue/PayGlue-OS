@@ -1,11 +1,14 @@
 // Copyright (c) 2026 PayGlue by André Nünninghoff
 // Licensed under the Business Source License 1.1, see LICENSE.md
 //
-// HAND-MAINTAINED in the OSS repo -- the sync script never overwrites this
-// file (see scripts/sync-oss.sh NEVER_SYNC_PATHS in the private repo). It is
-// the private router minus every marketing/legal route and the dual-domain
-// redirect logic. When the private repo gains a dashboard route, port it here
-// by hand as part of the next release.
+// This file is maintained by hand and is never overwritten when the rest of
+// the source is updated. It carries the routes of the application itself, and
+// none of the ones that only make sense for a hosted service: no marketing or
+// legal pages, no dual-domain redirect, and no billing, plans or affiliate
+// route. There is no subscription to manage on an installation you run
+// yourself. The navigation and the banners that would link to those three ask
+// router.hasRoute() and leave the entry out when it is absent, so nothing
+// points at a route that does not exist here.
 
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteLocationNormalized } from 'vue-router'
@@ -28,10 +31,7 @@ const TeamView = () => import('../views/TeamView.vue')
 const PricingTableView = () => import('../views/PricingTableView.vue')
 
 const EventsView = () => import('../views/EventsView.vue')
-const BillingView = () => import('../views/BillingView.vue')
-const PlansView = () => import('../views/PlansView.vue')
 const PreferencesView = () => import('../views/PreferencesView.vue')
-const AffiliateView = () => import('../views/AffiliateView.vue')
 const OnboardingThankYouView = () => import('../views/OnboardingThankYouView.vue')
 const ConnectionsOverviewView = () => import('../views/ConnectionsOverviewView.vue')
 const ConnectionGhostView = () => import('../views/ConnectionGhostView.vue')
@@ -288,24 +288,6 @@ const router = createRouter({
       name: 'events',
       component: EventsView,
       meta: { requiresAuth: true, requiresTenantMatch: true },
-    },
-    {
-      path: '/t/:tenantSlug/billing',
-      name: 'billing',
-      component: BillingView,
-      meta: { requiresAuth: true, requiresTenantMatch: true },
-    },
-    {
-      path: '/t/:tenantSlug/plans',
-      name: 'plans',
-      component: PlansView,
-      meta: { requiresAuth: true, requiresTenantMatch: true },
-    },
-    {
-      path: '/t/:tenantSlug/affiliate',
-      name: 'affiliate',
-      component: AffiliateView,
-      meta: { requiresAuth: true, title: 'Affiliate | PayGlue' },
     },
     {
       path: '/t/:tenantSlug/preferences',

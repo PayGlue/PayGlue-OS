@@ -3,6 +3,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { useSessionStore } from '../stores/session'
 
 defineProps<{
@@ -11,8 +12,14 @@ defineProps<{
 }>()
 
 const session = useSessionStore()
+const router = useRouter()
+// null also where there is no price list to send anyone to: a self-hosted
+// build has no plans route (PG-240), and a button leading nowhere is worse
+// than no button. The message itself still explains what was reached.
 const plansUrl = computed(() =>
-  session.activeTenantSlug ? `/t/${session.activeTenantSlug}/plans` : null,
+  session.activeTenantSlug && router.hasRoute('plans')
+    ? `/t/${session.activeTenantSlug}/plans`
+    : null,
 )
 </script>
 
