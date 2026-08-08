@@ -3,7 +3,7 @@
 
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { supabase } from '../lib/supabase'
+import { getSession as getAuthSession, signOut as authSignOut } from '../lib/authProvider'
 import { getTenantWebhookSecret, postAuthSession } from '../lib/api'
 import type { User } from '@supabase/supabase-js'
 import type { SessionBillingInfo } from '../types/api'
@@ -72,24 +72,27 @@ export const useSessionStore = defineStore('session', () => {
     isLoading.value = true
     errorMessage.value = null
     try {
-      const { data: sessionData } = await supabase.auth.getSession()
-      if (!sessionData.session) {
+      const authenticated = await getAuthSession()
+      if (!authenticated) {
         clearSession()
         return false
       }
-      user.value = sessionData.session.user
-      accessToken.value = sessionData.session.access_token
+      // Shaped like a Supabase user because that is what the rest of the store
+      // and its consumers already expect. In local mode only id and email are
+      // real, and nothing reads more than those two.
+      user.value = { id: authenticated.userId, email: authenticated.email } as User
+      accessToken.value = authenticated.accessToken
 
       let authSession
       try {
-        authSession = await postAuthSession(sessionData.session.access_token)
+        authSession = await postAuthSession(authenticated.accessToken)
       } catch (error) {
-        // A valid Supabase session with no PayGlue account behind it (e.g. an
+        // A valid identity with no PayGlue account behind it (e.g. an
         // uninvited OAuth sign-in) -- the backend invite gate rejects this.
-        // Sign out of Supabase too, otherwise bootstrap() would keep retrying
-        // and failing on every route guard check with the user stuck looking
-        // "logged in" but unable to do anything.
-        await supabase.auth.signOut()
+        // Sign out of the identity provider too, otherwise bootstrap() would
+        // keep retrying and failing on every route guard check with the user
+        // stuck looking "logged in" but unable to do anything.
+        await authSignOut()
         clearSession()
         errorMessage.value =
           error instanceof Error ? error.message : 'This account has no PayGlue access yet.'
@@ -186,7 +189,7 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   const signOut = async () => {
-    await supabase.auth.signOut()
+    await authSignOut()
     clearSession()
   }
 

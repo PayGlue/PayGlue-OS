@@ -5,6 +5,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useSessionStore } from '../stores/session'
+import { authMode, getSession } from '../lib/authProvider'
 import { supabase } from '../lib/supabase'
 import { api, createTenant, updateIntegrationConfig, setIntegrationCredentials } from '../lib/api'
 import { isPlanLimitError, planKeyFromError } from '../lib/planUpgrade'
@@ -68,36 +69,46 @@ const createOrg = async () => {
   createError.value = null
   createErrorPlan.value = null
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) { createError.value = 'Not authenticated.'; isCreating.value = false; return }
-
-  const { error } = await supabase.from('tenants').insert({
-    slug: slug.value,
-    name: orgName.value.trim(),
-    owner_id: user.id,
-  })
-
-  if (error) {
-    createError.value = error.message
+  const authSession = await getSession()
+  if (!authSession) {
+    createError.value = 'Not authenticated.'
     isCreating.value = false
     return
   }
 
-  await supabase.from('tenant_members').insert({
-    tenant_id: (await supabase.from('tenants').select('id').eq('slug', slug.value).single()).data?.id,
-    user_id: user.id,
-    role: 'owner',
-  })
+  // The two inserts below write the same publication a second time, into
+  // Supabase tables that nothing reads back except the line fetching the id it
+  // just wrote. The record that counts is the one createTenant() makes, which
+  // the backend builds atomically together with the membership and the billing
+  // account.
+  //
+  // Kept for the hosted installation, where these rows exist and have existed
+  // for a long time, and skipped where there is no PostgREST to write to at
+  // all (PG-237). Removing them outright is a separate decision with its own
+  // change, because it touches the live sign-up path.
+  if (authMode() === 'supabase') {
+    const { error } = await supabase.from('tenants').insert({
+      slug: slug.value,
+      name: orgName.value.trim(),
+      owner_id: authSession.userId,
+    })
 
-  const { data: { session: authSession } } = await supabase.auth.getSession()
-  if (!authSession?.access_token) {
-    createError.value = 'Session lost. Please reload and try again.'
-    isCreating.value = false
-    return
+    if (error) {
+      createError.value = error.message
+      isCreating.value = false
+      return
+    }
+
+    await supabase.from('tenant_members').insert({
+      tenant_id: (await supabase.from('tenants').select('id').eq('slug', slug.value).single())
+        .data?.id,
+      user_id: authSession.userId,
+      role: 'owner',
+    })
   }
 
   try {
-    await createTenant(authSession.access_token, { slug: slug.value })
+    await createTenant(authSession.accessToken, { slug: slug.value })
   } catch (err) {
     const isAlreadyExists =
       err instanceof Error && err.message.toLowerCase().includes('already exists')
