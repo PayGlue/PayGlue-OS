@@ -791,7 +791,7 @@ watch(
         <div class="absolute inset-0 bg-slate-900/60" @click="mobileSidebarOpen = false" />
         <aside class="absolute left-0 top-0 flex h-full w-72 flex-col bg-slate-900">
           <div class="flex items-center justify-between px-4 py-5">
-            <PayGlueLogo size="md" :dark="true" />
+            <PayGlueLogo size="md" theme="dark" />
             <button class="rounded-md p-1.5 text-slate-400 hover:text-white" @click="mobileSidebarOpen = false">
               <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />

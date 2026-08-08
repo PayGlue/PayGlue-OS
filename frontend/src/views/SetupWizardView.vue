@@ -87,7 +87,7 @@ const stillNeedsSetup = computed(() => installationNeedsSetup())
   <main class="flex min-h-screen items-center justify-center bg-slate-50 px-6 py-12 dark:bg-slate-950">
     <div class="w-full max-w-xl">
       <div class="mb-8 flex items-center gap-3">
-        <PayGlueLogo size="lg" />
+        <PayGlueLogo size="lg" theme="auto" />
         <span
           class="ml-auto rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:border-slate-700 dark:text-slate-400"
         >
