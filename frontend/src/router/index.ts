@@ -13,7 +13,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteLocationNormalized } from 'vue-router'
 import { useSessionStore } from '../stores/session'
-import { capabilities } from '../lib/authProvider'
+import { capabilities, installationNeedsSetup } from '../lib/authProvider'
 import { supabase } from '../lib/supabase'
 
 const LoginView = () => import('../views/LoginView.vue')
@@ -46,6 +46,7 @@ const AuthMfaChallengeView = () => import('../views/AuthMfaChallengeView.vue')
 const ResetPasswordView = () => import('../views/ResetPasswordView.vue')
 const AuthResetView = () => import('../views/AuthResetView.vue')
 const WelcomeView = () => import('../views/WelcomeView.vue')
+const SetupWizardView = () => import('../views/SetupWizardView.vue')
 
 const router = createRouter({
   history: createWebHistory(),
@@ -98,6 +99,14 @@ const router = createRouter({
       path: '/welcome',
       name: 'welcome',
       component: WelcomeView,
+    },
+    {
+      // First run: the guard below sends everything here while this
+      // installation has no account, and nothing here once it has one.
+      path: '/setup',
+      name: 'setup',
+      component: SetupWizardView,
+      meta: { skipBootstrap: true },
     },
     {
       path: '/login',
@@ -318,8 +327,15 @@ router.beforeEach(async (to) => {
     await session.bootstrap()
   }
 
-  // (The private repo carries payglue.io <-> app.payglue.io dual-domain
-  // redirect logic here; a self-hosted install has one origin, so it is gone.)
+  // An installation with no account at all has exactly one thing to offer,
+  // and it is not the login form. Whether that is the case was answered by the
+  // backend at startup, so this costs nothing per navigation.
+  if (installationNeedsSetup() && to.name !== 'setup') {
+    return { name: 'setup' }
+  }
+  if (!installationNeedsSetup() && to.name === 'setup') {
+    return { name: 'login' }
+  }
 
   const requiresAuth = Boolean(to.meta.requiresAuth)
   if (!requiresAuth) {

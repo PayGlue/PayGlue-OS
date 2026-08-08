@@ -35,6 +35,11 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       DJANGO_DEBUG: "1"
+      # Accounts kept by this installation, so a fresh clone has a way to sign
+      # in without signing up anywhere else. Set it to 0 and configure a hosted
+      # identity provider below if you want magic links, social sign-in or
+      # authenticator apps.
+      LOCAL_AUTH_ENABLED: ${LOCAL_AUTH_ENABLED:-1}
       SUPABASE_URL: ${SUPABASE_URL:-}
       SUPABASE_JWKS_URL: ${SUPABASE_JWKS_URL:-}
       CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-bWFzdGVya2V5Zm9ybG9jYWxkZXZlbG9wbWVudG9ubHk=}
@@ -79,6 +84,11 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       DJANGO_DEBUG: "1"
+      # Accounts kept by this installation, so a fresh clone has a way to sign
+      # in without signing up anywhere else. Set it to 0 and configure a hosted
+      # identity provider below if you want magic links, social sign-in or
+      # authenticator apps.
+      LOCAL_AUTH_ENABLED: ${LOCAL_AUTH_ENABLED:-1}
       SUPABASE_URL: ${SUPABASE_URL:-}
       SUPABASE_JWKS_URL: ${SUPABASE_JWKS_URL:-}
       CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-bWFzdGVya2V5Zm9ybG9jYWxkZXZlbG9wbWVudG9ubHk=}
