@@ -9,12 +9,92 @@ Step-by-step instructions for connecting Ghost, payment providers, and deploying
 
 ## Contents
 
+- [Signing in](#signing-in)
 - [Infrastructure overview](#infrastructure-overview)
 - [Ghost connection](#ghost-connection)
 - [Polar](#polar)
 - [Lemon Squeezy](#lemon-squeezy)
 - [PayPal](#paypal)
 - [Cloudflare Worker proxy](#cloudflare-worker-proxy)
+
+---
+
+## Signing in
+
+You choose this once, on the first run, and it is the only part of PayGlue that
+works differently depending on how you run it. Everything else, including
+running several publications of your own, is the same either way.
+
+### Accounts kept by this installation
+
+The default. `LOCAL_AUTH_ENABLED=1`, which is what `docker-compose.yml` sets, and
+nothing else to configure. The first time you open the dashboard it asks you to
+create an account, and that screen closes for good the moment one exists.
+
+The check for that is a count of the rows in your database, not a flag the
+browser sends. An installation that faces the internet with an open
+registration endpoint is the easiest way there is to lose it, so there is no way
+to reopen that screen short of emptying the table yourself.
+
+Everyone after the first person arrives by invitation.
+
+**Configure outbound mail, or accept the consequence.** A password reset is sent
+by email. Without a working mail setup, a forgotten password can only be fixed
+from the command line:
+
+```bash
+docker compose exec web python manage.py shell -c "
+from payglue_backend.tenants.models import UserProfile
+from payglue_backend.authn import local_identity
+local_identity.set_password(UserProfile.objects.get(email='you@example.com'), 'a-new-password')
+"
+```
+
+That is fine on your own machine. On a server with other people on it, set
+`RESEND_API_KEY` or point `EMAIL_BACKEND` at your own SMTP before you invite
+anybody.
+
+**What you do not get:** authenticator apps, magic links, and sign-in with
+Google or GitHub. Those are features of a hosted identity provider, and half an
+implementation would be worse than none, so the dashboard leaves those sections
+out entirely rather than showing buttons that fail. Confirming something
+destructive still asks for a second factor: it falls back to a one-time code by
+email.
+
+Passwords are checked against Django's standard validators. At least ten
+characters, not entirely numeric, not too close to your email address, and not
+one of the twenty thousand that appear in every leak.
+
+### A hosted identity provider
+
+Set `LOCAL_AUTH_ENABLED=0` and point the backend at your own Supabase project,
+or any issuer that publishes a JWKS endpoint:
+
+```bash
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_JWKS_URL=https://your-project.supabase.co/auth/v1/.well-known/jwks.json
+```
+
+The dashboard needs two more, and these are read **when it is built**, not when
+it runs, so they belong in `frontend/.env` and take effect after a rebuild:
+
+```bash
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-publishable-key
+```
+
+The publishable key is the one meant for the browser and ships inside the
+bundle. The service role key does not belong here.
+
+With this you get authenticator apps, magic links, and social sign-in, and you
+create your first account in the provider itself rather than in the wizard.
+
+### Switching later
+
+Both are the same application, so switching is a configuration change and a
+restart. What does not travel is the accounts: a password kept here is not
+known to a hosted provider, and the other way round. Whoever signed in one way
+signs up again the other way.
 
 ---
 
