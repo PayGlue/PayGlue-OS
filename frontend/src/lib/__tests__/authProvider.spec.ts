@@ -86,15 +86,24 @@ describe('which provider is in charge', () => {
 
   it('offers no authenticator app where there is none to offer', async () => {
     await goLocal()
-    expect(capabilities()).toMatchObject({
+    expect(capabilities()).toEqual({
       mfa: false,
       oauth: false,
       magicLink: false,
+      emailChange: false,
+      profileMetadata: false,
       passwordSignIn: true,
     })
 
     await goHosted()
-    expect(capabilities()).toMatchObject({ mfa: true, oauth: true, magicLink: true })
+    expect(capabilities()).toEqual({
+      mfa: true,
+      oauth: true,
+      magicLink: true,
+      emailChange: true,
+      profileMetadata: true,
+      passwordSignIn: true,
+    })
   })
 })
 

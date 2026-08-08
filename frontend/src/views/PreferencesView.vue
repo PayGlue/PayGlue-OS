@@ -7,6 +7,7 @@ import AppShell from '../components/AppShell.vue'
 import StepUpDialog from '../components/StepUpDialog.vue'
 import { useSessionStore } from '../stores/session'
 import { useRouter } from 'vue-router'
+import { capabilities } from '../lib/authProvider'
 import { supabase } from '../lib/supabase'
 import {
   deleteAccount as deleteAccountApi,
@@ -59,6 +60,12 @@ const linkedProviders = ref<Set<OAuthProvider>>(new Set())
 const linkingProvider = ref<OAuthProvider | null>(null)
 const unlinkingProvider = ref<OAuthProvider | null>(null)
 const linkError = ref<string | null>(null)
+
+// What this installation's identity provider can do. An installation that
+// keeps its own accounts has no authenticator app, no linked Google or GitHub
+// account and no second address to move to, so those sections are not shown
+// rather than shown and broken (PG-237).
+const caps = capabilities()
 
 const loadIdentities = async () => {
   const { data, error } = await supabase.auth.getUserIdentities()
@@ -316,9 +323,9 @@ const performDelete = async (stepUpToken: string) => {
 }
 
 onMounted(() => {
-  loadProfile()
-  loadIdentities()
-  loadMfaStatus()
+  if (caps.profileMetadata) loadProfile()
+  if (caps.oauth) loadIdentities()
+  if (caps.mfa) loadMfaStatus()
 })
 </script>
 
@@ -332,7 +339,7 @@ onMounted(() => {
       </section>
 
       <!-- Personal Information -->
-      <section class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <section v-if="caps.profileMetadata" class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <h2 class="mb-1 text-base font-semibold text-slate-900 dark:text-slate-100">Personal information</h2>
         <p class="mb-4 text-sm text-slate-500 dark:text-slate-400">Optional. Used for personalisation within the app.</p>
 
@@ -366,8 +373,9 @@ onMounted(() => {
         </form>
       </section>
 
-      <!-- Authentication Methods -->
-      <section class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <!-- Authentication Methods: linked providers and changing the sign-in
+           address, both of which only a hosted provider offers. -->
+      <section v-if="caps.oauth || caps.emailChange" class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <h2 class="mb-4 text-base font-semibold text-slate-900 dark:text-slate-100">Authentication Methods</h2>
 
         <p v-if="emailChangeError" class="mb-3 text-sm text-rose-700 dark:text-rose-300">{{ emailChangeError }}</p>
@@ -497,7 +505,7 @@ onMounted(() => {
       </section>
 
       <!-- Two-Factor Authentication -->
-      <section class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <section v-if="caps.mfa" class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <h2 class="mb-1 text-base font-semibold text-slate-900 dark:text-slate-100">Two-Factor Authentication</h2>
         <p class="mb-4 text-sm text-slate-500 dark:text-slate-400">
           Only applies to magic link sign-in. Google/GitHub sign-in is already secured by that provider's own account.
