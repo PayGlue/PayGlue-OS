@@ -95,6 +95,30 @@ class TestTheGate:
         assert UserProfile.objects.count() == 0
 
 
+    def test_two_at_once_cannot_both_become_the_first_account(self, local_mode) -> None:
+        """The gate is a unique index, not a branch.
+
+        Checking an empty table and then inserting leaves a window: two
+        requests arriving together both find it empty. This asserts the thing
+        that closes the window, which is the database refusing the second
+        write, because that is what holds no matter how the two requests are
+        interleaved.
+        """
+        from django.db import IntegrityError
+
+        local_identity.create_user("first@example.com", GOOD_PASSWORD, first_account=True)
+        with pytest.raises(IntegrityError):
+            local_identity.create_user("second@example.com", GOOD_PASSWORD, first_account=True)
+
+    def test_an_invited_account_does_not_claim_the_slot(self, local_mode) -> None:
+        # Everyone after the first is created without the flag, so the index
+        # never gets in the way of ordinary invitations.
+        local_identity.create_user("first@example.com", GOOD_PASSWORD, first_account=True)
+        local_identity.create_user("second@example.com", GOOD_PASSWORD)
+        local_identity.create_user("third@example.com", GOOD_PASSWORD)
+        assert UserProfile.objects.count() == 3
+
+
 class TestNotThereWhenSwitchedOff:
     """On the hosted product these routes must not exist."""
 
@@ -233,6 +257,36 @@ class TestTokens:
         profile.delete()
         with pytest.raises(InvalidAuthTokenError):
             LocalAuthTokenVerifier().verify(token)
+
+
+    def test_a_token_without_an_expiry_is_refused(self, local_mode) -> None:
+        # Nothing can mint one without the signing key, so this is about
+        # keeping a promise rather than closing a hole: every token we issue
+        # carries an expiry, so every token we accept must carry one.
+        import base64
+        import hashlib
+        import hmac
+        import json
+
+        def b64(raw: bytes) -> str:
+            return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+        profile = local_identity.create_user("owner@example.com", GOOD_PASSWORD)
+        payload = {
+            "iss": local_identity.ISSUER,
+            "sub": profile.firebase_uid,
+            "email": profile.email,
+            "pwd": local_identity.password_fingerprint(profile.password),
+        }
+        header = b64(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+        body = b64(json.dumps(payload).encode())
+        sig = b64(
+            hmac.new(
+                local_identity._signing_key(), f"{header}.{body}".encode(), hashlib.sha256
+            ).digest()
+        )
+        with pytest.raises(InvalidAuthTokenError):
+            LocalAuthTokenVerifier().verify(f"{header}.{body}.{sig}")
 
 
 class TestChangingThePassword:

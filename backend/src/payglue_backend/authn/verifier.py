@@ -264,6 +264,13 @@ class LocalAuthTokenVerifier:
         payload = _decode_jwt_payload(payload_b64)
         if payload.get("iss") != local_identity.ISSUER:
             raise InvalidAuthTokenError
+        # _extract_claims only compares `exp` when there is one, which means a
+        # token without the claim would never expire. Nothing can mint such a
+        # token without the signing key, so this is not a hole so much as a
+        # promise worth keeping: every token we issue has one, so every token
+        # we accept must have one.
+        if not isinstance(payload.get("exp"), (int, float)):
+            raise InvalidAuthTokenError
 
         claims = _extract_claims(payload)
 
