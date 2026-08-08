@@ -69,7 +69,10 @@ Self-hosting is free, no license fee, no catch. You need Docker, a running Ghost
 ```bash
 git clone https://github.com/PayGlue/PayGlue-OS.git
 cd PayGlue-OS
-cp .env.example .env   # fill in secrets, every variable is annotated
+cp .env.example .env
+# One value has to be filled in before anything starts, the key that encrypts
+# stored provider credentials. .env tells you the command; it is one line.
+# Ports already in use? Set POSTGRES_HOST_PORT and friends in the same file.
 docker compose up -d postgres redis
 docker compose run --rm web python manage.py migrate
 docker compose up -d
@@ -116,8 +119,6 @@ Live: **Polar, Lemon Squeezy, PayPal, Gumroad, Paddle, Ko-fi, Creem, Patreon.** 
 <p align="center">
   <img src=".github/assets/provider-config.png" alt="Configuring a payment provider in the PayGlue dashboard" width="720" />
 </p>
-
-On hold: **Mollie.** Its recurring model needs per-creator subscription code, which doesn't fit the webhook-relay approach. We tried. Mollie won.
 
 Missing yours? [Open a discussion](https://github.com/PayGlue/PayGlue-OS/discussions). Provider order is largely decided by who asks, so ask.
 

@@ -1,3 +1,7 @@
+# Host ports come from the environment so a machine that already runs Postgres
+# or Redis does not need this file edited. An override file cannot fix it:
+# Compose appends port lists rather than replacing them, so a second entry ends
+# up beside the first and the clash remains.
 services:
   postgres:
     image: postgres:16-alpine
@@ -6,7 +10,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - ghost_glue_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +22,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_HOST_PORT:-6379}:6379"
     volumes:
       - ghost_glue_redis_data:/data
 
@@ -28,7 +32,7 @@ services:
       dockerfile: Dockerfile
     command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
     ports:
-      - "8000:8000"
+      - "${BACKEND_HOST_PORT:-8000}:8000"
     environment:
       DJANGO_SETTINGS_MODULE: payglue_backend.config.settings
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ghost_glue
@@ -61,7 +65,7 @@ services:
       - ./frontend:/app
       - /app/node_modules
     ports:
-      - "5173:5173"
+      - "${FRONTEND_HOST_PORT:-5173}:5173"
     environment:
       VITE_API_BASE_URL: ''
       VITE_DEV_PROXY_TARGET: http://web:8000
