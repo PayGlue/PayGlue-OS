@@ -30,6 +30,13 @@ export interface AuthCapabilities {
   emailChange: boolean
   /** Sign in with a password. */
   passwordSignIn: boolean
+  /**
+   * The provider stores a profile alongside the account (first and last name).
+   * Local accounts do not: the backend keeps an address and a password hash
+   * and nothing else, and inventing a place for a display name is more than
+   * this seam should decide.
+   */
+  profileMetadata: boolean
 }
 
 export interface AuthSession {
@@ -61,6 +68,7 @@ export const capabilities = (): AuthCapabilities =>
         mfa: true,
         emailChange: true,
         passwordSignIn: true,
+        profileMetadata: true,
       }
     : {
         magicLink: false,
@@ -68,6 +76,7 @@ export const capabilities = (): AuthCapabilities =>
         mfa: false,
         emailChange: false,
         passwordSignIn: true,
+        profileMetadata: false,
       }
 
 /**
