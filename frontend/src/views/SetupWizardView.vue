@@ -188,6 +188,54 @@ const stillNeedsSetup = computed(() => installationNeedsSetup())
             </p>
           </div>
 
+          <!-- Signed by name on purpose. PG-239 took personal attribution out
+               of code comments and seeded data, where it had no business being;
+               a letter from the person who built the thing is the opposite
+               case, and unsigned it would be worth nothing. -->
+          <div class="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-4 text-[13px] leading-relaxed text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+            <p class="mb-2 font-semibold text-slate-900 dark:text-slate-100">A letter from the founder</p>
+            <p class="mb-2">
+              I run my own Ghost blogs and wanted to take payments through providers other than
+              Stripe. Ghost said no. So I built the relay I wanted: your payment provider on one
+              side, Ghost memberships on the other, and nobody asked to sign up twice in between.
+            </p>
+            <p class="mb-2">
+              You are looking at all of it. This is the same code that runs the hosted product,
+              and it is public because a tool sitting between your readers and their money is one
+              you should be able to read. What we hold ourselves to while handling it is written
+              down as well:
+              <a href="https://payglue.io/security" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">our security manifest</a>.
+            </p>
+            <p class="mb-2">
+              If you want to know more:
+              <a href="https://payglue.io" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">payglue.io</a>,
+              the
+              <a href="https://blog.payglue.io" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">blog</a>,
+              where we write about what shipped and what we reconsidered, and the
+              <a href="https://docs.payglue.io" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">documentation</a>.
+            </p>
+            <p class="mb-2">
+              The code lives at
+              <a href="https://github.com/PayGlue/PayGlue-OS" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">github.com/PayGlue/PayGlue-OS</a>,
+              with issues and pull requests open. CONTRIBUTING.md says what helps most, and a bug
+              report from a real installation is worth as much as a patch.
+            </p>
+            <p class="mb-2">
+              <span class="block font-semibold text-slate-900 dark:text-slate-100">Let&rsquo;s connect:</span>
+              <a href="https://x.com/PayGlue_io" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">X</a>,
+              <a href="https://www.threads.com/@payglue.io" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">Threads</a>,
+              <a href="https://bsky.app/profile/payglue.bsky.social" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">Bluesky</a>
+              or find me on
+              <a href="https://mastodon.social/@payglue" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">Mastodon</a>.
+            </p>
+            <p class="mb-2 font-semibold text-slate-500 dark:text-slate-400">#BuildInPublic</p>
+            <p class="mt-3">
+              Have fun exploring!<br />
+              Cheers,<br />
+              <em>André</em>
+            </p>
+          </div>
+
           <div class="mt-7 flex">
             <button
               type="button"
