@@ -2,7 +2,27 @@
 // Licensed under the Business Source License 1.1, see LICENSE.md
 
 <script setup lang="ts">
-defineProps<{ size?: 'sm' | 'md' | 'lg'; dark?: boolean }>()
+// `theme` decides the colour of the "Glue" half of the wordmark. "Pay" is the
+// brand indigo on every ground and never changes.
+//
+//   light  the default, for the marketing and auth pages, which stay light
+//          whatever the dark mode toggle says
+//   dark   for a permanently dark surface, such as the footer or the sidebar
+//   auto   follows the toggle, for screens that carry `dark:` utilities
+//
+// The default is deliberately not "auto": a page without `dark:` utilities
+// keeps its white background when the toggle is on, and an auto wordmark would
+// turn white on white and leave the logo reading "Pay".
+withDefaults(
+  defineProps<{ size?: 'sm' | 'md' | 'lg'; theme?: 'light' | 'dark' | 'auto' }>(),
+  { size: 'md', theme: 'light' },
+)
+
+const WORDMARK_CLASS = {
+  light: 'text-slate-900',
+  dark: 'text-white',
+  auto: 'text-slate-900 dark:text-white',
+} as const
 </script>
 
 <template>
@@ -17,7 +37,7 @@ defineProps<{ size?: 'sm' | 'md' | 'lg'; dark?: boolean }>()
       </svg>
     </span>
     <span class="font-extrabold tracking-tight" :class="size === 'sm' ? 'text-sm' : size === 'lg' ? 'text-2xl' : 'text-base'">
-      <span class="text-indigo-600">Pay</span><span :class="dark ? 'text-white' : 'text-slate-900'">Glue</span>
+      <span class="text-indigo-600">Pay</span><span :class="WORDMARK_CLASS[theme]">Glue</span>
     </span>
   </span>
 </template>
