@@ -36,6 +36,7 @@ import uuid
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
+from django.db import transaction
 from django.utils import timezone
 
 from payglue_backend.authn.invitations import normalize_email
@@ -149,7 +150,7 @@ def installation_has_users() -> bool:
     return UserProfile.objects.exists()
 
 
-def create_user(email: str, password: str) -> UserProfile:
+def create_user(email: str, password: str, *, first_account: bool = False) -> UserProfile:
     """Creates a local account. Does NOT decide whether one may be created.
 
     The gate lives in the callers: bootstrap_first_user() for the very first
@@ -161,6 +162,7 @@ def create_user(email: str, password: str) -> UserProfile:
         firebase_uid=f"{UID_PREFIX}{uuid.uuid4().hex}",
         email=normalized,
         password=make_password(password),
+        is_first_account=first_account,
     )
     return profile
 
@@ -176,9 +178,16 @@ def bootstrap_first_user(email: str, password: str) -> UserProfile:
     """
     if not is_enabled():
         raise LocalAuthDisabled
-    if installation_has_users():
-        raise LocalAuthError("This installation already has an account.")
-    return create_user(email, password)
+    with transaction.atomic():
+        # The read is only the fast path, and on its own it is a race: two
+        # requests arriving together both find the table empty and both go on
+        # to insert. What settles it is the unique index behind
+        # is_first_account, which lets exactly one of them commit and hands the
+        # other an IntegrityError. The caller turns that into the same answer a
+        # latecomer gets.
+        if installation_has_users():
+            raise LocalAuthError("This installation already has an account.")
+        return create_user(email, password, first_account=True)
 
 
 class _ProfileTokenGenerator(PasswordResetTokenGenerator):
@@ -208,11 +217,13 @@ def check_reset_token(profile: UserProfile, token: str) -> bool:
 
 
 def reset_identifier(profile: UserProfile) -> str:
-    """The opaque part of a reset link that names the account.
+    """The part of a reset link that names the account.
 
-    Not the primary key in the clear: a reset link ends up in mail archives and
-    browser history, and a sequential id there is an invitation to try the
-    neighbouring numbers.
+    This is the primary key, base64 of it and nothing more, so treat it as
+    guessable. It carries no security: the token beside it does, and that one
+    is an HMAC over the secret key, the stored password hash and the last sign
+    in. Knowing which account a link is for buys an attacker nothing without
+    it.
     """
     return base64.urlsafe_b64encode(str(profile.pk).encode()).decode().rstrip("=")
 

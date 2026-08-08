@@ -108,6 +108,12 @@ class UserProfile(models.Model):
     # Read by Django's password-reset token generator, which folds it into the
     # hash so a token stops working once it has been used to sign in.
     last_login = models.DateTimeField(null=True, blank=True)
+    # True on the one account a fresh installation creates for itself, and the
+    # constraint below is what actually enforces "one". Checking an empty table
+    # and then inserting leaves a window in which two requests both find it
+    # empty; a unique index has no such window, because the second insert is
+    # refused by the database rather than by a branch that already ran.
+    is_first_account = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -130,6 +136,15 @@ class UserProfile(models.Model):
         """
         billing_account = getattr(self, "billing_account", None)
         return billing_account is not None and billing_account.cancellation_detected_at is None
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["is_first_account"],
+                condition=models.Q(is_first_account=True),
+                name="only_one_bootstrap_account",
+            )
+        ]
 
     def __str__(self) -> str:
         return self.email
