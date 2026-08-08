@@ -4,6 +4,96 @@ All notable changes to PayGlue-OS. The hosted product at
 [payglue.io](https://payglue.io) runs the same code and keeps its own,
 customer-facing changelog at [payglue.io/changelog](https://payglue.io/changelog).
 
+## v0.4.0 — 2026-08-08
+
+You can run this without signing up for anything.
+
+Until now, starting your own copy meant creating a Supabase project first.
+Without one the application threw while loading, so it never reached a screen
+at all. That was a strange first requirement for software you were about to
+run on your own machine, and it is gone.
+
+### Accounts that live in your installation
+
+Set `LOCAL_AUTH_ENABLED=1`, which `docker-compose.yml` now does by default,
+and the accounts live in your own database. Django hashes the passwords,
+Django's token generator carries the reset links, and the API issues the same
+kind of bearer token it always did.
+
+This is a branch, not a fork. `get_auth_token_verifier()` already chose
+between four implementations behind one protocol; local accounts are the
+fifth. A local token arrives in the same header and resolves to the same
+profile through the same invite gate, so nothing downstream can tell the two
+apart.
+
+Choosing a hosted identity provider still works exactly as before, and adds
+what only such a provider can: authenticator apps, magic links, and sign-in
+with Google or GitHub. Screens for those are hidden where there is nothing
+behind them, rather than shown and broken.
+
+### Setup on first run
+
+A fresh installation opens a two-step wizard instead of a sign-in page it has
+no key for: pick how sign-in works, create the first account. Everything after
+that is the publication and Ghost screens that were always there.
+
+The wizard closes for good once an account exists, and that is decided by
+counting rows in your database, never by anything the browser sends. Everyone
+after the first person arrives by invitation.
+
+### What the first run taught us
+
+This release was installed twice from a clean clone before it shipped, and
+that found things no test had:
+
+- **The quickstart broke the install.** `.env.example` shipped a placeholder
+  encryption key that is not a valid key, and it overrode the working default
+  in `docker-compose.yml`. Copying the example file, step one of the guide,
+  left you worse off than skipping it. The value now ships empty with the
+  command to generate one beside it.
+- **Host ports could not be changed** without editing a tracked file. Compose
+  appends port lists rather than replacing them, so an override file does not
+  help. They now come from the environment, with the same defaults.
+
+### Also in this release
+
+- **Two-factor for everyone**: `X-Frame-Options` was missing from every
+  response, including the HTML the embed endpoints serve. The middleware that
+  sets it was simply not in the list.
+- **The full test suite ships**, 176 tests become 579. It used to be a separate
+  hand-maintained copy here, which is how `main` went red for two commits
+  without anyone noticing.
+- **Billing, plans and affiliate screens are gone.** They were the storefront
+  of the hosted service, and you have no subscription with us.
+- **Creating a publication no longer needs PostgREST.**
+- **A race in the setup gate is closed.** Two requests arriving together could
+  both create a first account. A unique index now settles it in the database.
+- The setup guide gained a chapter on signing in, and the wizard carries a
+  short letter about why this project exists.
+
+### Upgrade notes
+
+**Run migrations.** `0044` and `0045` add local credentials and the constraint
+that keeps the first account unique.
+
+Nothing changes for an installation using a hosted identity provider. Leave
+`LOCAL_AUTH_ENABLED` unset or `0` and everything works as before.
+
+## v0.3.0 — 2026-08-06
+
+Nothing phones home any more. A self-hosted install was quietly tied to the
+hosted product: embed snippets carried a fixed `api.payglue.io` address, the
+installed-check compared your site against a hostname you do not own, seeded
+emails were signed with a stranger's name, and product analytics reported to
+a project you have no access to.
+
+Snippets now work out their own backend from the tag they were loaded from,
+the check looks at the path rather than the host, seeded emails arrive
+switched off and carry no name or links, and there is no analytics package in
+the build at all.
+
+**Re-copy your embed snippets** if you pasted any before this release.
+
 ## v0.2.0 — 2026-07-20
 
 The first sync since June, and a big one: the dashboard was rebuilt, the
