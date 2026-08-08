@@ -4,7 +4,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { supabase } from './lib/supabase'
+import { onAuthStateChange } from './lib/authProvider'
 import { useSessionStore } from './stores/session'
 import { appBaseUrl } from './lib/publicUrls'
 
@@ -25,8 +25,8 @@ const tenantViewKey = computed(() => {
 let unsubscribe: (() => void) | null = null
 
 onMounted(() => {
-  const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, supabaseSession) => {
-    if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && supabaseSession) {
+  unsubscribe = onAuthStateChange(async (event) => {
+    if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
       await session.bootstrap()
       if (event === 'SIGNED_IN') {
         // Was a literal host, so a self-hosted dashboard never redirected to
@@ -45,7 +45,6 @@ onMounted(() => {
       router.replace({ name: 'login' })
     }
   })
-  unsubscribe = () => subscription.unsubscribe()
 })
 
 onUnmounted(() => {

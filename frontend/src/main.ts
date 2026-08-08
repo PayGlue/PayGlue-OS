@@ -13,6 +13,7 @@ import App from './App.vue'
 import router from './router'
 import { setAuthErrorHandler } from './lib/api'
 import { useSessionStore } from './stores/session'
+import { detectAuthMode } from './lib/authProvider'
 
 ;(async () => {
   const app = createApp(App)
@@ -28,6 +29,11 @@ import { useSessionStore } from './stores/session'
 
   // Bootstrap session before installing the router so the initial navigation
   // guard already sees the authenticated state and doesn't redirect to login.
+  // Which identity provider this installation uses has to be settled before
+  // anything asks for a session, because the answer decides where that session
+  // comes from. The backend is the one that knows.
+  await detectAuthMode()
+
   await session.bootstrap()
 
   app.use(router)

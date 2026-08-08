@@ -5,6 +5,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
 vi.mock('../../lib/supabase', () => ({
+  // The module exports this too since PG-237; a partial mock makes the import
+  // in authProvider.ts fail before a single test runs.
+  supabaseConfigured: true,
   supabase: {
     auth: {
       getSession: vi.fn(),

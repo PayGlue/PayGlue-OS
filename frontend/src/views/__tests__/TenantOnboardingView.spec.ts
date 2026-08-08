@@ -24,10 +24,21 @@ vi.mock('../../lib/supabase', () => {
     return { insert: insertTenant, select }
   })
   return {
+    // See the note in session.spec.ts: the module gained this export with
+    // PG-237, and a mock that omits it breaks the import chain.
+    supabaseConfigured: true,
     supabase: {
       auth: {
-        getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'uid-1' } } }),
-        getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'sb-token' } } }),
+        // The session carries a user since PG-237: the view reads the id off
+        // it rather than making a second getUser() call.
+        getSession: vi.fn().mockResolvedValue({
+          data: {
+            session: {
+              access_token: 'sb-token',
+              user: { id: 'uid-1', email: 'owner@example.com' },
+            },
+          },
+        }),
       },
       from,
     },
@@ -56,9 +67,10 @@ describe('TenantOnboardingView', () => {
     vi.mocked(api.get).mockResolvedValue({ data: { available: true } } as any)
     __mocks.insertTenant.mockResolvedValue({ error: null })
     __mocks.insertMember.mockResolvedValue({ error: null })
-    vi.mocked(supabase.auth.getUser).mockResolvedValue({ data: { user: { id: 'uid-1' } } } as any)
     vi.mocked(supabase.auth.getSession).mockResolvedValue({
-      data: { session: { access_token: 'sb-token' } },
+      data: {
+        session: { access_token: 'sb-token', user: { id: 'uid-1', email: 'owner@example.com' } },
+      },
     } as any)
 
     const session = useSessionStore()
@@ -108,6 +120,54 @@ describe('TenantOnboardingView', () => {
       expect(session.activeTenantSlug).toBe('acme-corp')
       expect(screen.getByText(/connect your ghost blog/i)).toBeInTheDocument()
     })
+  })
+
+  it('writes nothing to PostgREST where there is none (PG-237)', async () => {
+    // An installation that keeps its own accounts has no Supabase project, so
+    // the two legacy mirror writes must not even be attempted. The record that
+    // counts, the one the backend makes, still gets written.
+    const { detectAuthMode } = await import('../../lib/authProvider')
+    vi.mocked(api.get).mockImplementation(async (url: string) =>
+      url.includes('/auth/local/status')
+        ? ({ data: { enabled: true, needs_setup: false } } as any)
+        : ({ data: { available: true } } as any),
+    )
+    await detectAuthMode()
+    localStorage.setItem(
+      'payglue.local.session',
+      JSON.stringify({
+        accessToken: 'local-token',
+        userId: 'local:1',
+        email: 'owner@example.com',
+        expiresAt: Math.floor(Date.now() / 1000) + 3600,
+      }),
+    )
+    vi.mocked(createTenant).mockResolvedValue({ tenant_slug: 'acme-corp' } as any)
+    const session = useSessionStore()
+    session.bootstrap = vi.fn(async () => true)
+
+    const router = buildRouter()
+    router.push('/tenant/create')
+    await router.isReady()
+
+    render(TenantOnboardingView, { global: { plugins: [router] } })
+
+    await fireEvent.update(screen.getByPlaceholderText('Acme Media'), 'Acme Corp')
+    await waitFor(() => {
+      expect(screen.getByText('Available')).toBeInTheDocument()
+    })
+    await fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+
+    await waitFor(() => {
+      expect(createTenant).toHaveBeenCalledWith('local-token', { slug: 'acme-corp' })
+    })
+    expect(__mocks.insertTenant).not.toHaveBeenCalled()
+    expect(__mocks.insertMember).not.toHaveBeenCalled()
+
+    // Put the module back for whatever runs next.
+    vi.mocked(api.get).mockResolvedValue({ data: { available: true } } as any)
+    await detectAuthMode()
+    localStorage.clear()
   })
 
   it('shows API errors inline when tenant creation fails', async () => {

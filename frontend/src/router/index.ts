@@ -13,6 +13,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteLocationNormalized } from 'vue-router'
 import { useSessionStore } from '../stores/session'
+import { capabilities } from '../lib/authProvider'
 import { supabase } from '../lib/supabase'
 
 const LoginView = () => import('../views/LoginView.vue')
@@ -329,7 +330,10 @@ router.beforeEach(async (to) => {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
 
-  if (to.name !== 'auth-mfa-challenge') {
+  // Only asked where authenticator apps exist at all. An installation that
+  // keeps its own accounts has no second factor to step up to, and asking
+  // would mean reaching for an SDK that is not configured.
+  if (capabilities().mfa && to.name !== 'auth-mfa-challenge') {
     const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
     if (aal && aal.nextLevel === 'aal2' && aal.currentLevel !== 'aal2') {
       return { name: 'auth-mfa-challenge' }

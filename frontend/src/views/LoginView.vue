@@ -6,6 +6,7 @@ import { computed, ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import Turnstile from 'cfturnstile-vue3'
 import loginHeroImage from '../assets/login-hero.jpg'
+import { capabilities, signInWithPassword } from '../lib/authProvider'
 import { supabase } from '../lib/supabase'
 import { usesPasswordSignIn } from '../lib/passwordSignIn'
 import { useSessionStore } from '../stores/session'
@@ -62,13 +63,16 @@ const signInWithOAuth = async (provider: 'google' | 'github') => {
   // nothing further to do here.
 }
 
-// Configured through VITE_PASSWORD_SIGNIN_EMAILS, empty unless an operator
-// names addresses. See lib/passwordSignIn.ts for the reasoning and the syntax.
-const isDevEmail = computed(() => usesPasswordSignIn(email.value))
+// Two ways to end up on the password form. Either the installation keeps its
+// own accounts and has no magic link to send (PG-237), or the address is one
+// the operator named through VITE_PASSWORD_SIGNIN_EMAILS. See
+// lib/passwordSignIn.ts for the reasoning and the syntax.
+const caps = capabilities()
+const usesPassword = computed(() => !caps.magicLink || usesPasswordSignIn(email.value))
 
 const canSubmit = computed(() => {
   if (!email.value.trim().includes('@')) return false
-  if (isDevEmail.value) return password.value.length > 0
+  if (usesPassword.value) return password.value.length > 0
   return Boolean(captchaToken.value)
 })
 
@@ -77,14 +81,16 @@ const submit = async () => {
   error.value = null
   isSending.value = true
 
-  if (isDevEmail.value) {
-    const { error: authError } = await supabase.auth.signInWithPassword({
-      email: email.value.trim(),
-      password: password.value,
-      options: { captchaToken: captchaToken.value! },
-    })
+  if (usesPassword.value) {
+    try {
+      await signInWithPassword(email.value.trim(), password.value)
+    } catch (authError) {
+      isSending.value = false
+      error.value = authError instanceof Error ? authError.message : 'Email or password is incorrect.'
+      failedAttempts.value++
+      return
+    }
     isSending.value = false
-    if (authError) { error.value = authError.message; failedAttempts.value++; return }
     await session.bootstrap()
     router.replace({ name: 'tenant-select' })
     return
@@ -174,10 +180,10 @@ const backToEmail = () => {
 
           <h1 class="text-3xl font-bold tracking-tight text-slate-900">Sign in</h1>
           <p v-if="!sent" class="mt-2 text-sm text-slate-500">
-            {{ isDevEmail ? 'Dev account detected. Sign in with your password.' : "Enter your email and we'll send a magic link." }}
+            {{ usesPassword ? 'Sign in with your email and password.' : "Enter your email and we'll send a magic link." }}
           </p>
 
-          <div v-if="!sent" class="mt-8 space-y-3">
+          <div v-if="!sent && caps.oauth" class="mt-8 space-y-3">
             <button
               type="button"
               :disabled="oauthLoading !== null"
@@ -219,7 +225,7 @@ const backToEmail = () => {
               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
             />
                     <input
-              v-if="isDevEmail"
+              v-if="usesPassword"
               v-model="password"
               type="password"
               placeholder="Password"
@@ -227,6 +233,7 @@ const backToEmail = () => {
               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
             />
             <Turnstile
+              v-if="!usesPassword"
               :sitekey="siteKey"
               theme="light"
               size="flexible"
@@ -239,7 +246,7 @@ const backToEmail = () => {
               :disabled="!canSubmit || isSending"
               class="w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50"
             >
-              {{ isSending ? (isDevEmail ? 'Signing in...' : 'Sending...') : (isDevEmail ? 'Sign in' : 'Sign in with email') }}
+              {{ isSending ? (usesPassword ? 'Signing in...' : 'Sending...') : (usesPassword ? 'Sign in' : 'Sign in with email') }}
             </button>
           </form>
 
