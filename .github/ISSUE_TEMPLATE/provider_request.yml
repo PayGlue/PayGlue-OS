@@ -1,0 +1,58 @@
+name: Payment provider request
+description: Ask for a provider that is not supported yet, or offer to build one
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Providers are adapters. Each one does two things: verify the webhook signature, and translate the provider's event names into the internal ones. `CONTRIBUTING.md` describes the shape, and the existing adapters are short enough to read in a sitting.
+
+        The questions below are the ones that decide how much work an adapter is. If you do not know an answer, leave it out, a link to the provider's webhook documentation is already most of what we need.
+
+  - type: input
+    id: provider
+    attributes:
+      label: Which provider
+    validations:
+      required: true
+
+  - type: input
+    id: docs
+    attributes:
+      label: Link to their webhook documentation
+      description: The page that describes the events and how they are signed. This is the single most useful thing in the whole form.
+      placeholder: "https://..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: signature
+    attributes:
+      label: How do they sign webhooks
+      description: HMAC over the raw body, a public key signature, a verification endpoint you call back, or nothing at all. If you do not know, say so.
+
+  - type: textarea
+    id: events
+    attributes:
+      label: Which events matter
+      description: What the provider sends on a completed payment, on a subscription starting, and on one ending or failing.
+
+  - type: dropdown
+    id: recurring
+    attributes:
+      label: Does it do subscriptions, or one-off payments only
+      options:
+        - Both
+        - Subscriptions only
+        - One-off payments only
+        - Not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Can you help
+      options:
+        - label: I have an account with this provider and can test against it
+        - label: I would like to write the adapter myself

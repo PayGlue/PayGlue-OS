@@ -1,0 +1,34 @@
+name: Self-hosting question
+description: Something in the setup is unclear or does not add up
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Questions are welcome. If the answer turns out to be missing from `SETUP.md`, that is a documentation bug on our side and the issue is doing its job.
+
+        Same request as everywhere else: no API keys, webhook secrets, tokens or customer data in the text.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do
+      description: Where you got to, and where it stopped making sense.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Your setup
+      description: How you run it and which versions, including your Ghost version.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: read
+    attributes:
+      label: Already checked
+      options:
+        - label: I read the part of SETUP.md that covers this
+        - label: I searched the existing issues

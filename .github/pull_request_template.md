@@ -1,25 +1,19 @@
-## Summary
+## What this changes
 
--
+<!-- One or two sentences. If it closes an issue, write "Closes #123". -->
 
-## Linear Issue
+## Why
 
-- Issue: `GOGU-___`
-- Link: 
-- Relationship: `Closes GOGU-___` or `Refs GOGU-___`
+<!-- The reasoning, especially if the obvious approach turned out to be wrong. -->
 
-## Scope
+## How it was checked
 
-- [ ] Planned work from an existing Linear issue
-- [ ] Follow-up issue created for newly discovered work
+<!-- What you ran, and against what. If you tested a payment path, say whether it was a real payment, a sandbox one or a replayed webhook. -->
 
-## Validation
+## Before merging
 
-- [ ] Relevant tests run
-- [ ] Docs updated (if behavior changed)
-
-## Merge checklist
-
-- [ ] PR title includes the Linear key (example: `GOGU-7 Improve retry handling`)
-- [ ] At least one commit includes the Linear key
-- [ ] PR body includes magic-word reference (example: `Closes GOGU-7` or `Refs GOGU-7`)
+- [ ] Tests run and pass
+- [ ] New behaviour has a test
+- [ ] Docs updated if the setup or configuration changed
+- [ ] No secrets, tokens or customer data in the diff
+- [ ] New payment provider? Adapter, registration, unit tests and a setup section are all included

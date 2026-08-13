@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security problem
+    url: https://github.com/PayGlue/PayGlue-OS/blob/main/SECURITY.md
+    about: Please do not open a public issue. SECURITY.md has the private disclosure process.
+  - name: You are using the hosted product
+    url: mailto:team@payglue.io
+    about: Questions about your own account, billing or a payment that did not go through are faster over email than in a public issue.
+  - name: Documentation
+    url: https://docs.payglue.io
+    about: Setup guides and the provider walkthroughs.

@@ -1,0 +1,74 @@
+name: Bug report
+description: Something does not work the way it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. One thing before you start: this repository deals with payment webhooks, so almost anything you copy out of a log may carry live data. Please remove API keys, webhook secrets, tokens, customer names and email addresses before you paste. An anonymised payload makes the same point.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where does it happen
+      options:
+        - Webhook ingestion (a payment arrives and nothing happens, or the wrong thing)
+        - Ghost membership (access granted, revoked or labelled incorrectly)
+        - Dashboard
+        - Embedded scripts (paywall or buy button on the Ghost site)
+        - Setup, deployment or configuration
+        - Somewhere else, or not sure
+    validations:
+      required: true
+
+  - type: input
+    id: provider
+    attributes:
+      label: Which payment provider is involved
+      description: Name the provider, or write "none" if the problem has nothing to do with one.
+      placeholder: "The provider you were using when this happened"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce it
+      description: The steps you took. A real purchase, a test payment, a replayed webhook, whatever it was.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error output
+      description: The relevant part only, with secrets and customer data removed.
+      render: shell
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Your setup
+      description: How you run it and which versions. Docker, a platform, bare metal, plus your Ghost version.
+      placeholder: |
+        Deployment: Docker Compose
+        Ghost: 5.x
+        Python: 3.12
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed API keys, webhook secrets, tokens and customer data from everything I pasted
+          required: true
