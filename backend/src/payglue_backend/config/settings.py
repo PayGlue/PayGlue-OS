@@ -312,13 +312,18 @@ SYSTEM_NOTICE_FROM_EMAIL = (
 # means the notices are skipped.
 INTERNAL_ADMIN_EMAIL = os.environ.get("INTERNAL_ADMIN_EMAIL", "")
 
-# Support requests from the dashboard open an issue on this Linear team, so a
-# request has a reference number without us paying for Linear Ask. All three
-# are optional: unset, support still works and simply has no ticket number.
-LINEAR_API_KEY = os.environ.get("LINEAR_API_KEY", "")
-LINEAR_SUPPORT_TEAM_ID = os.environ.get("LINEAR_SUPPORT_TEAM_ID", "")
-LINEAR_SUPPORT_LABEL_ID = os.environ.get("LINEAR_SUPPORT_LABEL_ID", "")
-LINEAR_SUPPORT_PROJECT_ID = os.environ.get("LINEAR_SUPPORT_PROJECT_ID", "")
+# Support requests from the dashboard open an issue in this tracker project, so
+# a request carries a reference number both sides can name. All of these are
+# optional: unset, support still works and simply has no ticket number.
+#
+# The token inherits the permissions of whoever created it, and the API has no
+# scopes. Create it on an account that is a plain member of the support project
+# and nothing else, never on an admin account.
+PLANE_BASE_URL = os.environ.get("PLANE_BASE_URL", "")
+PLANE_API_KEY = os.environ.get("PLANE_API_KEY", "")
+PLANE_WORKSPACE_SLUG = os.environ.get("PLANE_WORKSPACE_SLUG", "")
+PLANE_SUPPORT_PROJECT_ID = os.environ.get("PLANE_SUPPORT_PROJECT_ID", "")
+PLANE_SUPPORT_LABEL_ID = os.environ.get("PLANE_SUPPORT_LABEL_ID", "")
 
 # PG-194 (GDPR): webhook event logs (which hold end-customer PII in the raw
 # provider payload) and public audit events are auto-purged after this many
