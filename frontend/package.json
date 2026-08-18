@@ -12,7 +12,7 @@
   "dependencies": {
     "@headlessui/vue": "^1.7.23",
     "@heroicons/vue": "^2.2.0",
-    "@supabase/supabase-js": "^2.111.0",
+    "@supabase/supabase-js": "^2.112.3",
     "axios": "^1.19.0",
     "cfturnstile-vue3": "^2.0.0",
     "pinia": "^3.0.4",
