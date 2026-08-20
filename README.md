@@ -4,7 +4,7 @@
 
 <h1 align="center">PayGlue-OS</h1>
 
-<p align="center"><b>Sell Ghost memberships with any payment provider, not just Stripe.</b></p>
+<p align="center"><b>Sell Ghost memberships with your payment provider, not just Stripe.</b></p>
 
 <p align="center">
   <a href="https://github.com/PayGlue/PayGlue-OS/releases"><img src="https://img.shields.io/github/v/release/PayGlue/PayGlue-OS" alt="Latest release"></a>
