@@ -15,7 +15,7 @@
 </p>
 
 ---
-<img width="1280" height="640" alt="payglue-oss" src="https://github.com/user-attachments/assets/b1f19366-a040-4a62-a115-420fedf75c7a" />
+<img width="1280" height="640" alt="PayGlue: sell Ghost memberships with your payment provider" src=".github/assets/social-preview.jpg" />
 
 ## 📝 The Story
 
