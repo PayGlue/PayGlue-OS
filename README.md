@@ -27,6 +27,12 @@ Your existing Stripe setup stays untouched. PayGlue runs next to it and only cov
 
 > **Status:** Open beta. This repo contains the exact code running the hosted product at [payglue.io](https://payglue.io). Rather not run it yourself? The hosted version is the same code, minus the ops. See the [changelog](CHANGELOG.md) for what changed.
 
+## 🎬 Thirty seconds, no sound needed
+
+A purchase at your payment provider, a member in Ghost. That is the whole product, and it fits in half a minute:
+
+[**PayGlue in 30 seconds: Sell Ghost memberships with your payment provider**](https://www.youtube.com/watch?v=Zz10pI13hKY)
+
 ## 👀 See it running before you clone anything
 
 The best pitch is a working paywall. All of these are live, powered by this codebase (yes, we eat our own dog food, it pays our bills):
