@@ -112,9 +112,11 @@ def clear_shared_tenant_billing_links(profile: UserProfile, shared_tenants: list
     not-yet-built flow -- better to leave it unset than to crash the whole
     deletion or silently guess a replacement owner.
 
-    Uses .update(), not .save() per tenant -- Tenant inherits django_tenants'
-    TenantMixin, whose save() re-checks/creates the Postgres schema on every
-    write; a plain FK clear has no business touching that.
+    Uses .update(), not .save() per tenant. The original reason was that
+    Tenant inherited django_tenants' TenantMixin, whose save() re-checked the
+    Postgres schema on every write; PG-273 removed that. It stays as a bulk
+    update because clearing an FK across many rows has no business loading and
+    re-saving each one.
     """
     billing_account: BillingAccount | None = getattr(profile, "billing_account", None)
     if billing_account is None:

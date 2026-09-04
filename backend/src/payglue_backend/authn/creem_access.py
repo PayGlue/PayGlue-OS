@@ -19,6 +19,11 @@ CREEM_TEST_API_BASE = "https://test-api.creem.io"
 @dataclass(frozen=True)
 class AccessValidationResult:
     email: str
+    # PG-298: carried along from the checkout so the signup can remember which
+    # Creem customer and subscription it belongs to. Empty for license-key
+    # validation, which never sees the checkout object.
+    customer_id: str = ""
+    subscription_id: str = ""
 
 
 class CreemAccessError(Exception):
@@ -144,7 +149,21 @@ def validate_checkout(checkout_id: str, api_key: str, sandbox: bool = False) -> 
     if not email:
         raise CreemAccessError("No customer email found for this checkout.")
 
-    return AccessValidationResult(email=email)
+    return AccessValidationResult(
+        email=email,
+        customer_id=creem_reference_id(customer),
+        subscription_id=creem_reference_id(checkout.get("subscription")),
+    )
+
+
+def creem_reference_id(value: object) -> str:
+    """Creem embeds related objects either as a bare id string or as an
+    expanded object with an "id" key, depending on the endpoint and on the
+    expand parameters. Both the webhook and the checkout lookup meet both
+    shapes, so the unwrapping lives here once."""
+    if isinstance(value, dict):
+        value = value.get("id")
+    return str(value) if value else ""
 
 
 def validate_checkout_any_mode(

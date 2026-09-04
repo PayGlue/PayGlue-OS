@@ -1,5 +1,4 @@
 import pytest
-from django_tenants.models import DomainMixin, TenantMixin
 from django.core.exceptions import ValidationError
 
 from payglue_backend.tenants.models import Tenant, TenantMembership, UserProfile
@@ -36,11 +35,16 @@ def test_tenant_slug_rejects_uppercase_and_underscore() -> None:
         tenant.full_clean()
 
 
-def test_tenant_model_is_django_tenants_compatible() -> None:
-    assert issubclass(Tenant, TenantMixin)
-
-
-def test_tenant_domain_model_is_django_tenants_compatible() -> None:
+def test_tenant_domain_keeps_the_columns_the_mixin_used_to_provide() -> None:
+    """PG-273 declared domain, tenant and is_primary locally instead of
+    inheriting django_tenants' DomainMixin. The table must not move: this asserts
+    the shape rather than the ancestry, which is what the two tests it replaces
+    were reaching for."""
     from payglue_backend.tenants.models import TenantDomain
 
-    assert issubclass(TenantDomain, DomainMixin)
+    fields = {f.name: f for f in TenantDomain._meta.get_fields()}
+
+    assert fields["domain"].max_length == 253
+    assert fields["domain"].unique is True
+    assert fields["is_primary"].default is True
+    assert fields["tenant"].remote_field.related_name == "domains"
