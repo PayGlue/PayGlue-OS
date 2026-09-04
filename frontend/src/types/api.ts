@@ -17,6 +17,14 @@ export interface SessionBillingInfo {
   plan: string
   downgrade_detected_at: string | null
   grace_period_ends_at: string | null
+  // PG-298: the three phases of a lapsed subscription. payment_failed_detected_at
+  // while the provider still retries the card, cancellation_detected_at once the
+  // subscription ended (subscription_grace_ends_at is 30 days after it), and
+  // lapsed_at once the grace period ran out and every workspace is paused.
+  payment_failed_detected_at: string | null
+  cancellation_detected_at: string | null
+  subscription_grace_ends_at: string | null
+  lapsed_at: string | null
 }
 
 export interface AuthSessionResponse {
@@ -49,6 +57,11 @@ export interface ProductMapping {
   quantity: number
   is_active: boolean
   metadata: ProductMappingMetadata
+  /**
+   * Every widget currently offering this product, worked out by the server from
+   * the widgets themselves. Read-only, and absent on responses to a write.
+   */
+  used_in?: string[]
 }
 
 export interface TeamMember {
@@ -186,8 +199,25 @@ export interface ServicePin {
 export interface SupportRequestSummary {
   id: number
   reference: string
+  /** What the customer called it. Empty on requests filed before the field existed. */
+  subject: string
   topic: string
   status: 'open' | 'in_progress' | 'done' | 'cancelled'
   status_label: string
   created_at: string
+}
+
+/**
+ * One announcement in the dashboard's notification bell (PG-228).
+ *
+ * `publishedAt` is what the unread dot compares against. It used to be a
+ * length check on a hardcoded array, which meant "the list is not empty" and
+ * was therefore on permanently.
+ */
+export interface ChangelogBellEntry {
+  /** Where this entry sits on the public changelog page, without the hash. */
+  anchor: string
+  title: string
+  body: string
+  publishedAt: string
 }

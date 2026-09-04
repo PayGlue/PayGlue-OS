@@ -9,6 +9,7 @@ mapping is keyed on its product instead of its position.
 import importlib
 
 import pytest
+from django.db import connection
 
 from payglue_backend.webhooks.models import ProductMapping
 
@@ -44,6 +45,28 @@ def _run() -> None:
     migration_module.forwards(apps, None)
 
 
+@pytest.fixture
+def as_the_table_looked_then():
+    """Drop the constraint PG-254 later narrowed.
+
+    This migration ran on a table where `entitlement_key` was part of the unique
+    constraint, so one product legitimately held several rows: `button`,
+    `paywall`, `pricing-tier-1`. That is precisely the state PG-254 went on to
+    forbid, so the tests that set it up have to reproduce the world this
+    migration was written for rather than today's.
+
+    Nothing puts it back, on purpose. Some of these tests end with two rows for
+    one product, which is the correct outcome for this migration and refused by
+    the current one, so re-adding it here would fail. The test transaction rolls
+    back and the constraint returns with it.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "ALTER TABLE webhooks_productmapping "
+            "DROP CONSTRAINT webhooks_unique_product_mapping_rule"
+        )
+
+
 def test_positional_key_becomes_product_derived() -> None:
     row = _mapping(entitlement_key="pricing-tier-2", external_product_id="prod_x")
 
@@ -53,7 +76,7 @@ def test_positional_key_becomes_product_derived() -> None:
     assert row.entitlement_key == "product-prod_x"
 
 
-def test_two_tiers_on_the_same_product_collapse_to_one() -> None:
+def test_two_tiers_on_the_same_product_collapse_to_one(as_the_table_looked_then) -> None:
     # A table with two tiers pointing at the same product produced two rows
     # that granted the same thing. Keyed on the product they become one, and
     # the oldest survives.
@@ -80,7 +103,7 @@ def test_different_products_stay_separate() -> None:
     }
 
 
-def test_button_and_paywall_keys_are_left_alone() -> None:
+def test_button_and_paywall_keys_are_left_alone(as_the_table_looked_then) -> None:
     button = _mapping(entitlement_key="button")
     paywall = _mapping(entitlement_key="paywall")
 
@@ -92,7 +115,7 @@ def test_button_and_paywall_keys_are_left_alone() -> None:
     assert paywall.entitlement_key == "paywall"
 
 
-def test_a_tier_key_does_not_swallow_an_existing_product_key() -> None:
+def test_a_tier_key_does_not_swallow_an_existing_product_key(as_the_table_looked_then) -> None:
     # If a row already carries the target key, the legacy duplicate goes rather
     # than overwriting it, otherwise the constraint would reject the save.
     existing = _mapping(entitlement_key="product-prod_a")

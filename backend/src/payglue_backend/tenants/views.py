@@ -4,6 +4,8 @@ import logging
 import re
 from urllib import parse
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.validators import validate_email
 from django.db import IntegrityError
 from django.db.models import Q
 
@@ -1670,203 +1672,229 @@ class CreemCheckoutSessionView(_PolarBaseMixin, APIView):
     products needed, since success_url is per-session, not per-product."""
 
     def post(self, request: Request, tenant_slug: str) -> Response:
-        from django.conf import settings
-
         try:
             self._require_tenant_context(request, tenant_slug)
         except Tenant.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        return start_plan_checkout(request, support_path=f"/t/{tenant_slug}/support")
 
-        plan_key = request.data.get("plan_key")
-        interval = request.data.get("interval", "monthly")
-        return_url = request.data.get("return_url")
 
-        if plan_key not in {"solo", "studio", "agency"}:
-            return Response({"detail": "Invalid plan_key."}, status=status.HTTP_400_BAD_REQUEST)
-        if interval not in {"monthly", "annual"}:
-            return Response({"detail": "Invalid interval."}, status=status.HTTP_400_BAD_REQUEST)
-        if not return_url or parse.urlparse(return_url).hostname not in _allowed_return_hosts():
-            return Response({"detail": "Invalid return_url."}, status=status.HTTP_400_BAD_REQUEST)
+class AccountPlanCheckoutView(APIView):
+    """PG-298: the same checkout as CreemCheckoutSessionView, without a tenant
+    in the path. An account whose subscription lapsed has every workspace
+    paused, and the tenant middleware answers 404 for a paused workspace, so
+    the tenant-scoped endpoint is out of reach exactly when it is needed.
+    Only the account owner may use it: there is no membership to check
+    without a tenant, and the BillingAccount belongs to one person."""
 
-        plan = Plan.objects.filter(key=plan_key).first()
-        if plan is None:
-            return Response({"detail": "Plan not found."}, status=status.HTTP_404_NOT_FOUND)
-        product_id = plan.creem_product_id_annual if interval == "annual" else plan.creem_product_id
-        if not product_id:
-            return Response(
-                {"detail": "This plan isn't purchasable yet."}, status=status.HTTP_400_BAD_REQUEST
-            )
+    authentication_classes = [SupabaseBearerAuthentication]
+    permission_classes: list[type] = []
 
-        api_key = getattr(settings, "CREEM_API_KEY", "")
-        if not api_key:
-            return Response(
-                {"detail": "Checkout isn't configured."}, status=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
+    def post(self, request: Request) -> Response:
+        profile = getattr(request, "user_profile", None)
+        billing_account = getattr(profile, "billing_account", None) if profile is not None else None
+        if billing_account is None or billing_account.owner_id != profile.id:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        return start_plan_checkout(request, support_path="/tenant/select")
 
-        from payglue_backend.authn.creem_access import (
-            CREEM_API_BASE,
-            CreemAccessError,
-            _post,
-            update_subscription_product,
+
+def start_plan_checkout(request: Request, support_path: str) -> Response:
+    """Switches the caller's Creem subscription in place, or starts a new
+    checkout when there is none alive. Shared by the tenant-scoped and the
+    account-scoped endpoint above; `support_path` only feeds the one error
+    message that points the customer at support."""
+    from django.conf import settings
+
+    plan_key = request.data.get("plan_key")
+    interval = request.data.get("interval", "monthly")
+    return_url = request.data.get("return_url")
+
+    if plan_key not in {"solo", "studio", "agency"}:
+        return Response({"detail": "Invalid plan_key."}, status=status.HTTP_400_BAD_REQUEST)
+    if interval not in {"monthly", "annual"}:
+        return Response({"detail": "Invalid interval."}, status=status.HTTP_400_BAD_REQUEST)
+    if not return_url or parse.urlparse(return_url).hostname not in _allowed_return_hosts():
+        return Response({"detail": "Invalid return_url."}, status=status.HTTP_400_BAD_REQUEST)
+
+    plan = Plan.objects.filter(key=plan_key).first()
+    if plan is None:
+        return Response({"detail": "Plan not found."}, status=status.HTTP_404_NOT_FOUND)
+    product_id = plan.creem_product_id_annual if interval == "annual" else plan.creem_product_id
+    if not product_id:
+        return Response(
+            {"detail": "This plan isn't purchasable yet."}, status=status.HTTP_400_BAD_REQUEST
         )
 
-        billing_account = getattr(request.user_profile, "billing_account", None)
+    api_key = getattr(settings, "CREEM_API_KEY", "")
+    if not api_key:
+        return Response(
+            {"detail": "Checkout isn't configured."}, status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
 
-        # Already on a subscription? Switch it in place -- Creem prorates
-        # correctly (credits/charges the difference) and there's never a
-        # second subscription to accidentally leave running and billing in
-        # parallel (found live: a plain new-checkout-per-switch approach did
-        # exactly that). Only a genuinely first-ever subscription purchase
-        # (no active subscription found at all) falls through to creating a
-        # new checkout session below. Uses the direct-or-search fallback
-        # (not just the direct ID lookup) since a first-ever purchase never
-        # populates creem_subscription_id -- see _creem_subscription_for_switch.
-        direct = _creem_subscription_for_switch(request.user_profile)
-        if direct is not None:
-            existing_sub, existing_api_key, _existing_base_url, existing_sandbox = direct
-            existing_sub_id = existing_sub.get("id")
-            if existing_sub_id and existing_sub.get("status") in {"active", "trialing"}:
-                existing_items = existing_sub.get("items")
-                existing_item_id = (
-                    existing_items[0].get("id")
-                    if isinstance(existing_items, list) and existing_items and isinstance(existing_items[0], dict)
-                    else None
+    from payglue_backend.authn.creem_access import (
+        CREEM_API_BASE,
+        CreemAccessError,
+        _post,
+        update_subscription_product,
+    )
+
+    billing_account = getattr(request.user_profile, "billing_account", None)
+
+    # Already on a subscription? Switch it in place -- Creem prorates
+    # correctly (credits/charges the difference) and there's never a
+    # second subscription to accidentally leave running and billing in
+    # parallel (found live: a plain new-checkout-per-switch approach did
+    # exactly that). Only a genuinely first-ever subscription purchase
+    # (no active subscription found at all) falls through to creating a
+    # new checkout session below. Uses the direct-or-search fallback
+    # (not just the direct ID lookup) since a first-ever purchase never
+    # populates creem_subscription_id -- see _creem_subscription_for_switch.
+    direct = _creem_subscription_for_switch(request.user_profile)
+    if direct is not None:
+        existing_sub, existing_api_key, _existing_base_url, existing_sandbox = direct
+        existing_sub_id = existing_sub.get("id")
+        if existing_sub_id and existing_sub.get("status") in {"active", "trialing"}:
+            existing_items = existing_sub.get("items")
+            existing_item_id = (
+                existing_items[0].get("id")
+                if isinstance(existing_items, list) and existing_items and isinstance(existing_items[0], dict)
+                else None
+            )
+            logger.info(
+                "Switching subscription %s to product %s (item_id=%s, sandbox=%s)",
+                existing_sub_id, product_id, existing_item_id, existing_sandbox,
+            )
+            try:
+                updated = update_subscription_product(
+                    str(existing_sub_id),
+                    existing_api_key,
+                    product_id,
+                    sandbox=existing_sandbox,
+                    item_id=str(existing_item_id) if existing_item_id else None,
                 )
-                logger.info(
-                    "Switching subscription %s to product %s (item_id=%s, sandbox=%s)",
-                    existing_sub_id, product_id, existing_item_id, existing_sandbox,
+                logger.info("Creem update_subscription_product call returned successfully")
+                if billing_account is not None:
+                    billing_account.plan = plan
+                    update_fields = ["plan", "updated_at"]
+                    # Always sync (not just backfill-if-empty) so the next
+                    # switch takes the fast, reliable direct-by-ID path
+                    # instead of needing this fallback search again --
+                    # also self-heals a stale/dead stored ID (e.g. a
+                    # subscription cancelled via the Danger Zone) to the
+                    # real active one this swap just used.
+                    if str(existing_sub_id) != billing_account.creem_subscription_id:
+                        billing_account.creem_subscription_id = str(existing_sub_id)
+                        update_fields.append("creem_subscription_id")
+                    existing_customer = existing_sub.get("customer")
+                    existing_customer_id = (
+                        existing_customer.get("id")
+                        if isinstance(existing_customer, dict)
+                        else existing_customer
+                    )
+                    if existing_customer_id and str(existing_customer_id) != billing_account.creem_customer_id:
+                        billing_account.creem_customer_id = str(existing_customer_id)
+                        update_fields.append("creem_customer_id")
+                    billing_account.save(update_fields=update_fields)
+                response_body = {"updated": True, "subscription": updated}
+            except CreemAccessError as exc:
+                # Found live: Django returned a clean 502 here with a
+                # real JSON detail body, but Cloudflare replaces *any*
+                # 502 from the origin with its own generic interstitial
+                # ("invalid or incomplete response") regardless of the
+                # body -- the actual Creem error never reached the
+                # frontend. 400 is a status Cloudflare passes through.
+                logger.warning(
+                    "Creem rejected subscription update for %s -> %s: %s", existing_sub_id, product_id, exc
                 )
-                try:
-                    updated = update_subscription_product(
-                        str(existing_sub_id),
-                        existing_api_key,
-                        product_id,
-                        sandbox=existing_sandbox,
-                        item_id=str(existing_item_id) if existing_item_id else None,
-                    )
-                    logger.info("Creem update_subscription_product call returned successfully")
-                    if billing_account is not None:
-                        billing_account.plan = plan
-                        update_fields = ["plan", "updated_at"]
-                        # Always sync (not just backfill-if-empty) so the next
-                        # switch takes the fast, reliable direct-by-ID path
-                        # instead of needing this fallback search again --
-                        # also self-heals a stale/dead stored ID (e.g. a
-                        # subscription cancelled via the Danger Zone) to the
-                        # real active one this swap just used.
-                        if str(existing_sub_id) != billing_account.creem_subscription_id:
-                            billing_account.creem_subscription_id = str(existing_sub_id)
-                            update_fields.append("creem_subscription_id")
-                        existing_customer = existing_sub.get("customer")
-                        existing_customer_id = (
-                            existing_customer.get("id")
-                            if isinstance(existing_customer, dict)
-                            else existing_customer
-                        )
-                        if existing_customer_id and str(existing_customer_id) != billing_account.creem_customer_id:
-                            billing_account.creem_customer_id = str(existing_customer_id)
-                            update_fields.append("creem_customer_id")
-                        billing_account.save(update_fields=update_fields)
-                    response_body = {"updated": True, "subscription": updated}
-                except CreemAccessError as exc:
-                    # Found live: Django returned a clean 502 here with a
-                    # real JSON detail body, but Cloudflare replaces *any*
-                    # 502 from the origin with its own generic interstitial
-                    # ("invalid or incomplete response") regardless of the
-                    # body -- the actual Creem error never reached the
-                    # frontend. 400 is a status Cloudflare passes through.
-                    logger.warning(
-                        "Creem rejected subscription update for %s -> %s: %s", existing_sub_id, product_id, exc
-                    )
-                    # Creem refuses any in-place item swap while a discount
-                    # is active on the subscription, and there's nothing the
-                    # customer can do about that from our dashboard -- they
-                    # can only cancel or pause, not remove a coupon. Give
-                    # them that actionable guidance instead of the raw API
-                    # error text.
-                    if "discount is active" in str(exc).lower():
-                        return Response(
-                            {
-                                "detail": (
-                                    "This subscription has an active discount, which Creem does not allow "
-                                    "changing in place. Please cancel your current plan first, then "
-                                    "subscribe to the new plan separately."
-                                )
-                            },
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
-                    # Found live: Creem refuses any in-place item swap while
-                    # a subscription is still "trialing" (only "active",
-                    # i.e. already billing, can be modified) -- there's
-                    # nothing the customer can do about that from our
-                    # dashboard either, and "cancel and start a new
-                    # subscription yourself" is a rough, easy-to-get-wrong
-                    # self-serve path for a real customer to be told to do
-                    # solo. Point them at support instead.
-                    if "must be active" in str(exc).lower():
-                        return Response(
-                            {
-                                "detail": (
-                                    "This subscription is still in its trial period, and Creem doesn't allow "
-                                    "changing plans until the trial ends and billing begins. If you need to "
-                                    "switch sooner, get in touch via Support "
-                                    f"({app_url(f'/t/{tenant_slug}/support')}) and we'll sort it out."
-                                )
-                            },
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
+                # Creem refuses any in-place item swap while a discount
+                # is active on the subscription, and there's nothing the
+                # customer can do about that from our dashboard -- they
+                # can only cancel or pause, not remove a coupon. Give
+                # them that actionable guidance instead of the raw API
+                # error text.
+                if "discount is active" in str(exc).lower():
                     return Response(
-                        {"detail": f"Could not switch plan: {exc}"}, status=status.HTTP_400_BAD_REQUEST
-                    )
-                except Exception:
-                    # Widened deliberately: found live that a narrower
-                    # try/except around only the Creem API call left the
-                    # subsequent billing_account.save()/Response(...)
-                    # construction unprotected -- whatever crashed there
-                    # surfaced as a bare Cloudflare 502 with zero trace on
-                    # our end instead of this logged, controlled response.
-                    logger.exception(
-                        "Unexpected error switching subscription %s to product %s", existing_sub_id, product_id
-                    )
-                    return Response(
-                        {"detail": "Could not switch plan due to an unexpected error."},
+                        {
+                            "detail": (
+                                "This subscription has an active discount, which Creem does not allow "
+                                "changing in place. Please cancel your current plan first, then "
+                                "subscribe to the new plan separately."
+                            )
+                        },
                         status=status.HTTP_400_BAD_REQUEST,
                     )
-                return Response(response_body)
+                # Found live: Creem refuses any in-place item swap while
+                # a subscription is still "trialing" (only "active",
+                # i.e. already billing, can be modified) -- there's
+                # nothing the customer can do about that from our
+                # dashboard either, and "cancel and start a new
+                # subscription yourself" is a rough, easy-to-get-wrong
+                # self-serve path for a real customer to be told to do
+                # solo. Point them at support instead.
+                if "must be active" in str(exc).lower():
+                    return Response(
+                        {
+                            "detail": (
+                                "This subscription is still in its trial period, and Creem doesn't allow "
+                                "changing plans until the trial ends and billing begins. If you need to "
+                                "switch sooner, get in touch via Support "
+                                f"({app_url(support_path)}) and we'll sort it out."
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                return Response(
+                    {"detail": f"Could not switch plan: {exc}"}, status=status.HTTP_400_BAD_REQUEST
+                )
+            except Exception:
+                # Widened deliberately: found live that a narrower
+                # try/except around only the Creem API call left the
+                # subsequent billing_account.save()/Response(...)
+                # construction unprotected -- whatever crashed there
+                # surfaced as a bare Cloudflare 502 with zero trace on
+                # our end instead of this logged, controlled response.
+                logger.exception(
+                    "Unexpected error switching subscription %s to product %s", existing_sub_id, product_id
+                )
+                return Response(
+                    {"detail": "Could not switch plan due to an unexpected error."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            return Response(response_body)
 
-        # No existing subscription -- first-ever purchase, needs a real
-        # checkout. Tag the current subscription (if any, from the less
-        # reliable fallback lookup) so the webhook cancels it once this new
-        # one is confirmed, as a safety net -- see PG-150 follow-up.
-        previous_subscription_id = _creem_current_subscription_id(request.user_profile)
-        metadata: dict[str, str | int | None] = {
-            "source": "dashboard_upgrade",
-            "billing_account_id": billing_account.id if billing_account else None,
-        }
-        if previous_subscription_id:
-            metadata["previous_subscription_id"] = previous_subscription_id
+    # No existing subscription -- first-ever purchase, needs a real
+    # checkout. Tag the current subscription (if any, from the less
+    # reliable fallback lookup) so the webhook cancels it once this new
+    # one is confirmed, as a safety net -- see PG-150 follow-up.
+    previous_subscription_id = _creem_current_subscription_id(request.user_profile)
+    metadata: dict[str, str | int | None] = {
+        "source": "dashboard_upgrade",
+        "billing_account_id": billing_account.id if billing_account else None,
+    }
+    if previous_subscription_id:
+        metadata["previous_subscription_id"] = previous_subscription_id
 
-        try:
-            data = _post(
-                f"{CREEM_API_BASE}/v1/checkouts",
-                api_key,
-                {
-                    "product_id": product_id,
-                    "success_url": return_url,
-                    "customer": {"email": request.user_profile.email},
-                    "metadata": metadata,
-                },
-            )
-        except CreemAccessError as exc:
-            logger.warning("Creem rejected checkout session creation for product %s: %s", product_id, exc)
-            return Response(
-                {"detail": f"Could not start checkout: {exc}"}, status=status.HTTP_400_BAD_REQUEST
-            )
+    try:
+        data = _post(
+            f"{CREEM_API_BASE}/v1/checkouts",
+            api_key,
+            {
+                "product_id": product_id,
+                "success_url": return_url,
+                "customer": {"email": request.user_profile.email},
+                "metadata": metadata,
+            },
+        )
+    except CreemAccessError as exc:
+        logger.warning("Creem rejected checkout session creation for product %s: %s", product_id, exc)
+        return Response(
+            {"detail": f"Could not start checkout: {exc}"}, status=status.HTTP_400_BAD_REQUEST
+        )
 
-        checkout_url = data.get("checkout_url")
-        if not checkout_url:
-            return Response({"detail": "Checkout session had no URL."}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"checkout_url": checkout_url})
+    checkout_url = data.get("checkout_url")
+    if not checkout_url:
+        return Response({"detail": "Checkout session had no URL."}, status=status.HTTP_400_BAD_REQUEST)
+    return Response({"checkout_url": checkout_url})
 
 
 class PolarProductsView(_PolarBaseMixin, APIView):
@@ -2407,6 +2435,8 @@ class SupportRequestView(APIView):
     permission_classes = [HasUserProfile]
 
     MAX_MESSAGE = 5000
+    # Fits one line in the dashboard list and an email subject without a cut.
+    MAX_SUBJECT = 120
 
     def _tenant(self, request: Request, tenant_slug: str) -> Tenant:
         tenant_ctx = getattr(request, "tenant_ctx", None)
@@ -2441,12 +2471,31 @@ class SupportRequestView(APIView):
             )
 
         profile = getattr(request, "user_profile", None)
-        # The signed-in address wins over anything posted, so a request cannot
-        # be filed under somebody else's email.
-        email = getattr(profile, "email", "") or str(request.data.get("email") or "")
+        account_email = getattr(profile, "email", "") or ""
+        # The address in the form wins, because a field that looks like an
+        # input and changes nothing is worse than no field. Somebody writing
+        # from a shared account, or wanting the answer at a different address,
+        # is the ordinary case and used to be silently overruled.
+        #
+        # The price is that an authenticated person could route our reply
+        # somewhere else, so the signed-in address travels along and lands on
+        # the ticket. A mismatch is then visible instead of invisible.
+        email = str(request.data.get("email") or "").strip() or account_email
         if not email:
             return Response(
                 {"detail": "No email address on file."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # Checked at the door, because everything downstream trusts it. One
+        # stray comma took out the confirmation, our own internal notice (the
+        # address rides along in Reply-To) and the tracker's email link, all
+        # from a request that looked accepted. Better to say so while the
+        # customer still has the form open.
+        try:
+            validate_email(email)
+        except DjangoValidationError:
+            return Response(
+                {"detail": "That does not look like an email address."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -2459,7 +2508,9 @@ class SupportRequestView(APIView):
             email=email,
             name=str(request.data.get("name") or "")[:200],
             topic=topic,
+            subject=str(request.data.get("subject") or "").strip()[: self.MAX_SUBJECT],
             message=message[: self.MAX_MESSAGE],
+            account_email=account_email,
         )
         return Response(
             {"request": SupportRequestSerializer(support_request).data},

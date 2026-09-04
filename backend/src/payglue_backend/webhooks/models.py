@@ -103,6 +103,11 @@ class PaywallConfig(models.Model):
     id = models.CharField(max_length=32, primary_key=True)
     tenant_slug = models.CharField(max_length=64, db_index=True)
     name = models.CharField(max_length=255)
+    # Persisted for the same reason as on BuyButton (0019) and PricingTier
+    # (0020), which this one was missed in: without it the editor cannot restore
+    # which provider the product belongs to, and the server cannot work out what
+    # a purchase of it should do (PG-254).
+    product_provider = models.CharField(max_length=32, blank=True, default="")
     product_id = models.CharField(max_length=255, blank=True, default="")
     product_name = models.CharField(max_length=255, blank=True, default="")
     headline = models.CharField(max_length=255, default="Premium content")
@@ -244,13 +249,39 @@ class ProductMapping(models.Model):
 
     class Meta:
         constraints = [
+            # One row per product, and therefore one outcome per purchase.
+            #
+            # A payment webhook carries a product, never a widget: `resolver.py`
+            # can only ever filter on `external_product_id`. So "what happens
+            # when somebody buys this" is a property of the product, and two
+            # answers to it are not something the runtime could honour even if
+            # somebody configured them.
+            #
+            # `entitlement_key` used to be in here, and that is exactly what let
+            # two answers exist. A buy button wrote `button`, a paywall wrote
+            # `paywall`, a pricing tier wrote `product-<id>`, so the same product
+            # could hold three rows with three different sets of Ghost settings,
+            # and a purchase applied all of them in id order (PG-254). Nobody saw
+            # it, because access comes from `payglue-active` and was granted
+            # either way; what silently differed was the newsletter flag, the
+            # email types and the labels.
+            #
+            # The key stays on the model, it is just no longer part of the
+            # identity. It is the readable name of what gets granted, and it
+            # reaches Ghost as `product:<key>`. Deriving it from the product id
+            # was considered and rejected: the keys in use are words like `pro`
+            # and `founding_member`, and a derived one would turn that label into
+            # `product:polar-a3f9c1...` for every future grant while the labels
+            # already written to members kept the old form.
+            #
+            # `event_type` stays in: one product legitimately holds a grant on
+            # `order.paid` and a revoke on `subscription.canceled`.
             models.UniqueConstraint(
                 fields=[
                     "tenant_slug",
                     "payment_provider",
                     "event_type",
                     "external_product_id",
-                    "entitlement_key",
                     "action",
                 ],
                 name="webhooks_unique_product_mapping_rule",

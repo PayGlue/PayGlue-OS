@@ -299,7 +299,7 @@ const skipProvider = () => router.push(`/t/${slug.value}/dashboard`)
 
       <!-- Logo -->
       <div class="mb-8 text-center">
-        <RouterLink to="/"><PayGlueLogo size="lg" /></RouterLink>
+        <a href="/"><PayGlueLogo size="lg" /></a>
       </div>
 
       <!-- Progress -->
