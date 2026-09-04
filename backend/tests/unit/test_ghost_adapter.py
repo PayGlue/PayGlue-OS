@@ -164,13 +164,28 @@ def test_apply_entitlement_updates_existing_member() -> None:
 
 
 def test_apply_entitlement_revoke_sets_comped_false() -> None:
+    client = StubHttpClient(
+        get_response=StubResponse(200, json.dumps({"members": [{"id": "m1"}]})),
+    )
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+
+    adapter.apply_entitlement(_customer(), _instruction(action="revoke"), _ctx())
+
+    member = client.put_calls[0]["json_body"]["members"][0]  # type: ignore[index]
+    assert member["comped"] is False
+
+
+def test_revoke_for_an_unknown_email_creates_nothing() -> None:
+    # This used to create the member, which invented a cancellation for someone
+    # who never bought anything. Reachable through the revoke-everything path
+    # for providers that do not name the tier on a cancellation.
     client = StubHttpClient()
     adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
 
     adapter.apply_entitlement(_customer(), _instruction(action="revoke"), _ctx())
 
-    member = client.post_calls[0]["json_body"]["members"][0]  # type: ignore[index]
-    assert member["comped"] is False
+    assert client.post_calls == []
+    assert client.put_calls == []
 
 
 # --- error handling ---
@@ -328,3 +343,138 @@ def test_revoke_removes_the_status_label() -> None:
 
     labels = client.put_calls[0]["json_body"]["members"][0]["labels"]  # type: ignore[index]
     assert {"name": "payglue-active"} not in labels
+
+
+# --- what an ended membership looks like afterwards (PG-271) ---
+
+
+def _revoke_with_note(note: str, occurred_at: str = "2026-08-14") -> dict:
+    client = StubHttpClient(
+        get_response=StubResponse(200, json.dumps({"members": [{"id": "m1", "note": note}]})),
+    )
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+    instruction = EntitlementInstruction(
+        entitlement_key="tier.basic",
+        action="revoke",
+        quantity=1,
+        metadata={"_provider": "polar", "_event_id": "evt_9", "_occurred_at": occurred_at},
+    )
+    adapter.apply_entitlement(_customer(), instruction, _ctx())
+    return client.put_calls[0]["json_body"]["members"][0]  # type: ignore[index,return-value]
+
+
+def test_revoke_marks_the_member_as_ended_and_keeps_the_provider() -> None:
+    # Without these two, a cancellation, a grant that never ran and a
+    # never-customer all leave the same member behind.
+    member = _revoke_with_note("Direct via PayGlue | Provider: polar\nProduct: prod_1")
+
+    assert {"name": "payglue-ended"} in member["labels"]
+    assert {"name": "payglue-provider:polar"} in member["labels"]
+
+
+def test_the_purchase_line_carries_its_date_too() -> None:
+    # Same shape as the ending, so the note reads as a timeline rather than an
+    # id with a date underneath it.
+    client = StubHttpClient()
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+    instruction = EntitlementInstruction(
+        entitlement_key="tier.basic",
+        action="grant",
+        quantity=1,
+        metadata={"_provider": "polar", "_event_id": "evt_1", "_occurred_at": "2026-08-14"},
+    )
+
+    adapter.apply_entitlement(_customer(), instruction, _ctx())
+
+    member = client.post_calls[0]["json_body"]["members"][0]  # type: ignore[index]
+    assert member["note"].endswith("Order: 2026-08-14 | Event: evt_1")
+
+
+def test_a_purchase_without_a_date_still_names_its_event() -> None:
+    client = StubHttpClient()
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+    instruction = EntitlementInstruction(
+        entitlement_key="tier.basic",
+        action="grant",
+        quantity=1,
+        metadata={"_provider": "polar", "_event_id": "evt_1"},
+    )
+
+    adapter.apply_entitlement(_customer(), instruction, _ctx())
+
+    member = client.post_calls[0]["json_body"]["members"][0]  # type: ignore[index]
+    assert member["note"].endswith("Order | Event: evt_1")
+
+
+def test_a_purchase_with_neither_date_nor_event_writes_no_order_line() -> None:
+    client = StubHttpClient()
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+
+    adapter.apply_entitlement(_customer(), _instruction(), _ctx())
+
+    member = client.post_calls[0]["json_body"]["members"][0]  # type: ignore[index]
+    assert "Order" not in member["note"]
+
+
+def test_ended_label_does_not_open_the_paywall() -> None:
+    response = StubResponse(
+        200,
+        json.dumps({"members": [{"status": "free", "comped": False, "labels": [
+            {"name": "payglue-ended"},
+            {"name": "payglue-provider:polar"},
+        ]}]}),
+    )
+    assert _check(response)["active"] is False
+
+
+def test_ending_adds_the_date_under_the_purchase_note() -> None:
+    member = _revoke_with_note("Direct via PayGlue | Provider: polar\nProduct: prod_1\nOrder: evt_1")
+
+    assert member["note"] == (
+        "Direct via PayGlue | Provider: polar\n"
+        "Product: prod_1\n"
+        "Order: evt_1\n"
+        "Ended: 2026-08-14 | Event: evt_9"
+    )
+
+
+def test_a_second_ending_replaces_the_first_instead_of_stacking() -> None:
+    member = _revoke_with_note(
+        "Direct via PayGlue | Provider: polar\nProduct: prod_1\nEnded: 2026-01-01 | Event: evt_0"
+    )
+
+    assert member["note"].count("Ended:") == 1
+    assert member["note"].endswith("Ended: 2026-08-14 | Event: evt_9")
+
+
+def test_ending_without_a_date_still_records_that_it_ended() -> None:
+    # Events queued before this shipped carry no date, and the newsletter path
+    # builds its instructions without one.
+    member = _revoke_with_note("Product: prod_1", occurred_at="")
+
+    assert member["note"].endswith("Ended | Event: evt_9")
+
+
+def test_the_note_stays_within_the_length_ghost_accepts() -> None:
+    member = _revoke_with_note("\n".join(f"Line {i} {'x' * 40}" for i in range(20)))
+
+    assert len(member["note"]) <= 500
+    assert member["note"].endswith("Ended: 2026-08-14 | Event: evt_9")
+
+
+def test_a_repeat_purchase_clears_the_ending() -> None:
+    # The note travels with the update now, so the ending has to go when the
+    # member buys again. A stale "Ended" line would be worse than none.
+    client = StubHttpClient(
+        get_response=StubResponse(
+            200,
+            json.dumps({"members": [{"id": "m1", "note": "Product: prod_1\nEnded: 2026-01-01"}]}),
+        ),
+    )
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+
+    adapter.apply_entitlement(_customer(), _instruction(), _ctx())
+
+    member = client.put_calls[0]["json_body"]["members"][0]  # type: ignore[index]
+    assert "Ended" not in member["note"]
+    assert {"name": "payglue-active"} in member["labels"]

@@ -75,10 +75,10 @@ class Command(BaseCommand):
             return
 
         with transaction.atomic():
-            # .update(), not .save() -- Tenant inherits django_tenants'
-            # TenantMixin, whose save() re-checks/creates the Postgres
-            # schema on every write. A plain status flip has no business
-            # touching that; .update() goes straight to SQL and skips it.
+            # .update(), not .save(). Written when Tenant still inherited
+            # django_tenants' TenantMixin, whose save() re-checked the Postgres
+            # schema on every write; PG-273 removed that. Kept because a status
+            # flip across many rows belongs in one statement.
             Tenant.objects.filter(pk__in=[t.pk for t in to_pause]).update(
                 status=Tenant.Status.PAUSED, updated_at=timezone.now()
             )

@@ -210,7 +210,7 @@ const stillNeedsSetup = computed(() => installationNeedsSetup())
               If you want to know more:
               <a href="https://payglue.io" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">payglue.io</a>,
               the
-              <a href="https://blog.payglue.io" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">blog</a>,
+              <a href="https://payglue.io/blog" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">blog</a>,
               where we write about what shipped and what we reconsidered, and the
               <a href="https://docs.payglue.io" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">documentation</a>.
             </p>

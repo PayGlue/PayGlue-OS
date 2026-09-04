@@ -8,7 +8,8 @@ import PayGlueLogo from './PayGlueLogo.vue'
 import CommandPalette, { type PaletteItem } from './CommandPalette.vue'
 import GracePeriodBanner from './GracePeriodBanner.vue'
 import { useSessionStore } from '../stores/session'
-import { checkHeaderScript, getGhostStripeStatus, getIntegrationConfig } from '../lib/api'
+import { checkHeaderScript, getChangelogForBell, getGhostStripeStatus, getIntegrationConfig } from '../lib/api'
+import type { ChangelogBellEntry } from '../types/api'
 import { useHeaderScriptStatus } from '../composables/useHeaderScriptStatus'
 import { useTheme } from '../composables/useTheme'
 import { supportEmail } from '../lib/publicUrls'
@@ -22,18 +23,61 @@ const themeLabel = computed(() =>
   themeMode.value === 'light' ? 'Light' : themeMode.value === 'dark' ? 'Dark' : 'System',
 )
 
-// "What's new" shown in the notifications popup. Add an entry whenever
-// something worth surfacing ships; the popup links to the public changelog
-// and roadmap. An unread dot shows on the bell while there are entries.
-// Newest first, and drop the oldest when you add one: the popup renders the
-// whole list in a 16rem column, so it grows until it is unreadable.
-const newsItems = [
-  { title: 'A missing mapping is now impossible to miss', body: 'It shows red in the editor, a failed save says so instead of reporting success, and a processed event can be replayed once you add it.' },
-  { title: 'The blog moved to payglue.io/blog', body: '36 articles on setup, migration and picking a provider, now on the product domain. blog.payglue.io stays live as the demo you can walk into.' },
-  { title: 'Get paid for your recommendations', body: 'Settings, Affiliate: 40% of every payment your referrals make. The calculator uses the real plan prices, so you can see what it is worth before you join.' },
-  { title: 'Confirming no longer means logging out', body: 'Ownership transfers and account deletion now confirm in an overlay, with your authenticator app or a code by email.' },
-]
-const hasNews = computed(() => newsItems.length > 0)
+// "What's new" in the notifications popup (PG-228).
+//
+// This was a hardcoded array here, written by hand alongside a second copy in
+// the public changelog. The two drifted, the popup grew until somebody
+// remembered to delete the oldest entry, and the unread dot only asked whether
+// that array had anything in it at all, which is on permanently and therefore
+// never meant anything. All three came from the same cause: announcements as
+// code.
+//
+// They are rows now. The backend caps the list, so the popup cannot outgrow its
+// column, and the dot compares against what this browser has already seen.
+//
+// It also stops our announcements travelling into the public mirror. This file
+// is synced to PayGlue-OS, so the old array put "the blog moved to payglue.io"
+// in front of people running their own copy.
+const bellEntries = ref<ChangelogBellEntry[]>([])
+
+// Per browser, not per account. This is a preference about a dot, not a record
+// about a person, and storing it server-side would mean a new personal data
+// point and an endpoint to write it. The cost of getting it wrong is that a
+// new browser shows the dot once more.
+const SEEN_KEY = 'payglue:changelog-seen'
+const lastSeen = ref<string>(localStorage.getItem(SEEN_KEY) ?? '')
+const hasNews = computed(
+  () => bellEntries.value.some((item) => item.publishedAt > lastSeen.value),
+)
+
+function toggleNotifications(): void {
+  notificationsOpen.value = !notificationsOpen.value
+  // Only on the way open. Closing it again is not reading it.
+  if (notificationsOpen.value) markNewsSeen()
+}
+
+function markNewsSeen(): void {
+  const newest = bellEntries.value[0]?.publishedAt
+  if (!newest || newest <= lastSeen.value) return
+  lastSeen.value = newest
+  try {
+    localStorage.setItem(SEEN_KEY, newest)
+  } catch {
+    // Private browsing and a full quota both land here. The dot staying on is
+    // a worse outcome than a thrown error, but only slightly, and neither is
+    // worth interrupting somebody who came here to do something else.
+  }
+}
+
+onMounted(async () => {
+  try {
+    bellEntries.value = await getChangelogForBell()
+  } catch {
+    // Deliberately silent. An announcement is not something a dashboard should
+    // show an error about: the bell stays empty and says nothing, which is
+    // exactly what it says on a self-hosted installation with no entries.
+  }
+})
 
 const session = useSessionStore()
 const route = useRoute()
@@ -183,10 +227,16 @@ const sections = computed(() => {
   const slug = session.activeTenantSlug
   if (!slug) return []
   return [
+    // In the order the work actually happens: connect a provider, build the
+    // thing that sells, then look at what it did. Analytics used to sit above
+    // Features, which reversed the path every new account walks.
+    //
+    // Both the desktop rail and the mobile drawer render this list, so the
+    // order only exists once.
     { key: 'dashboard', label: 'Dashboard', icon: ICONS.dashboard, to: `/t/${slug}/dashboard` },
     { key: 'connections', label: 'Connections', icon: ICONS.connections, to: `/t/${slug}/connections` },
-    { key: 'analytics', label: 'Analytics', icon: ICONS.analytics, to: `/t/${slug}/events` },
     { key: 'installation', label: 'Features', icon: ICONS.installation, to: `/t/${slug}/buttons` },
+    { key: 'analytics', label: 'Analytics', icon: ICONS.analytics, to: `/t/${slug}/events` },
     { key: 'settings', label: 'Settings', icon: ICONS.settings, to: `/t/${slug}/team` },
   ]
 })
@@ -383,17 +433,8 @@ watch(
 
       <!-- Desktop rail -->
       <aside class="hidden w-64 shrink-0 flex-col border-r border-slate-800/60 bg-slate-900 py-5 md:flex">
-        <div class="mb-5 flex items-center gap-2 px-4" title="PayGlue">
-          <div class="h-7 w-7 shrink-0">
-            <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" class="h-full w-full">
-              <rect x="0" y="0" width="256" height="256" rx="58" fill="#5B5BD6"/>
-              <circle cx="94" cy="128" r="62" fill="none" stroke="white" stroke-width="22" opacity="0.35"/>
-              <circle cx="162" cy="128" r="62" fill="none" stroke="white" stroke-width="22"/>
-              <rect x="114" y="66" width="28" height="124" fill="#5B5BD6"/>
-              <rect x="119" y="102" width="18" height="52" rx="9" fill="white"/>
-            </svg>
-          </div>
-          <span class="text-sm font-bold tracking-tight text-white">PayGlue</span>
+        <div class="mb-5 px-4" title="PayGlue">
+          <PayGlueLogo size="md" theme="dark" />
         </div>
 
         <!-- Workspace switcher -->
@@ -598,21 +639,28 @@ watch(
               <div class="border-b border-slate-700 px-4 py-2.5">
                 <p class="text-xs font-semibold text-slate-200">What's new</p>
               </div>
-              <div v-for="(n, i) in newsItems" :key="i" class="px-4 py-3">
+              <a
+                v-for="(n, i) in bellEntries"
+                :key="i"
+                :href="`/changelog/#${n.anchor}`"
+                class="block px-4 py-3 transition-colors hover:bg-slate-700/50"
+                @click="notificationsOpen = false"
+              >
                 <p class="text-xs font-semibold text-slate-100">{{ n.title }}</p>
                 <p class="mt-0.5 text-xs leading-relaxed text-slate-400">{{ n.body }}</p>
-              </div>
-              <p v-if="!newsItems.length" class="px-4 py-3 text-xs text-slate-500">You're all caught up.</p>
+                <span class="mt-1 inline-block text-xs font-semibold text-indigo-400">Read the full entry →</span>
+              </a>
+              <p v-if="!bellEntries.length" class="px-4 py-3 text-xs text-slate-500">You're all caught up.</p>
               <div class="flex items-center gap-4 border-t border-slate-700 px-4 py-2.5">
-                <RouterLink to="/changelog" class="text-xs font-semibold text-indigo-400 hover:text-indigo-300" @click="notificationsOpen = false">Changelog →</RouterLink>
-                <RouterLink to="/roadmap" class="text-xs font-semibold text-indigo-400 hover:text-indigo-300" @click="notificationsOpen = false">Roadmap →</RouterLink>
+                <a href="/changelog/" class="text-xs font-semibold text-indigo-400 hover:text-indigo-300" @click="notificationsOpen = false">Changelog →</a>
+                <a href="/roadmap/" class="text-xs font-semibold text-indigo-400 hover:text-indigo-300" @click="notificationsOpen = false">Roadmap →</a>
               </div>
             </div>
             <button
               type="button"
               class="relative grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-slate-700 text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-100"
               title="Notifications"
-              @click="notificationsOpen = !notificationsOpen"
+              @click="toggleNotifications"
             >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" />
@@ -960,14 +1008,21 @@ watch(
           </div>
           <div v-if="notificationsOpen" class="border-t border-slate-800 px-4 py-3">
             <p class="text-xs font-semibold text-slate-200">What's new</p>
-            <div v-for="(n, i) in newsItems" :key="i" class="mt-2">
+            <a
+              v-for="(n, i) in bellEntries"
+              :key="i"
+              :href="`/changelog/#${n.anchor}`"
+              class="mt-2 block"
+              @click="notificationsOpen = false; mobileSidebarOpen = false"
+            >
               <p class="text-xs font-semibold text-slate-100">{{ n.title }}</p>
               <p class="mt-0.5 text-xs leading-relaxed text-slate-400">{{ n.body }}</p>
-            </div>
-            <p v-if="!newsItems.length" class="mt-1 text-xs text-slate-500">You're all caught up.</p>
+              <span class="mt-1 inline-block text-xs font-semibold text-indigo-400">Read the full entry →</span>
+            </a>
+            <p v-if="!bellEntries.length" class="mt-1 text-xs text-slate-500">You're all caught up.</p>
             <div class="mt-2.5 flex items-center gap-4">
-              <RouterLink to="/changelog" class="text-xs font-semibold text-indigo-400" @click="notificationsOpen = false; mobileSidebarOpen = false">Changelog →</RouterLink>
-              <RouterLink to="/roadmap" class="text-xs font-semibold text-indigo-400" @click="notificationsOpen = false; mobileSidebarOpen = false">Roadmap →</RouterLink>
+              <a href="/changelog/" class="text-xs font-semibold text-indigo-400" @click="notificationsOpen = false; mobileSidebarOpen = false">Changelog →</a>
+              <a href="/roadmap/" class="text-xs font-semibold text-indigo-400" @click="notificationsOpen = false; mobileSidebarOpen = false">Roadmap →</a>
             </div>
           </div>
 
@@ -995,7 +1050,7 @@ watch(
               type="button"
               class="relative grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-slate-700 text-slate-400"
               title="Notifications"
-              @click="notificationsOpen = !notificationsOpen"
+              @click="toggleNotifications"
             >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" />

@@ -6,6 +6,7 @@ import type {
   AuditEvent,
   BillingProfile,
   AuthSessionResponse,
+  ChangelogBellEntry,
   IntegrationConfig,
   IntegrationCredentialWriteResult,
   IntegrationHealthStatus,
@@ -867,6 +868,25 @@ export const createCreemCheckoutSession = async (
   }
 }
 
+// PG-298: same checkout, no tenant in the path. For an account whose every
+// workspace is paused after a lapsed subscription: the tenant-scoped endpoint
+// answers 404 for a paused workspace, this one only needs the owner.
+export const createAccountPlanCheckout = async (
+  idToken: string,
+  params: { planKey: 'solo' | 'studio' | 'agency'; interval: 'monthly' | 'annual'; returnUrl: string },
+): Promise<CreemCheckoutSessionResult> => {
+  try {
+    const { data } = await api.post<CreemCheckoutSessionResult>(
+      '/api/v1/billing/plan-checkout',
+      { plan_key: params.planKey, interval: params.interval, return_url: params.returnUrl },
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
 export const cancelCreemSubscription = async (
   tenantSlug: string,
   idToken: string,
@@ -1184,7 +1204,7 @@ export const listSupportRequests = async (
 export const createSupportRequest = async (
   tenantSlug: string,
   idToken: string,
-  payload: { name: string; message: string; topic: string },
+  payload: { name: string; email: string; subject: string; message: string; topic: string },
 ): Promise<SupportRequestSummary> => {
   const { data } = await api.post<{ request: SupportRequestSummary }>(
     tenantPath(tenantSlug, 'support/requests'),
@@ -1192,4 +1212,19 @@ export const createSupportRequest = async (
     { headers: { Authorization: `Bearer ${idToken}` } },
   )
   return data.request
+}
+
+/**
+ * The entries behind the notification bell (PG-228).
+ *
+ * Unauthenticated on purpose: these are published announcements that also
+ * appear on the public changelog page, so there is nothing here a signed-in
+ * session would unlock. The backend caps the list, rather than the caller
+ * trimming it, so the popup cannot grow past what fits its column.
+ */
+export const getChangelogForBell = async (): Promise<ChangelogBellEntry[]> => {
+  const { data } = await api.get<{ entries: ChangelogBellEntry[] }>(
+    '/api/v1/changelog?bell=1',
+  )
+  return data.entries
 }

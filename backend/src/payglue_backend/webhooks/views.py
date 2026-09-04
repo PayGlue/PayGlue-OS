@@ -3,7 +3,9 @@
 import hashlib
 import hmac
 import json
+import re
 import secrets
+from urllib.parse import urlparse
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -32,6 +34,7 @@ from payglue_backend.tenants.models import PublicAuditEvent, Tenant, TenantMembe
 from payglue_backend.tenants.plan_limits import check_resource_limit
 from payglue_backend.tenants.serializers import PublicAuditEventSerializer
 from payglue_backend.webhooks import wiring
+from payglue_backend.webhooks.mapping_sync import GrantSpec, sync_grant, sync_grants, widgets_offering
 from payglue_backend.webhooks.models import BuyButton, IntegrationConfig, PaywallConfig, PricingTable, PricingTier, ProductMapping
 from payglue_backend.webhooks.models import WebhookInboundEvent
 from payglue_backend.webhooks.test_events import run_mapping_test
@@ -337,7 +340,7 @@ class TenantProductMappingView(APIView):
 
     def get(self, request: Request, tenant_slug: str) -> Response:
         self._require_tenant_context(request, tenant_slug)
-        mappings = ProductMapping.objects.filter(tenant_slug=tenant_slug).order_by("id")
+        mappings = list(ProductMapping.objects.filter(tenant_slug=tenant_slug).order_by("id"))
         serializer = ProductMappingSerializer(
             instance=mappings,
             many=True,
@@ -345,7 +348,15 @@ class TenantProductMappingView(APIView):
                 "allowed_payment_providers": wiring.get_supported_payment_provider_keys()
             },
         )
-        return Response(serializer.data)
+        # Where each product is offered, asked of the widgets rather than read
+        # out of the rule's own metadata (PG-254). One rule can be shared by a
+        # buy button and a pricing tier, and the metadata only remembers
+        # whichever of them saved last.
+        offers = widgets_offering(tenant_slug, [m.external_product_id for m in mappings])
+        rows = list(serializer.data)
+        for row, mapping in zip(rows, mappings, strict=True):
+            row["used_in"] = offers.get(mapping.external_product_id, [])
+        return Response(rows)
 
     def post(self, request: Request, tenant_slug: str) -> Response:
         self._require_tenant_context(request, tenant_slug)
@@ -652,6 +663,49 @@ class TenantGhostStripeStatusView(APIView):
         return Response(result)
 
 
+def _paywall_script_state(html: str, tenant_slug: str) -> tuple[bool, str | None]:
+    """Is *this tenant's* paywall script on the page?
+
+    The host is deliberately not checked. That was the point of PG-238: a
+    self-hosted installation serves the script from its own domain, and looking
+    for "api.payglue.io/paywall.js" told those people the script was missing no
+    matter how correctly they had embedded it.
+
+    What went with the host, though, was any check that the script belongs to
+    the tenant asking. The test became `"/paywall.js" in html`, which passes on
+    *anyone's* script. Found on staging, where a tenant pointed at a Ghost site
+    that carries the production script: different backend, different
+    `data-org`, and it would gate for a different tenant entirely. The page
+    reported "Installed, script is active in Ghost" (PG-256).
+
+    So: a script tag whose src path ends in `/paywall.js` and whose `data-org`
+    is this tenant. Host-agnostic, tenant-specific.
+    """
+    for tag in re.finditer(r"<script\b[^>]*>", html, re.IGNORECASE):
+        markup = tag.group(0)
+        src = re.search(r"""\bsrc\s*=\s*["']([^"']+)["']""", markup, re.IGNORECASE)
+        if not src or not urlparse(src.group(1)).path.endswith("/paywall.js"):
+            continue
+        org = re.search(r"""\bdata-org\s*=\s*["']([^"']*)["']""", markup, re.IGNORECASE)
+        found = org.group(1).strip() if org else ""
+        if found == tenant_slug:
+            return True, None
+        # A paywall script is there, it just is not this one. Saying which of
+        # the two it is beats both "installed" and a bare "missing": one is a
+        # snippet copied from another publication or environment, the other is
+        # a snippet that lost its attribute on the way into the theme.
+        if found:
+            return False, (
+                "A PayGlue paywall script is on the page, but it belongs to a "
+                "different publication. Replace it with the snippet above."
+            )
+        return False, (
+            "A PayGlue paywall script is on the page, but it carries no "
+            "publication id. Replace it with the snippet above."
+        )
+    return False, None
+
+
 class CheckHeaderScriptView(APIView):
     """Check whether the paywall.js header script is present on the tenant's Ghost site."""
     authentication_classes = [SupabaseBearerAuthentication]
@@ -672,7 +726,6 @@ class CheckHeaderScriptView(APIView):
             return Response({"installed": False, "error": "Ghost site URL not found. Re-save your Ghost credentials.", "url": None})
 
         # Normalise to root URL and guard against SSRF to internal/private hosts
-        from urllib.parse import urlparse
         import ipaddress
         parsed = urlparse(site_url)
         if parsed.scheme not in ("http", "https"):
@@ -702,12 +755,8 @@ class CheckHeaderScriptView(APIView):
         except Exception as e:
             return Response({"installed": False, "error": f"Could not reach {root_url}: {e}", "url": root_url})
 
-        # Match the path, not a host. This used to look for
-        # "api.payglue.io/paywall.js", so a self-hosted install serving the
-        # script from its own domain was told the script was missing no matter
-        # how correctly it was embedded (PG-238).
-        installed = "/paywall.js" in html
-        return Response({"installed": installed, "url": root_url, "error": None})
+        installed, detail = _paywall_script_state(html, tenant_slug)
+        return Response({"installed": installed, "url": root_url, "error": detail})
 
 
 def _api_origin_js(script_name: str) -> str:
@@ -1030,22 +1079,28 @@ class PaywallConfigListView(APIView):
             return limit_response
 
         data = request.data
-        cfg = PaywallConfig.objects.create(
-            id=secrets.token_urlsafe(12),
-            tenant_slug=tenant_slug,
-            name=data.get("name") or "Untitled paywall",
-            product_id=data.get("product_id", ""),
-            product_name=data.get("product_name", ""),
-            headline=data.get("headline") or "Premium content",
-            body=data.get("body") or "Purchase access to continue reading.",
-            button_text=data.get("button_text") or "Get access",
-            button_url=data.get("button_url", ""),
-            button_color=data.get("button_color") or "#4f46e5",
-            text_color=data.get("text_color") or "#ffffff",
-            border_radius=data.get("border_radius") or "md",
-            width=data.get("width") or "auto",
-            alignment=data.get("alignment") or "left",
-        )
+        with transaction.atomic():
+            cfg = PaywallConfig.objects.create(
+                id=secrets.token_urlsafe(12),
+                tenant_slug=tenant_slug,
+                name=data.get("name") or "Untitled paywall",
+                product_provider=data.get("product_provider", ""),
+                product_id=data.get("product_id", ""),
+                product_name=data.get("product_name", ""),
+                headline=data.get("headline") or "Premium content",
+                body=data.get("body") or "Purchase access to continue reading.",
+                button_text=data.get("button_text") or "Get access",
+                button_url=data.get("button_url", ""),
+                button_color=data.get("button_color") or "#4f46e5",
+                text_color=data.get("text_color") or "#ffffff",
+                border_radius=data.get("border_radius") or "md",
+                width=data.get("width") or "auto",
+                alignment=data.get("alignment") or "left",
+            )
+            sync_grant(
+                tenant_slug,
+                _grant_spec(cfg.product_provider, cfg.product_id, data),
+            )
         return Response(_serialize_paywall(cfg), status=status.HTTP_201_CREATED)
 
 
@@ -1063,10 +1118,15 @@ class PaywallConfigDetailView(APIView):
     def patch(self, request: Request, tenant_slug: str, config_id: str) -> Response:
         cfg = self._get_config(tenant_slug, config_id)
         data = request.data
-        for field in ("name", "product_id", "product_name", "headline", "body", "button_text", "button_url", "button_color", "text_color", "border_radius", "width", "alignment"):
-            if field in data:
-                setattr(cfg, field, data[field])
-        cfg.save()
+        with transaction.atomic():
+            for field in ("name", "product_provider", "product_id", "product_name", "headline", "body", "button_text", "button_url", "button_color", "text_color", "border_radius", "width", "alignment"):
+                if field in data:
+                    setattr(cfg, field, data[field])
+            cfg.save()
+            sync_grant(
+                tenant_slug,
+                _grant_spec(cfg.product_provider, cfg.product_id, data),
+            )
         return Response(_serialize_paywall(cfg))
 
     def delete(self, request: Request, tenant_slug: str, config_id: str) -> Response:
@@ -1103,6 +1163,7 @@ def _serialize_paywall(cfg: PaywallConfig) -> dict:
     return {
         "id": cfg.id,
         "name": cfg.name,
+        "product_provider": cfg.product_provider,
         "product_id": cfg.product_id,
         "product_name": cfg.product_name,
         "headline": cfg.headline,
@@ -1192,22 +1253,29 @@ class BuyButtonListView(APIView):
             return limit_response
 
         data = request.data
-        btn = BuyButton.objects.create(
-            id=secrets.token_urlsafe(12),
-            tenant_slug=tenant_slug,
-            name=data.get("name") or "Untitled button",
-            label=data.get("label") or "Buy now",
-            description=data.get("description", ""),
-            target_url=data.get("target_url", ""),
-            target=data.get("target") or "_blank",
-            bg_color=data.get("bg_color") or "#4f46e5",
-            text_color=data.get("text_color") or "#ffffff",
-            border_radius=data.get("border_radius") or "md",
-            width=data.get("width") or "auto",
-            alignment=data.get("alignment") or "left",
-            product_provider=data.get("product_provider", ""),
-            product_id=data.get("product_id", ""),
-        )
+        # One transaction, so a button never exists without the rule that makes
+        # buying it do something (PG-254).
+        with transaction.atomic():
+            btn = BuyButton.objects.create(
+                id=secrets.token_urlsafe(12),
+                tenant_slug=tenant_slug,
+                name=data.get("name") or "Untitled button",
+                label=data.get("label") or "Buy now",
+                description=data.get("description", ""),
+                target_url=data.get("target_url", ""),
+                target=data.get("target") or "_blank",
+                bg_color=data.get("bg_color") or "#4f46e5",
+                text_color=data.get("text_color") or "#ffffff",
+                border_radius=data.get("border_radius") or "md",
+                width=data.get("width") or "auto",
+                alignment=data.get("alignment") or "left",
+                product_provider=data.get("product_provider", ""),
+                product_id=data.get("product_id", ""),
+            )
+            sync_grant(
+                tenant_slug,
+                _grant_spec(btn.product_provider, btn.product_id, data),
+            )
         return Response(_serialize_button(btn), status=status.HTTP_201_CREATED)
 
 
@@ -1224,10 +1292,15 @@ class BuyButtonDetailView(APIView):
 
     def patch(self, request: Request, tenant_slug: str, button_id: str) -> Response:
         btn = self._get_button(tenant_slug, button_id)
-        for field in ("name", "label", "description", "target_url", "target", "bg_color", "text_color", "border_radius", "width", "alignment", "product_provider", "product_id"):
-            if field in request.data:
-                setattr(btn, field, request.data[field])
-        btn.save()
+        with transaction.atomic():
+            for field in ("name", "label", "description", "target_url", "target", "bg_color", "text_color", "border_radius", "width", "alignment", "product_provider", "product_id"):
+                if field in request.data:
+                    setattr(btn, field, request.data[field])
+            btn.save()
+            sync_grant(
+                tenant_slug,
+                _grant_spec(btn.product_provider, btn.product_id, request.data),
+            )
         return Response(_serialize_button(btn))
 
     def delete(self, request: Request, tenant_slug: str, button_id: str) -> Response:
@@ -1724,9 +1797,37 @@ def _serialize_pricing_tier(tier: PricingTier) -> dict:
     }
 
 
+def _grant_spec(provider: str, product_id: str, payload: dict) -> GrantSpec:
+    """Read the optional `grant` block a widget editor sends alongside its own
+    fields (PG-254).
+
+    The provider and the product come from the widget itself, which already
+    stores both. Everything else is what should happen in Ghost when this
+    product is bought, and the editor is where somebody says so.
+
+    An absent block is not an error. A widget can be saved before a product has
+    been picked, and the defaults here are the ones the editors used to send.
+    """
+    grant = payload.get("grant") if isinstance(payload.get("grant"), dict) else {}
+    return GrantSpec(
+        provider=str(provider or ""),
+        product_id=str(product_id or ""),
+        event_type=str(grant.get("event_type") or "order.paid"),
+        entitlement_key=str(grant.get("entitlement_key") or ""),
+        metadata=grant.get("metadata") if isinstance(grant.get("metadata"), dict) else {},
+    )
+
+
 def _replace_tiers(table: PricingTable, tiers_data: list) -> None:
     table.tiers.all().delete()
+    # Two tiers on the same product are not a duplicate here. They are two
+    # places offering one thing, and they resolve to a single rule, which is
+    # exactly what the constraint now guarantees (PG-254).
+    specs = []
     for i, td in enumerate(tiers_data):
+        specs.append(
+            _grant_spec(td.get("product_provider") or "", td.get("product_id") or "", td)
+        )
         PricingTier.objects.create(
             id=secrets.token_urlsafe(12),
             table=table,
@@ -1745,6 +1846,7 @@ def _replace_tiers(table: PricingTable, tiers_data: list) -> None:
             product_provider=td.get("product_provider") or "",
             product_id=td.get("product_id") or "",
         )
+    sync_grants(table.tenant_slug, specs)
 
 
 class PricingTableJsView(View):
@@ -1769,17 +1871,18 @@ class PricingTableListView(APIView):
             return limit_response
 
         data = request.data
-        table = PricingTable.objects.create(
-            id=secrets.token_urlsafe(12),
-            tenant_slug=tenant_slug,
-            name=data.get("name") or "Untitled table",
-            template=data.get("template") or "classic",
-            show_toggle=bool(data.get("show_toggle", False)),
-            accent_color=data.get("accent_color") or "#4f46e5",
-            currency=data.get("currency") or "EUR",
-        )
-        if "tiers" in data and isinstance(data["tiers"], list):
-            _replace_tiers(table, data["tiers"])
+        with transaction.atomic():
+            table = PricingTable.objects.create(
+                id=secrets.token_urlsafe(12),
+                tenant_slug=tenant_slug,
+                name=data.get("name") or "Untitled table",
+                template=data.get("template") or "classic",
+                show_toggle=bool(data.get("show_toggle", False)),
+                accent_color=data.get("accent_color") or "#4f46e5",
+                currency=data.get("currency") or "EUR",
+            )
+            if "tiers" in data and isinstance(data["tiers"], list):
+                _replace_tiers(table, data["tiers"])
         return Response(_serialize_pricing_table(table), status=status.HTTP_201_CREATED)
 
 
@@ -1795,12 +1898,13 @@ class PricingTableDetailView(APIView):
 
     def patch(self, request: Request, tenant_slug: str, table_id: str) -> Response:
         table = self._get_table(tenant_slug, table_id)
-        for field in ("name", "template", "show_toggle", "accent_color", "currency"):
-            if field in request.data:
-                setattr(table, field, request.data[field])
-        table.save()
-        if "tiers" in request.data and isinstance(request.data["tiers"], list):
-            _replace_tiers(table, request.data["tiers"])
+        with transaction.atomic():
+            for field in ("name", "template", "show_toggle", "accent_color", "currency"):
+                if field in request.data:
+                    setattr(table, field, request.data[field])
+            table.save()
+            if "tiers" in request.data and isinstance(request.data["tiers"], list):
+                _replace_tiers(table, request.data["tiers"])
         return Response(_serialize_pricing_table(table))
 
     def delete(self, request: Request, tenant_slug: str, table_id: str) -> Response:

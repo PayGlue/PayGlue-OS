@@ -4,7 +4,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import AppShell from '../components/AppShell.vue'
-import { PageHeader } from '../components/ui'
+import { PageHeader, ProviderPicker } from '../components/ui'
 import UpgradeBanner from '../components/UpgradeBanner.vue'
 import { useSessionStore } from '../stores/session'
 import { isPlanLimitError, planKeyFromError } from '../lib/planUpgrade'
@@ -22,11 +22,9 @@ import {
   deletePaywallConfig,
   listPricingTables,
   listMappings,
-  createMapping,
-  updateMapping,
   type PaywallConfigData,
 } from '../lib/api'
-import { findOwnMapping, missingMappings } from '../lib/mappingKeys'
+import { ruleForProduct } from '../lib/mappingKeys'
 import type { ProductMapping } from '../types/api'
 import { useHeaderScriptStatus } from '../composables/useHeaderScriptStatus'
 
@@ -148,7 +146,7 @@ function buildSnippet(cfg: { product_id?: string; headline: string; body: string
 const PAYWALL_ENTITLEMENT_KEY = 'paywall'
 
 function syncMappingState(productId: string) {
-  const m = findOwnMapping(mappings.value, productId, PAYWALL_ENTITLEMENT_KEY)
+  const m = ruleForProduct(mappings.value, selectedProvider.value, productId)
   if (m) {
     existingMappingId.value = m.id
     mappingEventType.value = (m.event_type as 'order.paid' | 'subscription.active') || 'order.paid'
@@ -240,7 +238,21 @@ async function saveConfig() {
   const product = activeProducts.value.find(p => p.id === selectedProductId.value)
   const payload = {
     name: formName.value.trim() || 'Untitled paywall',
+    product_provider: ctaMode.value === 'product' && selectedProductId.value ? selectedProvider.value : '',
     product_id: ctaMode.value === 'product' ? selectedProductId.value : '',
+    // What buying this product should do in Ghost. The server writes the one
+    // rule for it in the same transaction as the paywall (PG-254).
+    grant: {
+      event_type: mappingEventType.value,
+      entitlement_key: PAYWALL_ENTITLEMENT_KEY,
+      metadata: {
+        ghost_subscribed: mappingGhostSubscribed.value,
+        ghost_email_types: mappingEmailType.value ? [mappingEmailType.value] : [],
+        ghost_labels: [] as string[],
+        source_type: 'paywall',
+        source_name: formName.value.trim(),
+      },
+    },
     product_name: ctaMode.value === 'product' ? (product?.name ?? selectedProductId.value) : (ctaMode.value === 'pricing_table' ? (pricingTables.value.find(t => t.id === selectedTableId.value)?.name ?? 'Pricing Table') : 'Custom URL'),
     headline: headline.value || 'Premium content',
     body: body.value || 'Purchase access to continue reading.',
@@ -261,46 +273,13 @@ async function saveConfig() {
       savedConfigs.value.unshift(created)
       justSavedConfig.value = created
     }
+    // The rule is written server-side with the paywall, so a saved paywall
+    // without one is not a state that can exist any more (PG-254). Reading it
+    // back and syncing the form is what keeps the "Mapped" badge honest, see
+    // the note in BuyButtonView.
     if (ctaMode.value === 'product' && selectedProductId.value) {
-      const emailTypes = mappingEmailType.value ? [mappingEmailType.value as 'signin' | 'signup' | 'subscribe'] : []
-      const mappingPayload = {
-        payment_provider: selectedProvider.value,
-        event_type: mappingEventType.value,
-        external_product_id: selectedProductId.value,
-        entitlement_key: PAYWALL_ENTITLEMENT_KEY,
-        action: 'grant' as const,
-        quantity: 1,
-        is_active: true,
-        metadata: { ghost_subscribed: mappingGhostSubscribed.value, ghost_email_types: emailTypes, ghost_labels: [] as string[], source_type: 'paywall', source_name: formName.value.trim() },
-      }
-      try {
-        if (existingMappingId.value !== null) {
-          const updated = await updateMapping(slug, token, existingMappingId.value, mappingPayload)
-          mappings.value = mappings.value.map(m => m.id === existingMappingId.value ? updated : m)
-        } else {
-          const created = await createMapping(slug, token, mappingPayload)
-          existingMappingId.value = created.id
-          mappings.value = [created, ...mappings.value]
-        }
-      // A saved widget whose mapping did not save looks finished and grants
-      // nothing on purchase: the event arrives, resolves to no instruction,
-      // and the log shows a green "processed". Swallowing this silently cost
-      // a real test purchase, so it is reported instead.
-      } catch (e: unknown) {
-        saveError.value = `Paywall saved, but the Ghost mapping did not: ${e instanceof Error ? e.message : 'unknown error'}. Buying this product will not grant access until the mapping exists.`
-        saveErrorPlan.value = isPlanLimitError(e) ? planKeyFromError(e) : null
-        return
-      }
-      // Nothing threw, which is not the same as the mapping existing. Read it
-      // back from the server before calling the save a success.
       await loadMappings()
-      const missing = missingMappings(mappings.value, [
-        { productId: selectedProductId.value, entitlementKey: PAYWALL_ENTITLEMENT_KEY, label: 'this paywall' },
-      ])
-      if (missing.length) {
-        saveError.value = 'Paywall saved, but it still has no Ghost mapping. Buying this product will not grant access. Save again, or add the mapping under Analytics.'
-        return
-      }
+      syncMappingState(selectedProductId.value)
     }
     if (isEditing.value) justSavedConfig.value = null
     resetForm()
@@ -583,40 +562,7 @@ const step2Config = computed(() => {
 
             <!-- Product picker -->
             <div v-if="ctaMode === 'product'" class="space-y-2">
-              <div class="flex flex-wrap gap-1.5">
-                <button type="button"
-                  class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
-                  :class="selectedProvider === 'polar' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                  @click="selectedProvider = 'polar'; selectedProductId = ''">Polar</button>
-                <button type="button"
-                  class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
-                  :class="selectedProvider === 'lemonsqueezy' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                  @click="selectedProvider = 'lemonsqueezy'; selectedProductId = ''">Lemon Squeezy</button>
-                <button type="button"
-                  class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
-                  :class="selectedProvider === 'paypal' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                  @click="selectedProvider = 'paypal'; selectedProductId = ''">PayPal</button>
-                <button type="button"
-                  class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
-                  :class="selectedProvider === 'gumroad' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                  @click="selectedProvider = 'gumroad'; selectedProductId = ''">Gumroad</button>
-                <button type="button"
-                  class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
-                  :class="selectedProvider === 'paddle' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                  @click="selectedProvider = 'paddle'; selectedProductId = ''">Paddle</button>
-                <button type="button"
-                  class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
-                  :class="selectedProvider === 'kofi' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                  @click="selectedProvider = 'kofi'; selectedProductId = ''; buttonUrl = ''">Ko-fi</button>
-                <button type="button"
-                  class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
-                  :class="selectedProvider === 'creem' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                  @click="selectedProvider = 'creem'; selectedProductId = ''">Creem</button>
-                <button type="button"
-                  class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
-                  :class="selectedProvider === 'patreon' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                  @click="selectedProvider = 'patreon'; selectedProductId = ''">Patreon</button>
-              </div>
+              <ProviderPicker v-model="selectedProvider" @update:modelValue="selectedProductId = ''" />
               <template v-if="isManualProduct">
                 <input v-model="selectedProductId" type="text" placeholder="Paste a shop item link (ko-fi.com/s/...), a tier name, or kofi-support"
                   class="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none" />

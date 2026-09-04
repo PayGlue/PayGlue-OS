@@ -1,13 +1,14 @@
 # Copyright (c) 2026 PayGlue by André Nünninghoff
 # Licensed under the Business Source License 1.1, see LICENSE.md
-"""Support requests: store, file in Linear, confirm by email, read status back.
+"""Support requests: store, file an issue, confirm by email, read status back.
 
 The order matters. The row is written first and everything after it is
 best-effort, because a request we have is a request we can answer, while a
-request lost to a Linear timeout is gone for good.
+request lost to a tracker timeout is gone for good.
 """
 from __future__ import annotations
 
+import html
 import logging
 from email.utils import formataddr
 
@@ -15,8 +16,8 @@ from django.conf import settings
 from django.utils import timezone
 
 from payglue_backend.authn.lifecycle_emails import _send_branded
-from payglue_backend.tenants import linear
-from payglue_backend.tenants.models import SupportRequest, Tenant
+from payglue_backend.tenants import tracker
+from payglue_backend.tenants.models import SupportRequest, TenantMembership, Tenant
 
 logger = logging.getLogger(__name__)
 
@@ -29,20 +30,124 @@ TOPIC_LABELS = {
     "other": "Something else",
 }
 
-# Statuses we never re-read from Linear. Once an issue is resolved or closed
-# it stays that way for the customer, so a later re-open in Linear (which we
-# do for our own bookkeeping) does not reopen a ticket they consider done.
+# The label each topic gets in the tracker. Five of the six are the topic key
+# itself; "other" would be a poor label name on a board, so it reads general.
+TOPIC_LABEL_NAMES = {
+    "integration": "integration",
+    "billing": "billing",
+    "bug": "bug",
+    "feature": "feature",
+    "account": "account",
+    "other": "general",
+}
+
+# Statuses we never re-read from the tracker. Once an issue is resolved or
+# closed it stays that way for the customer, so a later re-open on our side
+# (which we do for our own bookkeeping) never reopens a ticket they consider
+# done.
 _TERMINAL = {SupportRequest.STATUS_DONE, SupportRequest.STATUS_CANCELLED}
 
 
-def _issue_description(request: SupportRequest, tenant: Tenant) -> str:
-    topic = TOPIC_LABELS.get(request.topic, request.topic or "unspecified")
-    return (
-        f"**From:** {request.name or 'not given'} <{request.email}>\n"
-        f"**Publication:** `{tenant.slug}`\n"
-        f"**Topic:** {topic}\n\n"
-        f"---\n\n{request.message}"
+def _owner_email(tenant: Tenant) -> str:
+    """The address of whoever owns the workspace, or empty."""
+    membership = (
+        tenant.memberships.filter(role=TenantMembership.Role.OWNER)
+        .select_related("user_profile")
+        .first()
     )
+    return getattr(getattr(membership, "user_profile", None), "email", "") or ""
+
+
+def _service_pin(tenant: Tenant):
+    """The newest PIN that is still valid, or None. Revoked and expired ones
+    do not count: both mean the customer withdrew or let lapse their consent."""
+    return (
+        tenant.service_pins.filter(revoked_at__isnull=True, expires_at__gt=timezone.now())
+        .order_by("-created_at")
+        .first()
+    )
+
+
+def _service_pin_line(tenant: Tenant) -> str:
+    """What support is allowed to do, spelled out on the ticket.
+
+    A PIN is the customer consenting to active changes; without one we may read
+    and debug and nothing else. That is the sentence somebody needs before
+    touching an account, and it should not have to be looked up elsewhere.
+
+    Internal only. The customer sees their PIN in the dashboard already, and a
+    consent code has no business sitting in a mailbox longer than it must.
+    """
+    pin = _service_pin(tenant)
+    if pin is None:
+        return "<strong>Service PIN:</strong> none, read and debug only"
+    until = timezone.localtime(pin.expires_at).strftime("%d.%m.%Y %H:%M")
+    return (
+        f"<strong>Service PIN:</strong> <code>{html.escape(pin.code)}</code>, "
+        f"valid until {until}, active changes authorised"
+    )
+
+
+def _issue_description(request: SupportRequest, tenant: Tenant) -> str:
+    """The issue body, as HTML.
+
+    The tracker stores descriptions as HTML and renders markdown literally, so
+    a `**bold**` here would reach us as four asterisks. Everything the customer
+    typed is escaped: their message is arbitrary text that lands in a page we
+    open ourselves, and it may well contain a snippet of their own theme.
+    """
+    topic = TOPIC_LABELS.get(request.topic, request.topic or "unspecified")
+    name = html.escape(request.name or "not given")
+    slug = html.escape(tenant.slug)
+    # Blank lines become paragraphs, single ones stay inside their paragraph.
+    body = "".join(
+        f"<p>{html.escape(block).replace(chr(10), '<br>')}</p>"
+        for block in request.message.strip().split("\n\n")
+        if block.strip()
+    )
+
+    # Contact goes first because it answers the first question anybody opening
+    # this ticket has: where does a reply go. The tracker's email intake takes
+    # that address from the API call rather than from this text, so the order
+    # is for the human reading it, not for a parser.
+    lines = [f"<strong>Contact:</strong> {name} &lt;{html.escape(request.email)}&gt;"]
+    if request.account_email and request.account_email.lower() != request.email.lower():
+        # Only when it differs. Repeating the same address twice is noise, and
+        # a difference is exactly the thing worth seeing.
+        lines.append(
+            f"<strong>Submitted by:</strong> {html.escape(request.account_email)}"
+        )
+    if request.subject:
+        lines.append(f"<strong>Subject:</strong> {html.escape(request.subject)}")
+    lines.append(f"<strong>Publication:</strong> <code>{slug}</code>")
+    owner = _owner_email(tenant)
+    if owner and owner.lower() not in {request.email.lower(), (request.account_email or "").lower()}:
+        # Matters once a workspace has several people in it: the person writing
+        # is not necessarily the one who can decide anything.
+        lines.append(f"<strong>Account owner:</strong> {html.escape(owner)}")
+    lines.append(f"<strong>Topic:</strong> {html.escape(topic)}")
+    lines.append(_service_pin_line(tenant))
+
+    return f"<p>{'<br>'.join(lines)}</p><hr>{body}"
+
+
+def _summary(message: str, limit: int = 80) -> str:
+    """The issue title, from the customer's own words.
+
+    Cutting the raw message at a fixed length pulled line breaks into the
+    title, and the tracker rendered them, so the start of a second paragraph
+    looked like a heading. Only the opening paragraph is used now, whitespace
+    collapsed, and the cut lands on a word boundary rather than mid-word. A
+    title is the opening thought, not a run-on across the whole message.
+    """
+    first = message.strip().split("\n\n", 1)[0]
+    text = " ".join(first.split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    spaced = cut.rsplit(" ", 1)[0]
+    # A single word longer than the limit has no boundary to fall back on.
+    return (spaced if len(spaced) >= limit // 2 else cut) + "..."
 
 
 def create_support_request(
@@ -52,26 +157,64 @@ def create_support_request(
     name: str,
     topic: str,
     message: str,
+    subject: str = "",
+    account_email: str = "",
 ) -> SupportRequest:
     request = SupportRequest.objects.create(
         tenant=tenant,
         email=email,
+        account_email=account_email,
         name=name,
         topic=topic,
+        subject=subject,
         message=message,
     )
 
     topic_label = TOPIC_LABELS.get(topic, "Support")
-    filed = linear.create_support_issue(
-        title=f"[{topic_label}] {tenant.slug}: {message.strip()[:80]}",
-        description=_issue_description(request, tenant),
+    # The customer's own words when they gave us any, otherwise the opening
+    # line of the message. Deriving a summary is always guesswork, so it is the
+    # fallback rather than the rule.
+    headline = subject.strip() or _summary(message)
+    # No category chosen still gets a label. The topic is deliberately optional,
+    # because somebody whose problem fits no box still has a problem, but an
+    # unlabelled ticket cannot be filtered out of a board later.
+    label = TOPIC_LABEL_NAMES.get(topic) or TOPIC_LABEL_NAMES["other"]
+    filed = tracker.create_support_issue(
+        title=f"[{topic_label}] {tenant.slug}: {headline}",
+        description_html=_issue_description(request, tenant),
+        label_names=[label],
     )
     if filed:
-        request.linear_issue_id, request.linear_identifier = filed
-        request.save(update_fields=["linear_issue_id", "linear_identifier"])
+        request.tracker_issue_id, request.tracker_identifier = filed
+        request.save(update_fields=["tracker_issue_id", "tracker_identifier"])
+        # Hands the reply address to the tracker so an answer can be written
+        # straight on the issue. Ours arrive over the API rather than by mail,
+        # and without this the outward path stays shut (PG-266).
+        tracker.link_requester_email(request.tracker_issue_id, email=email, name=name)
 
     _notify(request, tenant)
     return request
+
+
+def _internal_context(request: SupportRequest, tenant: Tenant) -> str:
+    """The block only we see: who really wrote, and what we may do.
+
+    Plain text, because this is the mail that lands in our own inbox and gets
+    read on a phone as often as anywhere else.
+    """
+    lines = [f"Publication: {tenant.slug}"]
+    if request.account_email and request.account_email.lower() != request.email.lower():
+        lines.append(f"Submitted by: {request.account_email}")
+    owner = _owner_email(tenant)
+    if owner and owner.lower() not in {request.email.lower(), (request.account_email or "").lower()}:
+        lines.append(f"Account owner: {owner}")
+    pin = _service_pin(tenant)
+    if pin is None:
+        lines.append("Service PIN: none, read and debug only")
+    else:
+        until = timezone.localtime(pin.expires_at).strftime("%d.%m.%Y %H:%M")
+        lines.append(f"Service PIN: {pin.code}, valid until {until}, active changes authorised")
+    return "\n".join(lines) + "\n"
 
 
 def _notify(request: SupportRequest, tenant: Tenant) -> None:
@@ -99,7 +242,7 @@ def _notify(request: SupportRequest, tenant: Tenant) -> None:
             f"Support: {request.reference} from {tenant.slug}",
             f"{request.name or 'Someone'} <{request.email}> wrote in about "
             f"{TOPIC_LABELS.get(request.topic, 'something else').lower()}.\n\n"
-            f"Publication: {tenant.slug}\n\n"
+            f"{_internal_context(request, tenant)}\n"
             f"---\n\n{request.message}",
             [settings.INTERNAL_ADMIN_EMAIL],
             # Both From and To are our own team address, so Reply would answer
@@ -154,7 +297,7 @@ def _notify_status_change(request: SupportRequest) -> None:
 
 
 def sync_statuses(requests: list[SupportRequest]) -> list[SupportRequest]:
-    """Refresh statuses from Linear in one call, and persist what changed.
+    """Refresh statuses from the tracker and persist what changed.
 
     Called when the customer opens the support page, and by the
     sync_support_statuses cron so a status change reaches the customer by
@@ -162,17 +305,17 @@ def sync_statuses(requests: list[SupportRequest]) -> list[SupportRequest]:
     exactly once, so the notification cannot double-send.
     """
     pending = [
-        r for r in requests if r.linear_issue_id and r.status not in _TERMINAL
+        r for r in requests if r.tracker_issue_id and r.status not in _TERMINAL
     ]
     if not pending:
         return requests
 
-    statuses = linear.fetch_statuses([r.linear_issue_id for r in pending])
+    statuses = tracker.fetch_statuses([r.tracker_issue_id for r in pending])
     now = timezone.now()
     changed = []
     transitioned = []
     for request in pending:
-        new_status = statuses.get(request.linear_issue_id)
+        new_status = statuses.get(request.tracker_issue_id)
         if not new_status:
             continue
         request.status_synced_at = now

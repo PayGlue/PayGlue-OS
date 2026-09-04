@@ -200,3 +200,55 @@ def test_health_check_raises_for_missing_api_key() -> None:
     )
     with pytest.raises(MissingCredentialsError):
         adapter.health_check(TenantContext(tenant_slug="tenant-a"))
+
+
+def _subscription_payload(event_type: str) -> bytes:
+    return json.dumps(
+        {
+            "event_id": "ntf_789",
+            "event_type": event_type,
+            "data": {
+                "id": "sub_123",
+                "customer_id": "ctm_002",
+                "status": "active",
+                "currency_code": "USD",
+                "customer": {"email": "member@example.com"},
+                "items": [{"price": {"id": "pri_2", "product_id": "pro_2"}}],
+            },
+        }
+    ).encode("utf-8")
+
+
+def test_an_overdue_payment_does_not_end_the_subscription() -> None:
+    """PG-275: overdue is not an ending, it is the state a subscription sits in
+    while Paddle emails the customer and retries the card. Revoking there takes
+    access away before the customer has been asked whether they want to keep it.
+
+    Paddle was the only one of the eight adapters that mapped this to a
+    cancellation. Skipping costs nothing: the event is recorded and no
+    entitlement moves.
+    """
+    adapter = PaddlePaymentAdapter(credential_provider=StubCredentialProvider())
+
+    with pytest.raises(UnsupportedEventTypeError):
+        adapter.parse_event(
+            _subscription_payload("subscription.past_due"),
+            {},
+            TenantContext(tenant_slug="tenant-a"),
+        )
+
+
+def test_a_paused_subscription_still_ends_access() -> None:
+    """The other half of the same decision, kept deliberately. A pause is the
+    customer or the provider stopping the arrangement rather than a payment
+    failing, and it is reversible: subscription.resumed maps back to active.
+    """
+    adapter = PaddlePaymentAdapter(credential_provider=StubCredentialProvider())
+
+    event = adapter.parse_event(
+        _subscription_payload("subscription.paused"),
+        {},
+        TenantContext(tenant_slug="tenant-a"),
+    )
+
+    assert event.event_type == "subscription.canceled"

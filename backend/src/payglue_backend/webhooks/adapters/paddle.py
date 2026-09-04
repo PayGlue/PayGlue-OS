@@ -33,7 +33,15 @@ _EVENT_MAP = {
     "subscription.resumed": "subscription.active",
     "subscription.canceled": "subscription.canceled",
     "subscription.paused": "subscription.canceled",
-    "subscription.past_due": "subscription.canceled",
+    # PG-275: subscription.past_due is deliberately absent. Overdue is not an
+    # ending, it is the state a subscription sits in while Paddle emails the
+    # customer and retries the card. Revoking there takes the access away
+    # before the customer has been asked. Paddle was the only adapter of the
+    # eight that did this; the unmapped event now skips, which costs nothing.
+    #
+    # Pause and suspend do still revoke, on purpose: those are the customer or
+    # the provider ending the arrangement, and both are reversible because
+    # resuming maps back to subscription.active.
 }
 
 _SIGNATURE_TOLERANCE_SECONDS = 5

@@ -6,9 +6,7 @@ import secrets
 from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
 from django.db import models
-from django_tenants.models import DomainMixin, TenantMixin
-
-
+from django.utils import timezone
 def _generate_webhook_secret() -> str:
     return secrets.token_urlsafe(24)
 
@@ -19,16 +17,19 @@ def _generate_license_code() -> str:
     return f"PAYGLUE-{secrets.token_hex(5).upper()}"
 
 
-class Tenant(TenantMixin):
+class Tenant(models.Model):
     # PayGlue does NOT use per-tenant Postgres schemas -- all tenant content is
-    # keyed by the tenant_slug string column, never a schema. django_tenants'
-    # default save()/delete() would otherwise call migrate_schemas / drop schema
-    # (neither is wired up here), which 500s the moment a tenant without a schema
-    # is saved -- e.g. editing an old tenant in the admin threw
-    # "CommandError: Unknown command: 'migrate_schemas'". Turning schema
-    # management off makes save()/delete() never touch schemas.
-    auto_create_schema = False
-    auto_drop_schema = False
+    # keyed by the tenant_slug string column, never a schema. This model used to
+    # inherit django_tenants' TenantMixin with schema management switched off,
+    # because the mixin's save()/delete() call migrate_schemas / drop schema and
+    # neither is wired up here: editing an old tenant in the admin threw
+    # "CommandError: Unknown command: 'migrate_schemas'".
+    #
+    # PG-273 dropped the mixin instead of keeping it quiet. All it contributed
+    # was the column below, and carrying the package for one field capped the
+    # Django version for the whole project: django-tenants was the only
+    # dependency in the tree with an upper bound on Django.
+    schema_name = models.CharField(max_length=63, unique=True, db_index=True)
 
     class Status(models.TextChoices):
         ACTIVE = "active", "active"
@@ -96,6 +97,15 @@ class Tenant(TenantMixin):
 
 
 class UserProfile(models.Model):
+    # No, there is no Firebase here, and there has not been for a long time.
+    # This holds the `sub` claim out of the Supabase JWT, or the local user id
+    # on an installation that keeps its own accounts (PG-237). Only the name is
+    # left over from an earlier auth stack.
+    #
+    # It keeps that name on purpose. Renaming it is a migration on the one table
+    # that auth, memberships and billing all hang off, in exchange for nothing a
+    # user or an operator would ever notice (PG-223). The next migration that
+    # touches this model for a real reason can take the rename along.
     firebase_uid = models.CharField(max_length=255, unique=True)
     email = models.EmailField(unique=True)
     # PG-237: only ever set where the identity lives on this server instead of
@@ -223,6 +233,16 @@ class BillingAccount(models.Model):
     # team members never have their own BillingAccount, so a lapsed owner's
     # account is either paying or on its way to full deletion.
     cancellation_detected_at = models.DateTimeField(null=True, blank=True)
+    # PG-298: set when the poll first sees the subscription as past_due, i.e.
+    # Creem is still retrying the card. Phase 1 of the lapse process: the
+    # customer is told, access is untouched, no clock runs yet. Cleared when
+    # the subscription is active again or once phase 2 begins.
+    payment_failed_detected_at = models.DateTimeField(null=True, blank=True)
+    # PG-298: set by pause_lapsed_accounts once the 30-day grace period after
+    # cancellation_detected_at ran out. The account is not deleted any more:
+    # every tenant is paused, the owner can still sign in, and a new plan
+    # through the checkout webhook lifts the pause again.
+    lapsed_at = models.DateTimeField(null=True, blank=True)
     # PG-190: set when the poll sees a Creem status that isn't clearly
     # active/trialing/scheduled_cancel NOR a confirmed "canceled" -- e.g.
     # past_due/unpaid/paused, or the raw status fetch itself failed. These
@@ -269,6 +289,14 @@ class LifecycleEmailTemplate(models.Model):
         SUBSCRIPTION_ENDED = "subscription_ended", "subscription_ended"
         CANCELLATION_REMINDER_15D = "cancellation_reminder_15d", "cancellation_reminder_15d"
         CANCELLATION_FINAL_WARNING = "cancellation_final_warning", "cancellation_final_warning"
+        # PG-298: a card that Creem could not charge. Sent while Creem is still
+        # retrying, before any grace period starts, so the customer can fix the
+        # payment method without ever seeing a countdown.
+        PAYMENT_FAILED = "payment_failed", "payment_failed"
+        PAYMENT_FAILED_REMINDER = "payment_failed_reminder", "payment_failed_reminder"
+        # PG-298: the grace period ran out and every workspace is paused. Not
+        # deleted, which is the difference to ACCOUNT_DELETED below.
+        ACCESS_PAUSED = "access_paused", "access_paused"
         # PG-192: operational alert (not a subscription-lifecycle mail) -- warns
         # the creator when their Ghost delivery is repeatedly failing.
         GHOST_DELIVERY_FAILING = "ghost_delivery_failing", "ghost_delivery_failing"
@@ -444,6 +472,13 @@ class InvitationGrant(models.Model):
     # instance id Creem returns), so the key shows as used in Creem's dashboard
     # and we could deactivate it later.
     creem_license_instance_id = models.CharField(max_length=64, blank=True, default="")
+    # PG-298: the customer and subscription ids from the checkout that created
+    # this grant. The BillingAccount only comes into existence later, at the
+    # first publication, and until then this row is the only place that
+    # remembers which Creem subscription the signup belongs to. Without it the
+    # lifecycle poll never saw a first-time buyer at all.
+    creem_customer_id = models.CharField(max_length=64, blank=True, default="")
+    creem_subscription_id = models.CharField(max_length=64, blank=True, default="")
     verified_at = models.DateTimeField(auto_now=True)
     consumed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -657,7 +692,15 @@ class ServicePin(models.Model):
         return f"{self.code} for {self.tenant.slug}"
 
 
-class TenantDomain(DomainMixin):
+class TenantDomain(models.Model):
+    # The three fields above created_at used to come from django_tenants'
+    # DomainMixin. Declared here since PG-273, unchanged in shape, so the table
+    # is untouched.
+    domain = models.CharField(max_length=253, unique=True, db_index=True)
+    tenant = models.ForeignKey(
+        Tenant, db_index=True, related_name="domains", on_delete=models.CASCADE
+    )
+    is_primary = models.BooleanField(default=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -928,11 +971,11 @@ class NewsletterRouting(models.Model):
 
 
 class SupportRequest(models.Model):
-    """A support request raised from the dashboard, mirrored into Linear.
+    """A support request raised from the dashboard, mirrored into the tracker.
 
-    We have no helpdesk, only an inbox and Linear. Rather than pay for
-    Linear Ask, every request opens an issue on the support team and keeps the
-    identifier (PG-231 and so on) so both sides can name the same thing.
+    We have no helpdesk, only an inbox and an issue tracker. Every request
+    opens an issue in the support project and keeps the identifier
+    (PGSUP-12 and so on) so both sides can name the same thing.
 
     Deliberately one-way: we push the request in and read the status back out.
     Replies still happen by email. Issue *content* is never exposed to the
@@ -943,25 +986,42 @@ class SupportRequest(models.Model):
     STATUS_IN_PROGRESS = "in_progress"
     STATUS_DONE = "done"
     STATUS_CANCELLED = "cancelled"
+    # The words the customer reads. Deliberately the same ones we use in the
+    # tracker, so a conversation about a ticket does not need a translation
+    # step in anybody's head. The keys stay internal and stay stable: the
+    # mapping from tracker state to key runs on the state *group*, so renaming
+    # a column changes neither.
     STATUS_CHOICES = [
-        (STATUS_OPEN, "Open"),
-        (STATUS_IN_PROGRESS, "In progress"),
-        (STATUS_DONE, "Resolved"),
-        (STATUS_CANCELLED, "Closed"),
+        (STATUS_OPEN, "Pending"),
+        (STATUS_IN_PROGRESS, "Active"),
+        (STATUS_DONE, "Closed"),
+        (STATUS_CANCELLED, "Cancelled"),
     ]
 
     tenant = models.ForeignKey(
         Tenant, on_delete=models.CASCADE, related_name="support_requests"
     )
+    # Where we reply. The customer may change this, so it is not necessarily
+    # the address they signed in with.
     email = models.EmailField()
+    # Who was actually signed in. Kept so a mismatch is visible on the ticket
+    # rather than silently letting somebody write under another name, which is
+    # the price of honouring the field at all.
+    account_email = models.EmailField(blank=True)
     name = models.CharField(max_length=200, blank=True)
     topic = models.CharField(max_length=40, blank=True)
+    # What the customer calls their own request. Blank on everything filed
+    # before this field existed, and the issue title falls back to the opening
+    # line of the message for those.
+    subject = models.CharField(max_length=120, blank=True)
     message = models.TextField()
 
-    # Blank when Linear was unreachable. The request is still stored and the
-    # customer still gets a reply, they just have no reference number.
-    linear_issue_id = models.CharField(max_length=64, blank=True)
-    linear_identifier = models.CharField(max_length=32, blank=True, db_index=True)
+    # Blank when the tracker was unreachable. The request is still stored and
+    # the customer still gets a reply, they just have no reference number.
+    # Named for the job rather than the product: this is the second tracker
+    # behind these two columns.
+    tracker_issue_id = models.CharField(max_length=64, blank=True)
+    tracker_identifier = models.CharField(max_length=32, blank=True, db_index=True)
 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_OPEN)
     status_synced_at = models.DateTimeField(null=True, blank=True)
@@ -975,13 +1035,13 @@ class SupportRequest(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"{self.linear_identifier or 'unfiled'} from {self.email}"
+        return f"{self.tracker_identifier or 'unfiled'} from {self.email}"
 
     @property
     def reference(self) -> str:
         """What the customer is told to quote. Falls back to our own id so a
-        Linear outage still leaves something to search for."""
-        return self.linear_identifier or f"PG-REQ-{self.pk}"
+        tracker outage still leaves something to search for."""
+        return self.tracker_identifier or f"PG-REQ-{self.pk}"
 
 
 class FoundingSale(models.Model):
@@ -1015,3 +1075,64 @@ class FoundingSale(models.Model):
 
     def __str__(self) -> str:
         return f"{self.order_id} (tier {self.tier or 'none'})"
+
+
+class ChangelogEntry(models.Model):
+    """PG-228: one changelog entry, served rather than compiled.
+
+    Publishing a line used to cost a production deploy and had to be written
+    twice: once in the static site's data file for the public page, once as a
+    hardcoded array in the dashboard shell for the notification bell. The two
+    were unrelated, so they drifted, and after PG-251 they even lived in
+    separate builds. Both now read this table.
+
+    The self-hosted build gets this model with an empty table, which is the
+    right answer: an installation that is not ours has no announcements from us
+    to show. It also stops our own announcements travelling into the public
+    mirror, which is what the hardcoded array did.
+    """
+
+    class Status(models.TextChoices):
+        DONE = "done", "Shipped"
+        IN_PROGRESS = "in-progress", "In progress"
+        PIVOT = "pivot", "Pivot"
+        RECONSIDERED = "reconsidered", "Reconsidered"
+        WONT_BUILD = "wont-build", "Won't build"
+
+    # Free text, not a date: entries are stamped "August 2026" on the public
+    # page, and pretending to a precision we do not have would force a day on
+    # every historical entry that never had one. published_at below carries the
+    # machine-readable ordering.
+    date = models.CharField(max_length=40)
+    version = models.CharField(max_length=20, blank=True)
+    category = models.CharField(max_length=40, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DONE)
+    badge = models.CharField(max_length=40, blank=True)
+    # A single line above the title on three of the older entries, along the
+    # lines of "Strategic decision, impact: community". Not every entry has one
+    # and no new entry has needed one since, but dropping it would silently
+    # rewrite published history.
+    meta = models.CharField(max_length=120, blank=True)
+    title = models.CharField(max_length=200)
+    description = models.TextField()
+    items = models.JSONField(default=list, blank=True)
+
+    # The bell is a different audience from the page. The page carries
+    # "won't build" and "reconsidered" entries that nobody needs a dot for, so
+    # the bell is opt-in rather than everything-by-default.
+    show_in_bell = models.BooleanField(default=False)
+    # Two lines for a 16rem column. Without a field of its own the bell would
+    # inherit the page's description, which is written to be read at length.
+    bell_body = models.TextField(blank=True)
+
+    # Ordering, and what the unread dot compares against.
+    published_at = models.DateTimeField(default=timezone.now)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-published_at", "-id"]
+        verbose_name_plural = "Changelog entries"
+
+    def __str__(self) -> str:
+        return f"{self.version or self.date}: {self.title}"

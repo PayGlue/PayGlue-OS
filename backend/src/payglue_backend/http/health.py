@@ -1,6 +1,7 @@
 # Copyright (c) 2026 PayGlue by André Nünninghoff
 # Licensed under the Business Source License 1.1, see LICENSE.md
 import json
+import logging
 
 from django.conf import settings
 from django.db import connection
@@ -13,6 +14,27 @@ from django.views import View
 _REDIS_TIMEOUT_SECONDS = 3
 _CELERY_PING_TIMEOUT_SECONDS = 3
 
+logger = logging.getLogger(__name__)
+
+# What a failing check says to the outside world.
+#
+# These endpoints exist so that an uptime monitor can ask "is the database up"
+# without the database being exposed to anyone. Returning the raw exception
+# defeated exactly that: a Postgres or Redis connection error carries the host,
+# the address, the port and sometimes the user and database name, and it shows
+# up precisely when something is broken and somebody is looking (PG-253).
+#
+# The real message still exists, it goes to the log where the person who can
+# act on it will find it. The reader on the status page gets up or down, which
+# is all a status page can honestly say anyway.
+_OPAQUE_FAILURE_DETAIL = "unavailable"
+
+
+def _fail(component: str, exc: object) -> tuple[bool, str]:
+    """Log the real reason, hand the outside world an opaque one."""
+    logger.warning("health check failed: %s: %s", component, exc)
+    return False, _OPAQUE_FAILURE_DETAIL
+
 
 def _check_database() -> tuple[bool, str]:
     try:
@@ -21,7 +43,7 @@ def _check_database() -> tuple[bool, str]:
             cursor.fetchone()
         return True, "ok"
     except OperationalError as exc:
-        return False, str(exc)
+        return _fail("database", exc)
 
 
 def _check_redis() -> tuple[bool, str]:
@@ -34,10 +56,10 @@ def _check_redis() -> tuple[bool, str]:
             socket_timeout=_REDIS_TIMEOUT_SECONDS,
         )
         if not client.ping():
-            return False, "PING returned falsy"
+            return _fail("cache", "PING returned falsy")
         return True, "ok"
     except Exception as exc:  # redis raises its own ConnectionError/TimeoutError
-        return False, str(exc)
+        return _fail("cache", exc)
 
 
 def _check_celery_worker() -> tuple[bool, str]:
@@ -49,10 +71,10 @@ def _check_celery_worker() -> tuple[bool, str]:
         # worker is listening, instead of waiting on a queue that's stuck.
         replies = celery_app.control.inspect(timeout=_CELERY_PING_TIMEOUT_SECONDS).ping()
         if not replies:
-            return False, "no worker responded"
+            return _fail("worker", "no worker responded")
         return True, "ok"
     except Exception as exc:
-        return False, str(exc)
+        return _fail("worker", exc)
 
 
 def _json_response(payload: dict[str, object], healthy: bool) -> HttpResponse:

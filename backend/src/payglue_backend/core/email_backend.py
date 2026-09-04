@@ -36,6 +36,16 @@ class ResendAPIEmailBackend(BaseEmailBackend):
     the real Resend error, so the admin "send test" button can show it.
     """
 
+    def __init__(self, *, fail_silently: bool = False, alias=None, **kwargs) -> None:
+        # Django 6.1 serves fail_silently off BaseEmailBackend.__getattr__ with a
+        # deprecation warning, and 7.0 will raise a TypeError for the keyword. A
+        # backend that honours it has to own the attribute, which is what the
+        # warning asks for. Declared here so the next major finds nothing to
+        # break: this is the only path mail leaves the application by, because
+        # Railway blocks outbound SMTP.
+        super().__init__(alias=alias, **kwargs)
+        self.fail_silently = fail_silently
+
     def send_messages(self, email_messages) -> int:
         if not email_messages:
             return 0

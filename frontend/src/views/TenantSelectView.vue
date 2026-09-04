@@ -20,7 +20,7 @@ const openOrg = async (tenantSlug: string) => {
     <section class="w-full max-w-lg">
 
       <div class="mb-8 text-center">
-        <RouterLink to="/"><PayGlueLogo size="lg" /></RouterLink>
+        <a href="/"><PayGlueLogo size="lg" /></a>
       </div>
 
       <div class="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">

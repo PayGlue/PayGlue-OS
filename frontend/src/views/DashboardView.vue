@@ -12,6 +12,7 @@ import {
   listTeamMembers,
   listWebhookEvents,
 } from '../lib/api'
+import { deliveryHealth, deliveryHealthByProvider } from '../lib/deliveryHealth'
 import { useSessionStore } from '../stores/session'
 import type { AuditEvent, ProductMapping, TeamMember, WebhookEvent } from '../types/api'
 
@@ -88,11 +89,15 @@ const loadDashboard = async () => {
   }
 }
 
-const failedEvents = computed(
-  () => webhookEvents.value.filter((event) => event.status === 'failed' || event.status === 'dead_letter').length,
-)
+// PG-264: the same tile used to count every failure ever recorded, so it read
+// "N need attention" forever and stopped meaning anything. Recent deliveries
+// only, and only the ones nobody will retry.
+const delivery = computed(() => deliveryHealth(webhookEvents.value))
+const failedEvents = computed(() => delivery.value.gaveUp)
 
-const processedToday = computed(
+// Not "today" despite the old name: this is every successful grant the events
+// endpoint returned. The card says "Access delivered", which is what it is.
+const deliveredCount = computed(
   () => webhookEvents.value.filter((event) => event.status === 'processed').length,
 )
 
@@ -131,25 +136,22 @@ const connectedProviders = computed(() =>
 )
 const activeMappings = computed(() => mappings.value.filter((m) => m.is_active).length)
 
-// Health panel: Ghost first, then every connected provider, flagged amber when
-// it has failed deliveries in the recent window.
-const failuresByProvider = computed(() => {
-  const counts: Record<string, number> = {}
-  for (const event of webhookEvents.value) {
-    if (event.status === 'failed' || event.status === 'dead_letter') {
-      counts[event.provider] = (counts[event.provider] ?? 0) + 1
-    }
-  }
-  return counts
-})
+// Health panel: Ghost first, then every connected provider. The old comment
+// here claimed "in the recent window" and there was no window, which is worse
+// than no comment: it describes an intention nobody implemented. Same
+// classification as everywhere else now (PG-264).
+const healthByProvider = computed(() => deliveryHealthByProvider(webhookEvents.value))
 const healthItems = computed(() =>
   connectedProviders.value.map((key) => {
-    const failures = failuresByProvider.value[key] ?? 0
+    const health = healthByProvider.value[key] ?? { retrying: 0, gaveUp: 0, needsAttention: false }
+    let note = 'Connected'
+    if (health.gaveUp > 0) note = `${health.gaveUp} failed, no retry left`
+    else if (health.retrying > 0) note = `${health.retrying} retrying`
     return {
       key,
       label: providerLabels[key] ?? key,
-      ok: failures === 0,
-      note: failures === 0 ? 'Connected' : `${failures} to retry`,
+      ok: !health.needsAttention,
+      note,
     }
   }),
 )
@@ -331,7 +333,7 @@ onMounted(async () => {
               <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none"><path d="m5 13 4 4L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </span>
           </div>
-          <p class="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100 tabular-nums">{{ processedToday }}</p>
+          <p class="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100 tabular-nums">{{ deliveredCount }}</p>
           <p class="mt-1.5 text-sm font-semibold text-slate-900 dark:text-slate-100">Access delivered</p>
           <p class="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Successful Ghost grants</p>
         </article>

@@ -4,7 +4,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import AppShell from '../components/AppShell.vue'
-import { PageHeader, UiButton } from '../components/ui'
+import { PageHeader, ProviderPicker, UiButton } from '../components/ui'
 import UpgradeBanner from '../components/UpgradeBanner.vue'
 import { useSessionStore } from '../stores/session'
 import { isPlanLimitError, planKeyFromError } from '../lib/planUpgrade'
@@ -21,10 +21,8 @@ import {
   getCreemProducts,
   getPatreonProducts,
   listMappings,
-  createMapping,
-  updateMapping,
 } from '../lib/api'
-import { entitlementKeyForProduct, findOwnMapping, missingMappings } from '../lib/mappingKeys'
+import { entitlementKeyForProduct, ruleForProduct } from '../lib/mappingKeys'
 import { embedScript } from '../lib/publicUrls'
 import type { PricingTableData, PricingFeatureIcon, ProductMapping } from '../types/api'
 
@@ -304,7 +302,7 @@ async function loadMappings() {
 
 function syncTierMappingState(tier: LocalTier) {
   if (!tier.selectedProductId) return
-  const m = findOwnMapping(mappings.value, tier.selectedProductId, entitlementKeyForProduct(tier.selectedProductId))
+  const m = ruleForProduct(mappings.value, tier.selectedProvider, tier.selectedProductId)
   if (m) {
     tier.existingMappingId = m.id
     tier.mappingEventType = (m.event_type as 'order.paid' | 'subscription.active') || 'order.paid'
@@ -345,6 +343,12 @@ watch(allProducts, () => {
     }
   })
 })
+
+/** Picking a provider clears the product, because ids do not carry across. */
+function setTierProvider(tier: LocalTier, provider: LocalTier['selectedProvider']) {
+  tier.selectedProvider = provider
+  tier.selectedProductId = ''
+}
 
 function resetForm() {
   editingId.value = null
@@ -387,7 +391,7 @@ function startEdit(table: PricingTableData) {
     const { id: pId, provider: pProv } = persisted
       ? { id: t.product_id!, provider: t.product_provider as LocalTier['selectedProvider'] }
       : productIdForUrl(t.cta_url)
-    const em = pId ? findOwnMapping(mappings.value, pId, entitlementKeyForProduct(pId)) : undefined
+    const em = pId ? ruleForProduct(mappings.value, pProv, pId) : undefined
     const emEmailTypes = em?.metadata?.ghost_email_types ?? (em?.metadata?.ghost_email_type ? [em.metadata.ghost_email_type] : ['signin'])
     return defaultTier({
       id: t.id,
@@ -511,6 +515,20 @@ async function save() {
         features: t.features,
         product_provider: t.selectedProductId ? t.selectedProvider : '',
         product_id: t.selectedProductId,
+        // Travels with the tier, so the server can write the rule for this
+        // product in the same transaction as the table (PG-254).
+        grant: {
+          event_type: t.mappingEventType,
+          entitlement_key: entitlementKeyForProduct(t.selectedProductId || ''),
+          metadata: {
+            ghost_subscribed: t.mappingGhostSubscribed,
+            ghost_email_types: t.mappingEmailType ? [t.mappingEmailType] : [],
+            ghost_labels: [] as string[],
+            source_type: 'pricing_table',
+            source_name: formName.value,
+            source_tier: t.name,
+          },
+        },
       })),
     }
     let saved: PricingTableData
@@ -524,54 +542,13 @@ async function save() {
       editingId.value = saved.id
     }
     justSaved.value = saved
-    const failedMappings: string[] = []
-    const expected: { productId: string; entitlementKey: string; label: string }[] = []
-    // Two tiers may point at the same product. Since PG-233 the key comes from
-    // the product, so they would describe one and the same mapping and the
-    // second write would collide with the first on the unique constraint.
-    const handledProducts = new Set<string>()
-    for (const [tierIdx, tier] of formTiers.value.entries()) {
-      if (!tier.selectedProductId) continue
-      const label = tier.name || `Tier ${tierIdx + 1}`
-      const entitlementKey = entitlementKeyForProduct(tier.selectedProductId)
-      expected.push({ productId: tier.selectedProductId, entitlementKey, label })
-      if (handledProducts.has(tier.selectedProductId)) continue
-      handledProducts.add(tier.selectedProductId)
-      const emailTypes = tier.mappingEmailType ? [tier.mappingEmailType as 'signin' | 'signup' | 'subscribe'] : []
-      const mappingPayload = {
-        payment_provider: tier.selectedProvider,
-        event_type: tier.mappingEventType,
-        external_product_id: tier.selectedProductId,
-        entitlement_key: entitlementKey,
-        action: 'grant' as const,
-        quantity: 1,
-        is_active: true,
-        metadata: { ghost_subscribed: tier.mappingGhostSubscribed, ghost_email_types: emailTypes, ghost_labels: [] as string[], source_type: 'pricing_table', source_name: formName.value, source_tier: tier.name },
-      }
-      try {
-        if (tier.existingMappingId !== null) {
-          await updateMapping(session.activeTenantSlug, session.idToken, tier.existingMappingId, mappingPayload)
-        } else {
-          const created = await createMapping(session.activeTenantSlug, session.idToken, mappingPayload)
-          tier.existingMappingId = created.id
-          mappings.value = [created, ...mappings.value]
-        }
-      } catch (e: unknown) {
-        failedMappings.push(`${label} (${e instanceof Error ? e.message : 'unknown error'})`)
-      }
-    }
-    if (failedMappings.length) {
-      // See the note in BuyButtonView: a tier that saved without its mapping
-      // takes money and grants nothing, and the event log calls it processed.
-      saveError.value = `Table saved, but the Ghost mapping failed for ${failedMappings.join(', ')}. Buying those products will not grant access until the mapping exists.`
-    } else if (expected.length) {
-      // Nothing threw, which is not the same as every tier having a mapping.
-      // Read the state back from the server and say so if one is missing.
+    // The rules travel with the tiers now and are written server-side in the
+    // same transaction (PG-254), so there is nothing to write here and nothing
+    // to check afterwards. Two tiers on the same product are no longer a case
+    // to work around either: they resolve to one rule, which is the point.
+    if (formTiers.value.some(t => t.selectedProductId)) {
       await loadMappings()
-      const missing = missingMappings(mappings.value, expected)
-      if (missing.length) {
-        saveError.value = `Table saved, but ${missing.join(', ')} still has no Ghost mapping. Buying those products will not grant access. Reopen the table and save again, or add the mapping under Analytics.`
-      }
+      formTiers.value.forEach(syncTierMappingState)
     }
   } catch (e: unknown) {
     saveError.value = e instanceof Error ? e.message : 'Save failed.'
@@ -894,40 +871,7 @@ onMounted(async () => {
                 </div>
                 <!-- Product picker for paid types -->
                 <div v-if="tier.cta_type === 'one_time' || tier.cta_type === 'subscription'" class="space-y-1.5">
-                  <div class="flex flex-wrap gap-1.5">
-                    <button type="button"
-                      class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-                      :class="tier.selectedProvider === 'polar' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                      @click="tier.selectedProvider = 'polar'; tier.selectedProductId = ''; tier.cta_url = ''">Polar</button>
-                    <button type="button"
-                      class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-                      :class="tier.selectedProvider === 'lemonsqueezy' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                      @click="tier.selectedProvider = 'lemonsqueezy'; tier.selectedProductId = ''; tier.cta_url = ''">Lemon Squeezy</button>
-                    <button type="button"
-                      class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-                      :class="tier.selectedProvider === 'paypal' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                      @click="tier.selectedProvider = 'paypal'; tier.selectedProductId = ''; tier.cta_url = ''">PayPal</button>
-                    <button type="button"
-                      class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-                      :class="tier.selectedProvider === 'gumroad' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                      @click="tier.selectedProvider = 'gumroad'; tier.selectedProductId = ''; tier.cta_url = ''">Gumroad</button>
-                    <button type="button"
-                      class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-                      :class="tier.selectedProvider === 'paddle' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                      @click="tier.selectedProvider = 'paddle'; tier.selectedProductId = ''; tier.cta_url = ''">Paddle</button>
-                    <button type="button"
-                      class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-                      :class="tier.selectedProvider === 'kofi' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                      @click="tier.selectedProvider = 'kofi'; tier.selectedProductId = ''; tier.cta_url = ''">Ko-fi</button>
-                    <button type="button"
-                      class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-                      :class="tier.selectedProvider === 'creem' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                      @click="tier.selectedProvider = 'creem'; tier.selectedProductId = ''; tier.cta_url = ''">Creem</button>
-                    <button type="button"
-                      class="rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors"
-                      :class="tier.selectedProvider === 'patreon' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                      @click="tier.selectedProvider = 'patreon'; tier.selectedProductId = ''; tier.cta_url = ''; tier.mappingEventType = 'subscription.active'">Patreon</button>
-                  </div>
+                  <ProviderPicker :model-value="tier.selectedProvider" @update:model-value="v => setTierProvider(tier, v as typeof tier.selectedProvider)" />
                   <template v-if="tier.selectedProvider === 'kofi'">
                     <input
                       v-model="tier.selectedProductId"

@@ -182,7 +182,15 @@ class PolarPaymentAdapter:
         if not isinstance(data, dict):
             raise InvalidWebhookPayloadError("missing data object")
 
-        if event_type == "subscription.canceled":
+        # Every subscription event goes to the subscription parser. Only
+        # `subscription.canceled` used to, so `subscription.active` and
+        # `subscription.revoked` were handed to the order parser, which asks
+        # for a `data.items` array that a subscription payload does not carry.
+        # Both failed on every single Polar subscription, and because the
+        # separate `order.paid` grants access anyway, nobody noticed the grant
+        # side. The cancel side had no second path: not one Polar cancellation
+        # has ever been processed (PG-257).
+        if event_type.startswith("subscription."):
             return self._parse_subscription_event(
                 data=data,
                 event_id=event_id,
@@ -277,13 +285,31 @@ class PolarPaymentAdapter:
         event_type: str,
         timestamp: "datetime",
     ) -> CanonicalPaymentEvent:
-        subscription = data.get("subscription")
-        if not isinstance(subscription, dict):
-            raise InvalidWebhookPayloadError("missing data.subscription object")
+        # Polar nests the subscription under `data.subscription` in some
+        # payloads and puts its fields straight on `data` in others. Reading
+        # only the nested shape meant every real cancellation was rejected with
+        # "missing data.subscription object". Both shapes are accepted; the
+        # flat one is what a live Polar cancellation actually looks like.
+        nested = data.get("subscription")
+        subscription = nested if isinstance(nested, dict) else data
 
         customer = subscription.get("customer")
         if not isinstance(customer, dict):
             raise InvalidWebhookPayloadError("missing subscription.customer object")
+
+        # A cancellation booked for the end of the paid period is not an ending
+        # yet: the member paid through `current_period_end` and keeps access
+        # until then. Polar sends `subscription.revoked` when the period is
+        # actually over, and that is the event that withdraws access. Skipped
+        # rather than failed, because doing nothing here is the correct
+        # outcome, not an error to retry.
+        if event_type == "subscription.canceled" and subscription.get("cancel_at_period_end"):
+            period_end = self._optional_str(subscription.get("current_period_end"))
+            if self._still_running(period_end, timestamp):
+                raise UnsupportedEventTypeError(
+                    "cancellation scheduled for the end of the paid period, "
+                    f"access runs until {period_end}"
+                )
 
         # Extract product_id from subscription.product.id or subscription.price.product_id
         product_id: str | None = None
@@ -328,6 +354,24 @@ class PolarPaymentAdapter:
             ),
             status=self._optional_str(subscription.get("status")) or "canceled",
         )
+
+    @staticmethod
+    def _still_running(period_end: str | None, now: "datetime") -> bool:
+        """True while the paid period has not run out yet.
+
+        An unreadable or missing date counts as running: keeping access one
+        cycle too long is a smaller wrong than taking it from somebody who
+        paid for it.
+        """
+        if not period_end:
+            return True
+        try:
+            ends = datetime.fromisoformat(period_end.replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        if ends.tzinfo is None:
+            ends = ends.replace(tzinfo=UTC)
+        return ends > now
 
     def supports_event(self, event_type: str) -> bool:
         return event_type in self._supported_events
