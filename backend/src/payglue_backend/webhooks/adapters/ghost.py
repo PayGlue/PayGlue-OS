@@ -22,6 +22,9 @@ from payglue_backend.core.models import CanonicalCustomer, EntitlementInstructio
 
 logger = logging.getLogger(__name__)
 
+# Ghost rejects a member note longer than this.
+_NOTE_MAX_CHARS = 500
+
 
 class HttpResponse:
     def __init__(self, status_code: int, text: str) -> None:
@@ -187,18 +190,36 @@ class GhostCmsAdapter:
         # The stripe_connected lookup above is a network call that falls back to
         # False when it fails, so tying the label to it made the member's state
         # depend on whether an unrelated request succeeded.
-        if is_grant:
-            labels.append({"name": "payglue-active"})
-            labels.append({"name": f"payglue-provider:{_slugify(meta.get('_provider', 'payglue'))}"})
+        # PG-271: the status label is written in both directions. Leaving the
+        # member with no status at all made a cancellation, a grant that never
+        # ran and a never-customer look identical, which is exactly the question
+        # someone asks months later. The provider label used to hang off the
+        # grant branch and disappeared with the status, taking the one fact that
+        # says who took the money.
+        labels.append({"name": "payglue-active" if is_grant else "payglue-ended"})
+        labels.append({"name": f"payglue-provider:{_slugify(meta.get('_provider', 'payglue'))}"})
         provider = meta.get("_provider", "payglue")
         product_id = meta.get("_product_id", instruction.entitlement_key)
         event_id = meta.get("_event_id", "")
         note_lines = [f"Direct via PayGlue | Provider: {provider}", f"Product: {product_id}"]
-        if event_id:
-            note_lines.append(f"Order: {event_id}")
+        order = self._stamped_line("Order", meta.get("_occurred_at"), event_id)
+        if order:
+            note_lines.append(order)
         note = "\n".join(note_lines)
 
-        member_id = self._find_member_id(members_url, email, headers)
+        member_id, existing_note = self._find_member(members_url, email, headers)
+        if not is_grant:
+            if member_id is None:
+                # Creating a member here would invent a cancellation for someone
+                # who never bought anything. Reachable through the
+                # revoke-everything path for providers that do not name the tier
+                # on a cancellation.
+                logger.info("ghost revoke skipped, no member for email=%s", email)
+                return
+            # An ending adds a line, it does not replace the purchase note. What
+            # was bought and under which order stays readable, which is the
+            # whole point of looking at a cancelled member months later.
+            note = self._with_ended_line(existing_note or note, meta.get("_occurred_at"), event_id)
 
         try:
             if member_id is None:
@@ -258,7 +279,10 @@ class GhostCmsAdapter:
                 logger.info("ghost update existing member id=%s email=%s", member_id, email)
                 response = self._http_client.put(
                     url=f"{members_url}{member_id}/",
-                    json_body={"members": [{"comped": comped, "labels": labels}]},
+                    # The note travels with the update from PG-271 on. Without
+                    # it an ending had nowhere to record its date, and a repeat
+                    # purchase left the previous ending standing as a lie.
+                    json_body={"members": [{"comped": comped, "labels": labels, "note": note}]},
                     headers=headers,
                 )
                 logger.info("ghost update member response status=%s", response.status_code)
@@ -272,9 +296,35 @@ class GhostCmsAdapter:
                 f"ghost returned status {response.status_code}"
             )
 
-    def _find_member_id(
+    @staticmethod
+    def _stamped_line(label: str, occurred_at: object, event_id: str) -> str:
+        """One note line: what happened, when, and which event says so. Both the
+        date and the id are optional. Events queued before the date shipped carry
+        none, and the newsletter path builds its instructions without one."""
+        date = str(occurred_at or "")[:10]
+        parts = [f"{label}: {date}" if date else label]
+        if event_id:
+            parts.append(f"Event: {event_id}")
+        if len(parts) == 1 and not date:
+            return ""
+        return " | ".join(parts)
+
+    @classmethod
+    def _with_ended_line(cls, note: str, occurred_at: object, event_id: str) -> str:
+        """Add the end date under the purchase lines, replacing an earlier one
+        rather than stacking."""
+        ended = cls._stamped_line("Ended", occurred_at, event_id) or "Ended"
+
+        kept = [line for line in note.splitlines() if line and not line.startswith("Ended")]
+        # Ghost caps the note at 500 characters. The end date is the newest fact,
+        # so it displaces the oldest line instead of pushing the write over.
+        while kept and len("\n".join([*kept, ended])) > _NOTE_MAX_CHARS:
+            kept.pop(0)
+        return "\n".join([*kept, ended])[:_NOTE_MAX_CHARS]
+
+    def _find_member(
         self, members_url: str, email: str, headers: dict[str, str]
-    ) -> str | None:
+    ) -> tuple[str | None, str]:
         safe_email = email.replace("'", "%27")
         lookup_url = f"{members_url}?filter=email:'{safe_email}'"
         try:
@@ -283,7 +333,7 @@ class GhostCmsAdapter:
             raise CmsApplyEntitlementError("ghost member lookup failed") from exc
 
         if response.status_code == 404:
-            return None
+            return None, ""
         if response.status_code >= 400:
             raise CmsApplyEntitlementError(
                 f"ghost member lookup returned status {response.status_code}"
@@ -294,11 +344,13 @@ class GhostCmsAdapter:
             members = data.get("members", [])
             if isinstance(members, list) and members:
                 member_id = members[0].get("id")
-                return str(member_id) if member_id else None
+                note = members[0].get("note") or ""
+                if member_id:
+                    return str(member_id), str(note)
         except (json.JSONDecodeError, AttributeError):
             pass
 
-        return None
+        return None, ""
 
     def health_check(self, tenant_ctx: TenantContext) -> dict[str, object]:
         credentials = self._credential_provider.get_credentials(

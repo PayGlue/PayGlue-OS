@@ -5,7 +5,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import AppShell from '../components/AppShell.vue'
 import UpgradeBanner from '../components/UpgradeBanner.vue'
-import { PageHeader } from '../components/ui'
+import { PageHeader, ProviderPicker } from '../components/ui'
 import { useSessionStore } from '../stores/session'
 import { isPlanLimitError, planKeyFromError } from '../lib/planUpgrade'
 import {
@@ -21,11 +21,9 @@ import {
   getCreemProducts,
   getPatreonProducts,
   listMappings,
-  createMapping,
-  updateMapping,
   type BuyButtonData,
 } from '../lib/api'
-import { findOwnMapping, missingMappings } from '../lib/mappingKeys'
+import { ruleForProduct } from '../lib/mappingKeys'
 import { embedScript } from '../lib/publicUrls'
 import type { ProductMapping } from '../types/api'
 
@@ -292,7 +290,7 @@ async function loadMappings() {
 }
 
 function syncMappingState(productId: string) {
-  const m = findOwnMapping(mappings.value, productId, BUTTON_ENTITLEMENT_KEY)
+  const m = ruleForProduct(mappings.value, selectedProvider.value, productId)
   if (m) {
     existingMappingId.value = m.id
     mappingEventType.value = (m.event_type as 'order.paid' | 'subscription.active') || 'order.paid'
@@ -420,6 +418,22 @@ async function save() {
     alignment: formAlignment.value,
     product_provider: useProduct.value && selectedProductId.value ? selectedProvider.value : '',
     product_id: useProduct.value ? selectedProductId.value : '',
+    // What buying this product should do in Ghost. The server turns it into the
+    // one rule for that product, in the same transaction as this save (PG-254).
+    // This page used to make a second call and decide between creating and
+    // updating by searching a list it had loaded earlier, which is how one
+    // product ended up with several rules that disagreed with each other.
+    grant: {
+      event_type: mappingEventType.value,
+      entitlement_key: BUTTON_ENTITLEMENT_KEY,
+      metadata: {
+        ghost_subscribed: mappingGhostSubscribed.value,
+        ghost_email_types: mappingEmailType.value ? [mappingEmailType.value] : [],
+        ghost_labels: [] as string[],
+        source_type: 'button',
+        source_name: formName.value.trim(),
+      },
+    },
   }
   try {
     if (editingId.value) {
@@ -430,46 +444,18 @@ async function save() {
       buttons.value.unshift(created)
       editingId.value = created.id
     }
+    // No second call and no post-condition check any more. The rule is written
+    // in the same transaction as the button, so a saved button without one is
+    // not a state that can exist (PG-254).
+    //
+    // Reading it back is still needed, and syncing the form state with it is the
+    // part that is easy to forget: the create call used to hand back the new id
+    // directly, so dropping it left the "Mapped" badge showing red on a button
+    // that was mapped. An indicator that lies is worse than none, because the
+    // reasonable response is to hit save again.
     if (useProduct.value && selectedProductId.value) {
-      const emailTypes = mappingEmailType.value ? [mappingEmailType.value as 'signin' | 'signup' | 'subscribe'] : []
-      const mappingPayload = {
-        payment_provider: selectedProvider.value,
-        event_type: mappingEventType.value,
-        external_product_id: selectedProductId.value,
-        entitlement_key: BUTTON_ENTITLEMENT_KEY,
-        action: 'grant' as const,
-        quantity: 1,
-        is_active: true,
-        metadata: { ghost_subscribed: mappingGhostSubscribed.value, ghost_email_types: emailTypes, ghost_labels: [] as string[], source_type: 'button', source_name: formName.value.trim() },
-      }
-      try {
-        if (existingMappingId.value !== null) {
-          const updated = await updateMapping(session.activeTenantSlug, session.idToken, existingMappingId.value, mappingPayload)
-          mappings.value = mappings.value.map(m => m.id === existingMappingId.value ? updated : m)
-        } else {
-          const created = await createMapping(session.activeTenantSlug, session.idToken, mappingPayload)
-          existingMappingId.value = created.id
-          mappings.value = [created, ...mappings.value]
-        }
-      // A saved widget whose mapping did not save looks finished and grants
-      // nothing on purchase: the event arrives, resolves to no instruction,
-      // and the log shows a green "processed". Swallowing this silently cost
-      // a real test purchase, so it is reported instead.
-      } catch (e: unknown) {
-        saveError.value = `Button saved, but the Ghost mapping did not: ${e instanceof Error ? e.message : 'unknown error'}. Buying this product will not grant access until the mapping exists.`
-        saveErrorPlan.value = isPlanLimitError(e) ? planKeyFromError(e) : null
-        return
-      }
-      // Nothing threw, which is not the same as the mapping existing. Read it
-      // back from the server before calling the save a success.
       await loadMappings()
-      const missing = missingMappings(mappings.value, [
-        { productId: selectedProductId.value, entitlementKey: BUTTON_ENTITLEMENT_KEY, label: 'this button' },
-      ])
-      if (missing.length) {
-        saveError.value = 'Button saved, but it still has no Ghost mapping. Buying this product will not grant access. Save again, or add the mapping under Analytics.'
-        return
-      }
+      syncMappingState(selectedProductId.value)
     }
     saveSuccess.value = true
     setTimeout(() => { saveSuccess.value = false }, 2500)
@@ -597,40 +583,7 @@ watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = '
               </button>
             </div>
             <div v-if="useProduct" class="space-y-2">
-              <div class="flex flex-wrap gap-1.5">
-                <button type="button"
-                  class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
-                  :class="selectedProvider === 'polar' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                  @click="selectedProvider = 'polar'; selectedProductId = ''">Polar</button>
-                <button type="button"
-                  class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
-                  :class="selectedProvider === 'lemonsqueezy' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                  @click="selectedProvider = 'lemonsqueezy'; selectedProductId = ''">Lemon Squeezy</button>
-                <button type="button"
-                  class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
-                  :class="selectedProvider === 'paypal' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                  @click="selectedProvider = 'paypal'; selectedProductId = ''">PayPal</button>
-                <button type="button"
-                  class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
-                  :class="selectedProvider === 'gumroad' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                  @click="selectedProvider = 'gumroad'; selectedProductId = ''">Gumroad</button>
-                <button type="button"
-                  class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
-                  :class="selectedProvider === 'paddle' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                  @click="selectedProvider = 'paddle'; selectedProductId = ''">Paddle</button>
-                <button type="button"
-                  class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
-                  :class="selectedProvider === 'kofi' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                  @click="selectedProvider = 'kofi'; selectedProductId = ''; formTargetUrl = ''">Ko-fi</button>
-                <button type="button"
-                  class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
-                  :class="selectedProvider === 'creem' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                  @click="selectedProvider = 'creem'; selectedProductId = ''">Creem</button>
-                <button type="button"
-                  class="rounded-md px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors"
-                  :class="selectedProvider === 'patreon' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'"
-                  @click="selectedProvider = 'patreon'; selectedProductId = ''">Patreon</button>
-              </div>
+              <ProviderPicker v-model="selectedProvider" @update:modelValue="selectedProductId = ''" />
               <template v-if="isManualProduct">
                 <input v-model="selectedProductId" type="text" placeholder="Paste a shop item link (ko-fi.com/s/...), a tier name, or kofi-support"
                   class="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none" />

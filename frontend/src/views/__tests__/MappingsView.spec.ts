@@ -26,6 +26,20 @@ vi.mock('../../lib/api', async () => {
         action: 'grant',
         quantity: 1,
         is_active: true,
+        metadata: { ghost_subscribed: true, ghost_email_types: ['signin'] },
+        used_in: ['Buy Button: Go Pro', 'Pricing Table: Homepage · Pro'],
+      },
+      {
+        id: 2,
+        payment_provider: 'polar',
+        event_type: 'subscription.canceled',
+        external_product_id: 'prod_basic',
+        entitlement_key: 'tier.basic',
+        action: 'revoke',
+        quantity: 1,
+        is_active: true,
+        metadata: {},
+        used_in: ['Buy Button: Go Pro', 'Pricing Table: Homepage · Pro'],
       },
     ]),
     createMapping: vi.fn(),
@@ -45,7 +59,7 @@ describe('MappingsView', () => {
     session.activeTenantSlug = 'tenant-a'
   })
 
-  it('renders mappings loaded from API', async () => {
+  it('says what buying the product does, rather than printing table columns', async () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -73,6 +87,24 @@ describe('MappingsView', () => {
     })
     expect(screen.getByText('polar')).toBeInTheDocument()
     expect(screen.getByText('One-time')).toBeInTheDocument()
-    expect(screen.getByText('Active')).toBeInTheDocument()
+
+    // The sentence, not the fields it is built from. `product:tier-basic` is
+    // the label the Ghost adapter really writes, so the page names it.
+    expect(
+      screen.getByText(
+        'Buying this grants access in Ghost and labels the member product:tier-basic, and subscribes them to your newsletter. They receive a magic-link email.',
+      ),
+    ).toBeInTheDocument()
+
+    // The grant and the revoke are two rules for one product and share a line.
+    expect(screen.getByText('A cancellation takes that access away again.')).toBeInTheDocument()
+    expect(screen.getAllByText('Send test')).toHaveLength(1)
+
+    expect(screen.getByText('Offered in Buy Button: Go Pro · Pricing Table: Homepage · Pro')).toBeInTheDocument()
+
+    // "Active" used to sit on every row, which makes it decoration rather than
+    // a signal. Only a paused rule says anything now.
+    expect(screen.queryByText('Active')).toBeNull()
+    expect(screen.queryByText('Paused')).toBeNull()
   })
 })

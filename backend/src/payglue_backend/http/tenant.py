@@ -3,8 +3,6 @@
 import re
 from collections.abc import Callable
 
-from django.conf import settings
-from django.db import connection
 from django.http import HttpRequest, HttpResponse, HttpResponseNotFound
 
 from payglue_backend.core.models import TenantContext
@@ -27,14 +25,11 @@ class TenantPathMiddleware:
         self._get_response = get_response
 
     def __call__(self, request: HttpRequest) -> HttpResponse:
-        runtime_schema_switching = (
-            settings.DJANGO_TENANTS_ENABLED
-            and hasattr(connection, "set_tenant")
-            and hasattr(connection, "set_schema_to_public")
-        )
-        if runtime_schema_switching:
-            connection.set_schema_to_public()
-
+        # Until PG-273 this switched the Postgres schema around the view when
+        # django_tenants was enabled. It never was, in any environment, and the
+        # package is gone. What the middleware does now is resolve /t/<slug>/ to
+        # a tenant and hang it on the request; the isolation itself is the
+        # tenant_slug column every query filters on.
         tenant_slug = extract_tenant_slug(request.path_info)
         if tenant_slug is None:
             request.tenant_ctx = None
@@ -56,11 +51,4 @@ class TenantPathMiddleware:
             schema_name=tenant.schema_name,
         )
 
-        if not runtime_schema_switching:
-            return self._get_response(request)
-
-        connection.set_tenant(tenant)
-        try:
-            return self._get_response(request)
-        finally:
-            connection.set_schema_to_public()
+        return self._get_response(request)

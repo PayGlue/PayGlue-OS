@@ -2,7 +2,7 @@
 // Licensed under the Business Source License 1.1, see LICENSE.md
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import AppShell from '../components/AppShell.vue'
 import { PageHeader, UiCard, UiButton, StatusPill, EmptyState, ProviderLogo } from '../components/ui'
 import { PROVIDER_BRAND } from '../lib/providers'
@@ -72,28 +72,87 @@ onMounted(load)
 watch(() => session.activeTenantSlug, load)
 
 const eventLabel = (e: string) => e === 'order.paid' ? 'One-time' : e === 'subscription.active' ? 'Subscription' : e
-const emailLabel = (t: string | undefined) => {
-  if (!t || t === 'none') return 'None'
-  if (t === 'signin') return 'Magic Link'
-  if (t === 'signup') return 'Sign-up'
-  if (t === 'subscribe') return 'Subscribe'
-  return t
+
+/**
+ * One entry per product, which since PG-254 is also one rule per product.
+ *
+ * A product can still hold two rules, because a grant on a purchase and a
+ * revoke on a cancellation are two different things to say about it. They
+ * belong on one line: somebody reading this wants to know what happens when
+ * this is bought, not how many rows the table has.
+ */
+interface ProductRow {
+  key: string
+  provider: string
+  productId: string
+  grant?: ProductMapping
+  revoke?: ProductMapping
+  usedIn: string[]
 }
-const sourceLabel = (m: ProductMapping) => {
-  const meta = m.metadata as any
-  if (!meta?.source_type) return null
-  const labels: Record<string, string> = { button: 'Buy Button', paywall: 'Paywall', pricing_table: 'Pricing Table' }
-  const type = labels[meta.source_type] ?? meta.source_type
-  const name = meta.source_name ? `: ${meta.source_name}` : ''
-  const tier = meta.source_tier ? ` · ${meta.source_tier}` : ''
-  return `${type}${name}${tier}`
+
+const rows = computed<ProductRow[]>(() => {
+  const byProduct = new Map<string, ProductRow>()
+  for (const m of mappings.value) {
+    const key = `${m.payment_provider}::${m.external_product_id}`
+    const row = byProduct.get(key) ?? {
+      key,
+      provider: m.payment_provider,
+      productId: m.external_product_id,
+      usedIn: [],
+    }
+    if (m.action === 'revoke') row.revoke = m
+    else row.grant = m
+    if (m.used_in?.length) row.usedIn = m.used_in
+    byProduct.set(key, row)
+  }
+  return [...byProduct.values()]
+})
+
+const WELCOME_EMAIL: Record<string, string> = {
+  signin: 'a magic-link email',
+  signup: 'a sign-up email',
+  subscribe: 'a subscription email',
 }
+
+const firstEmailType = (m: ProductMapping): string | undefined => {
+  const meta = m.metadata as { ghost_email_types?: string[]; ghost_email_type?: string | null }
+  return meta?.ghost_email_types?.[0] ?? meta?.ghost_email_type ?? undefined
+}
+
+/**
+ * What buying this actually does, written as a sentence.
+ *
+ * The screen used to print the columns of the table: entitlement key, event
+ * type, action, quantity, active. Those are the fields of a unique constraint,
+ * and nobody opens this page asking about a unique constraint. They open it
+ * asking "what happens when somebody buys this", and none of those columns
+ * answered it directly (PG-255).
+ */
+const sentence = (row: ProductRow): string => {
+  if (!row.grant) return 'Nothing is granted for this product. Only a cancellation rule exists.'
+  const meta = row.grant.metadata as { ghost_subscribed?: boolean }
+  const parts = [`Buying this grants access in Ghost and labels the member ${ghostLabel(row.grant)}`]
+  parts.push(
+    meta?.ghost_subscribed === false
+      ? 'without subscribing them to your newsletter'
+      : 'and subscribes them to your newsletter',
+  )
+  const email = firstEmailType(row.grant)
+  const tail = email && WELCOME_EMAIL[email]
+    ? `They receive ${WELCOME_EMAIL[email]}.`
+    : 'No welcome email is sent.'
+  return `${parts.join(', ')}. ${tail}`
+}
+
+/** Mirrors what the Ghost adapter writes, so the page names the real label. */
+const ghostLabel = (m: ProductMapping) =>
+  `product:${m.entitlement_key.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`
 </script>
 
 <template>
   <AppShell>
     <div class="space-y-5">
-      <PageHeader title="Product Mapping" description="Ghost actions assigned to each product. Edit them in the Button, Paywall, or Pricing Table editors." />
+      <PageHeader title="Product Mapping" description="What happens in Ghost when somebody buys one of your products. Change it where you picked the product: the Button, Paywall, or Pricing Table editor." />
 
       <p v-if="loading" class="px-1 text-sm text-slate-500 dark:text-slate-400">Loading...</p>
       <p v-else-if="error" class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">{{ error }}</p>
@@ -107,52 +166,47 @@ const sourceLabel = (m: ProductMapping) => {
       </UiCard>
 
       <UiCard v-else :padded="false">
-        <div class="overflow-x-auto">
-          <table class="w-full min-w-[720px] text-sm">
-            <thead class="border-b border-slate-100 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-800/40">
-              <tr>
-                <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Provider</th>
-                <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Product ID</th>
-                <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Used in</th>
-                <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Trigger</th>
-                <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Welcome email</th>
-                <th class="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Status</th>
-                <th class="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Test</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
-              <tr v-for="m in mappings" :key="m.id" class="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                <td class="px-4 py-3">
-                  <span class="flex items-center gap-2">
-                    <ProviderLogo v-if="hasLogo(m.payment_provider)" :provider="m.payment_provider" size="sm" />
-                    <span class="font-medium capitalize text-slate-700 dark:text-slate-200">{{ m.payment_provider }}</span>
+        <ul class="divide-y divide-slate-100 dark:divide-slate-800">
+          <li v-for="row in rows" :key="row.key" class="px-4 py-4 sm:px-5">
+            <div class="flex flex-wrap items-start gap-3">
+              <ProviderLogo v-if="hasLogo(row.provider)" :provider="row.provider" size="sm" />
+              <div class="min-w-0 flex-1 space-y-1.5">
+                <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span class="font-medium capitalize text-slate-800 dark:text-slate-100">{{ row.provider }}</span>
+                  <span class="font-mono text-xs text-slate-400 dark:text-slate-500">{{ row.productId }}</span>
+                  <span v-if="row.grant" class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                    {{ eventLabel(row.grant.event_type) }}
                   </span>
-                </td>
-                <td class="px-4 py-3 font-mono text-xs text-slate-500 dark:text-slate-400">{{ m.external_product_id }}</td>
-                <td class="px-4 py-3">
-                  <span v-if="sourceLabel(m)" class="text-sm text-slate-700 dark:text-slate-200">{{ sourceLabel(m) }}</span>
-                  <span v-else class="text-xs text-slate-400 dark:text-slate-500">-</span>
-                </td>
-                <td class="px-4 py-3 text-slate-700 dark:text-slate-200">{{ eventLabel(m.event_type) }}</td>
-                <td class="px-4 py-3 text-slate-700 dark:text-slate-200">{{ emailLabel((m.metadata as any)?.ghost_email_type) }}</td>
-                <td class="px-4 py-3">
-                  <StatusPill :tone="m.is_active ? 'good' : 'neutral'">{{ m.is_active ? 'Active' : 'Inactive' }}</StatusPill>
-                </td>
-                <td class="px-4 py-3 text-right">
-                  <UiButton
-                    size="sm"
-                    variant="default"
-                    :disabled="!m.is_active"
-                    :title="m.is_active ? 'Send a test event through the full pipeline' : 'Activate the mapping to test it'"
-                    @click="openTest(m)"
-                  >
-                    Send test
-                  </UiButton>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+                  <StatusPill v-if="row.grant && !row.grant.is_active" tone="neutral">Paused</StatusPill>
+                </div>
+
+                <p class="text-sm leading-relaxed text-slate-700 dark:text-slate-200">{{ sentence(row) }}</p>
+
+                <p v-if="row.revoke" class="text-sm text-slate-500 dark:text-slate-400">
+                  A cancellation takes that access away again.
+                </p>
+
+                <p v-if="row.usedIn.length" class="text-xs text-slate-500 dark:text-slate-400">
+                  Offered in {{ row.usedIn.join(' · ') }}
+                </p>
+                <p v-else class="text-xs text-slate-400 dark:text-slate-500">
+                  Not offered in any widget. Sold elsewhere, or the widget was removed. Buying it still does the above.
+                </p>
+              </div>
+
+              <UiButton
+                v-if="row.grant"
+                size="sm"
+                variant="default"
+                :disabled="!row.grant.is_active"
+                :title="row.grant.is_active ? 'Send a test event through the full pipeline' : 'This rule is paused'"
+                @click="openTest(row.grant)"
+              >
+                Send test
+              </UiButton>
+            </div>
+          </li>
+        </ul>
       </UiCard>
     </div>
 

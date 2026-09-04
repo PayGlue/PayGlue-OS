@@ -5,32 +5,30 @@ paying customers by polling Creem, not by listening for a webhook.
 
 There's no verified Creem subscription.updated/canceled webhook payload to
 build on, and a customer cancelling via Creem's own customer portal never
-sends us a webhook at all either way. Instead, this reuses
-_creem_subscription_for_switch -- the same helper already live-verified
-today for the Plans page and the Billing card -- to read each account's
-*current* subscription state and diff it against what we saw last time
-(BillingAccount.last_known_*):
+sends us a webhook at all either way. Instead this reads each account's
+current subscription state and diffs it against what we saw last time
+(BillingAccount.last_known_*).
 
-- cancel_at_period_end flips false -> true on an active subscription: the
-  owner scheduled a cancellation but still has access until period end.
-  SCHEDULED_CANCELLATION fires here, not on the eventual real end, so
-  there's still time to react to it.
-- The lookup helper stops finding an active/trialing subscription at all
-  for an account that previously had one. PG-190: this alone isn't enough
-  to conclude "cancelled" -- past_due/unpaid/paused (a payment retry in
-  progress) look identical from here. _creem_raw_subscription_status fetches
-  the literal Creem status to tell them apart: only "canceled" starts the
-  30-day deletion grace period (SUBSCRIPTION_ENDED fires as the day-1
-  notice); anything else flags BillingAccount.needs_admin_review and alerts
-  the operator instead of guessing, who can check Creem directly. There's
-  deliberately no "no active plan" state for an owner (team members never
-  have their own BillingAccount), so a confirmed cancellation eventually
-  means full account deletion (delete_lapsed_accounts), not a downgrade.
+PG-298 changed two things:
+
+- Which accounts are polled. Until then only accounts with a stored
+  creem_subscription_id were, and a first purchase never stored one, so no
+  first-time buyer was ever watched (found live: a founding member whose
+  card had been declined four times sat on full access with nothing
+  happening). Now every account is looked at; the lookup falls back to the
+  owner's email and stores the id it finds.
+- What a failed payment does. It used to hand the account to a human and
+  stop. Now it walks the three phases described in tenants/lapse.py:
+  past_due tells the customer, an ended subscription starts the 30-day grace
+  period, and pause_lapsed_accounts pauses the workspaces after it.
+
+Unclear cases still go to a human: a stored id that Creem no longer answers
+for, or a status outside the known sets. Nothing in here guesses.
 
 Meant to run on the same daily schedule as enforce_downgrade_grace_periods
-and delete_lapsed_accounts (all three chained in the same Railway cron
-service's start command) -- polling more often wouldn't catch anything
-sooner than a day either way.
+and pause_lapsed_accounts (all three chained in the same Railway cron
+service's start command). Polling more often wouldn't catch anything sooner
+than a day either way.
 """
 from datetime import timedelta
 
@@ -39,7 +37,10 @@ from django.db import IntegrityError
 from django.utils import timezone
 
 from payglue_backend.authn.lifecycle_emails import notify_admin_review_needed, send_lifecycle_email
+from payglue_backend.tenants import lapse
 from payglue_backend.tenants.models import BillingAccount, LifecycleEmailLog, LifecycleEmailTemplate
+
+Trigger = LifecycleEmailTemplate.Trigger
 
 
 class Command(BaseCommand):
@@ -54,97 +55,161 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         dry_run = options["dry_run"]
-        # Only accounts that have ever actually had a subscription -- a
-        # BillingAccount that's never been through a real Creem checkout
-        # has nothing to poll for.
-        accounts = BillingAccount.objects.exclude(creem_subscription_id="").select_related(
-            "owner", "plan"
-        )
+        # Testers have no Creem subscription; expire_tester_access owns their
+        # clock. Everyone else is a customer or somebody we provisioned by
+        # hand, and for the latter the lookup simply finds nothing.
+        accounts = BillingAccount.objects.filter(is_tester=False).select_related("owner", "plan")
 
         if not accounts:
-            self.stdout.write("No billing accounts with a subscription on file.")
+            self.stdout.write("No billing accounts to poll.")
         else:
             for account in accounts:
                 self._check_account(account, dry_run)
 
+        self._send_payment_failed_reminders(dry_run)
         self._send_cancellation_reminders(dry_run)
         self._send_day15_checkins(dry_run)
 
-    def _check_account(self, account: BillingAccount, dry_run: bool) -> None:
-        from payglue_backend.tenants.views import _creem_subscription_for_switch
+    # ----------------------------------------------------------------- poll
 
-        found = _creem_subscription_for_switch(account.owner)
+    def _check_account(self, account: BillingAccount, dry_run: bool) -> None:
+        found = lapse.latest_creem_subscription_for_account(account)
+        had_alive_before = account.last_known_subscription_status in lapse.ALIVE_STATUSES
+        in_a_phase = (
+            account.payment_failed_detected_at is not None
+            or account.cancellation_detected_at is not None
+            or account.lapsed_at is not None
+        )
 
         if found is None:
-            self._handle_not_found(account, dry_run)
+            if account.creem_subscription_id or had_alive_before:
+                # We know there was a subscription and Creem no longer
+                # answers for it. That is a fetch problem or a deleted
+                # record, not a status, so a human looks.
+                self._flag_for_review(account, "not_found", dry_run)
             return
 
-        sub, _api_key, _base_url, _sandbox = found
-        new_status = str(sub.get("status") or "")
-        new_cancel_at_period_end = bool(sub.get("cancel_at_period_end"))
+        sub, *_rest = found
+        status = str(sub.get("status") or "")
+        cancel_at_period_end = bool(sub.get("cancel_at_period_end"))
+        sub_id, customer_id = lapse.subscription_ids(sub)
 
-        newly_scheduled_cancellation = new_cancel_at_period_end and not account.last_known_cancel_at_period_end
-        if newly_scheduled_cancellation:
-            self.stdout.write(f"{account.owner.email}: cancellation scheduled")
-            if not dry_run:
-                send_lifecycle_email(account, LifecycleEmailTemplate.Trigger.SCHEDULED_CANCELLATION)
+        update_fields = ["last_known_subscription_status", "last_known_cancel_at_period_end", "updated_at"]
+        if sub_id and sub_id != account.creem_subscription_id:
+            account.creem_subscription_id = sub_id
+            update_fields.append("creem_subscription_id")
+        if customer_id and customer_id != account.creem_customer_id:
+            account.creem_customer_id = customer_id
+            update_fields.append("creem_customer_id")
+
+        if status in lapse.ALIVE_STATUSES:
+            self._alive(account, cancel_at_period_end, update_fields, dry_run)
+        elif status in lapse.RETRYING_STATUSES and self._retrying_too_long(account):
+            # past_due for longer than any retry schedule takes: treat it as
+            # ended, the customer had the two phase-1 mails and the time.
+            self._ended(account, status, had_alive_before, True, update_fields, dry_run)
+        elif status in lapse.RETRYING_STATUSES:
+            self._retrying(account, update_fields, dry_run)
+        elif status in lapse.ENDED_STATUSES:
+            self._ended(account, status, had_alive_before, in_a_phase, update_fields, dry_run)
+        else:
+            # A status outside the three known sets. Record it, tell a human.
+            self._flag_for_review(account, status or "unknown", dry_run)
 
         if not dry_run:
-            account.last_known_subscription_status = new_status
-            account.last_known_cancel_at_period_end = new_cancel_at_period_end
-            update_fields = ["last_known_subscription_status", "last_known_cancel_at_period_end", "updated_at"]
-            # PG-190: subscription confirmed alive again -- self-heal any
-            # earlier ambiguous-review or cancellation-grace state (e.g. a
-            # failed card retry that later succeeded).
-            if account.needs_admin_review or account.cancellation_detected_at is not None:
-                account.needs_admin_review = False
-                account.admin_review_reason = ""
-                account.cancellation_detected_at = None
-                update_fields += ["needs_admin_review", "admin_review_reason", "cancellation_detected_at"]
+            account.last_known_subscription_status = status
+            account.last_known_cancel_at_period_end = cancel_at_period_end
             account.save(update_fields=update_fields)
 
-    def _handle_not_found(self, account: BillingAccount, dry_run: bool) -> None:
-        had_active_before = account.last_known_subscription_status in {"active", "trialing"}
-        if had_active_before:
-            self._classify_ended_subscription(account, dry_run)
-
-        if not dry_run:
-            account.last_known_subscription_status = ""
-            account.last_known_cancel_at_period_end = False
-            account.save(
-                update_fields=["last_known_subscription_status", "last_known_cancel_at_period_end", "updated_at"]
-            )
-
-    def _classify_ended_subscription(self, account: BillingAccount, dry_run: bool) -> None:
-        """PG-190: account was active/trialing last poll, isn't anymore --
-        fetch the literal Creem status before deciding what that means."""
-        from payglue_backend.tenants.views import _creem_raw_subscription_status
-
-        raw_status = _creem_raw_subscription_status(account)
-
-        if raw_status == "canceled":
-            self.stdout.write(f"{account.owner.email}: subscription canceled, starting deletion grace period")
+    def _alive(self, account: BillingAccount, cancel_at_period_end: bool, update_fields: list[str], dry_run: bool) -> None:
+        newly_scheduled = cancel_at_period_end and not account.last_known_cancel_at_period_end
+        if newly_scheduled:
+            self.stdout.write(f"{account.owner.email}: cancellation scheduled")
             if not dry_run:
-                if account.cancellation_detected_at is None:
-                    account.cancellation_detected_at = timezone.now()
+                send_lifecycle_email(account, Trigger.SCHEDULED_CANCELLATION)
+
+        # Subscription confirmed alive: self-heal whatever phase the account
+        # was in (a retried card that went through, a resubscription the
+        # webhook missed) and bring paused workspaces back.
+        was_lapsed = account.lapsed_at is not None
+        if (
+            account.payment_failed_detected_at is not None
+            or account.cancellation_detected_at is not None
+            or account.needs_admin_review
+            or was_lapsed
+        ):
+            self.stdout.write(f"{account.owner.email}: subscription alive again, clearing lapse state")
+            if not dry_run:
+                account.payment_failed_detected_at = None
+                account.cancellation_detected_at = None
                 account.needs_admin_review = False
                 account.admin_review_reason = ""
-                account.save(
-                    update_fields=[
-                        "cancellation_detected_at", "needs_admin_review", "admin_review_reason", "updated_at",
-                    ]
-                )
-                send_lifecycle_email(account, LifecycleEmailTemplate.Trigger.SUBSCRIPTION_ENDED)
-            return
+                update_fields += [
+                    "payment_failed_detected_at",
+                    "cancellation_detected_at",
+                    "needs_admin_review",
+                    "admin_review_reason",
+                ]
+                if was_lapsed:
+                    lapse.resume_paused_tenants(account)
 
-        # past_due / unpaid / paused / unrecognized / fetch failed -- could
-        # be a temporary payment retry, not a real cancellation. Only a human
-        # (checking Creem directly) can tell the difference, so nothing
-        # automatic starts the deletion clock. Only notify on the
-        # False -> True transition, not on every daily poll while unresolved.
+    @staticmethod
+    def _retrying_too_long(account: BillingAccount) -> bool:
+        started = account.payment_failed_detected_at
+        if started is None:
+            return False
+        return timezone.now() - started >= timedelta(days=lapse.PAYMENT_FAILED_MAX_DAYS)
+
+    def _retrying(self, account: BillingAccount, update_fields: list[str], dry_run: bool) -> None:
+        """Phase 1. Creem is still retrying the card."""
+        if account.cancellation_detected_at is not None or account.lapsed_at is not None:
+            # Already further along; past_due after an ending would be odd,
+            # and going backwards would restart mails the customer had.
+            return
+        if account.payment_failed_detected_at is not None:
+            return
+        self.stdout.write(f"{account.owner.email}: payment failed, Creem retrying (phase 1)")
+        if not dry_run:
+            account.payment_failed_detected_at = timezone.now()
+            update_fields.append("payment_failed_detected_at")
+            send_lifecycle_email(account, Trigger.PAYMENT_FAILED)
+
+    def _ended(
+        self,
+        account: BillingAccount,
+        status: str,
+        had_alive_before: bool,
+        in_a_phase: bool,
+        update_fields: list[str],
+        dry_run: bool,
+    ) -> None:
+        """Phase 2. Creem gave up, or the customer cancelled."""
+        if account.cancellation_detected_at is not None or account.lapsed_at is not None:
+            return
+        if not (had_alive_before or in_a_phase):
+            # Never seen alive by us: an old subscription of somebody who is
+            # comped or provisioned by hand today. Recording the status is
+            # enough; starting a grace period for it would be an invention.
+            return
+        self.stdout.write(f"{account.owner.email}: subscription {status}, starting 30-day grace period (phase 2)")
+        if not dry_run:
+            account.cancellation_detected_at = timezone.now()
+            account.payment_failed_detected_at = None
+            account.needs_admin_review = False
+            account.admin_review_reason = ""
+            update_fields += [
+                "cancellation_detected_at",
+                "payment_failed_detected_at",
+                "needs_admin_review",
+                "admin_review_reason",
+            ]
+            send_lifecycle_email(account, Trigger.SUBSCRIPTION_ENDED)
+
+    def _flag_for_review(self, account: BillingAccount, reason: str, dry_run: bool) -> None:
+        # Only notify on the False -> True transition, not on every daily
+        # poll while unresolved.
         if account.needs_admin_review:
             return
-        reason = raw_status or "fetch_failed"
         self.stdout.write(f"{account.owner.email}: needs admin review ({reason})")
         if not dry_run:
             account.needs_admin_review = True
@@ -152,26 +217,48 @@ class Command(BaseCommand):
             account.save(update_fields=["needs_admin_review", "admin_review_reason", "updated_at"])
             notify_admin_review_needed(account, reason)
 
+    # ------------------------------------------------------------ reminders
+
+    def _send_payment_failed_reminders(self, dry_run: bool) -> None:
+        """Phase 1, second mail. Driven by elapsed days since the first one,
+        and only while the account is still in phase 1: an account that has
+        moved on to the grace period gets that sequence instead."""
+        cutoff = timezone.now() - timedelta(days=lapse.PAYMENT_FAILED_REMINDER_AFTER_DAYS)
+        due = BillingAccount.objects.filter(
+            payment_failed_detected_at__isnull=False,
+            payment_failed_detected_at__lte=cutoff,
+            cancellation_detected_at__isnull=True,
+            lapsed_at__isnull=True,
+        ).select_related("owner", "plan")
+        for account in due:
+            self._send_reminder_once(account, Trigger.PAYMENT_FAILED_REMINDER, dry_run)
+
     def _send_cancellation_reminders(self, dry_run: bool) -> None:
-        """PG-190: day-15 and day-29 reminders during the 30-day deletion
-        grace period. The day-1 notice is SUBSCRIPTION_ENDED itself, sent
-        above the moment cancellation_detected_at is set -- no separate
-        trigger needed for that one. Runs over every account with an open
-        grace period each poll, independent of today's per-account check,
-        since it's driven by elapsed days, not today's transition."""
+        """PG-190: day-15 and day-29 reminders during the 30-day grace
+        period. The day-1 notice is SUBSCRIPTION_ENDED itself, sent the
+        moment cancellation_detected_at is set. Runs over every account with
+        an open grace period each poll, independent of today's per-account
+        check, since it's driven by elapsed days, not today's transition."""
         due_accounts = BillingAccount.objects.filter(
-            cancellation_detected_at__isnull=False, needs_admin_review=False
+            cancellation_detected_at__isnull=False, needs_admin_review=False, lapsed_at__isnull=True
         ).select_related("owner", "plan")
 
         for account in due_accounts:
             days = (timezone.now() - account.cancellation_detected_at).days
             if days >= BillingAccount.GRACE_PERIOD_DAYS - 1:
-                self._send_reminder_once(account, LifecycleEmailTemplate.Trigger.CANCELLATION_FINAL_WARNING, dry_run)
+                self._send_reminder_once(account, Trigger.CANCELLATION_FINAL_WARNING, dry_run)
             elif days >= 15:
-                self._send_reminder_once(account, LifecycleEmailTemplate.Trigger.CANCELLATION_REMINDER_15D, dry_run)
+                self._send_reminder_once(account, Trigger.CANCELLATION_REMINDER_15D, dry_run)
 
     def _send_reminder_once(self, account: BillingAccount, trigger: str, dry_run: bool) -> None:
-        if LifecycleEmailLog.objects.filter(billing_account=account, trigger=trigger).exists():
+        # Once per phase, not once per account: a customer who lapses twice
+        # in a year gets the sequence twice. The log is scanned from the
+        # phase start so an older send does not silence the current one.
+        since = account.cancellation_detected_at or account.payment_failed_detected_at
+        log = LifecycleEmailLog.objects.filter(billing_account=account, trigger=trigger)
+        if since is not None:
+            log = log.filter(sent_at__gte=since)
+        if log.exists():
             return
         self.stdout.write(f"{account.owner.email}: sending {trigger}")
         if not dry_run:
@@ -197,13 +284,12 @@ class Command(BaseCommand):
         already_sent = LifecycleEmailLog.objects.filter(
             trigger=LifecycleEmailTemplate.Trigger.ONBOARDING_DAY15
         ).values("billing_account_id")
-
         due = (
             BillingAccount.objects.filter(created_at__lte=cutoff)
             .exclude(id__in=already_sent)
             # Somebody already on the way out does not need a "how's it
-            # going" note. cancellation_detected_at is the confirmed-cancelled
-            # marker that starts the 30-day deletion grace period.
+            # going" note. cancellation_detected_at is the confirmed-ended
+            # marker that starts the 30-day grace period.
             .filter(cancellation_detected_at__isnull=True)
             .select_related("owner", "plan")
         )

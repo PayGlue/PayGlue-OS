@@ -466,3 +466,71 @@ def test_in_place_switch_gives_actionable_message_for_trialing_subscription(
     assert "trial" in detail.lower()
     assert "support" in detail.lower()
     assert f"/t/{tenant.slug}/support" in detail
+
+
+# PG-298: the same checkout without a tenant in the path, for an account
+# whose workspaces are all paused. The tenant middleware answers 404 for a
+# paused workspace, so the endpoint above is out of reach exactly then.
+#
+# The published tree keeps its own hand-maintained urls.py, so the route
+# arrives there with the next release; until then these two skip.
+
+
+def _account_checkout_route_exists() -> bool:
+    from django.urls import NoReverseMatch, reverse
+
+    try:
+        reverse("billing-plan-checkout")
+    except NoReverseMatch:
+        return False
+    return True
+
+
+@pytest.mark.skipif(not _account_checkout_route_exists(), reason="account checkout route not wired in this tree")
+def test_account_checkout_works_while_every_workspace_is_paused(monkeypatch: pytest.MonkeyPatch, settings) -> None:
+    settings.CREEM_API_KEY = "sk_test"
+    owner, tenant = _owner_and_tenant("lapsed-owner")
+    Tenant.objects.filter(pk=tenant.pk).update(status=Tenant.Status.PAUSED)
+    headers = _auth_headers(monkeypatch, owner)
+    captured = {}
+
+    def _fake_post(url: str, api_key: str, body: dict) -> dict:
+        captured["body"] = body
+        return {"checkout_url": "https://creem.io/checkout/sess_back"}
+
+    monkeypatch.setattr("payglue_backend.authn.creem_access._post", _fake_post)
+    # No subscription alive at Creem: the fallback searches come back empty.
+    monkeypatch.setattr("payglue_backend.tenants.views._creem_customer_slots", lambda email: [])
+
+    tenant_resp = _post_checkout(
+        Client(), tenant, headers,
+        {"plan_key": "solo", "interval": "monthly", "return_url": "https://dashboard.example.com/tenant/select"},
+    )
+    account_resp = Client().post(
+        "/api/v1/billing/plan-checkout",
+        data={"plan_key": "solo", "interval": "monthly", "return_url": "https://dashboard.example.com/tenant/select"},
+        content_type="application/json",
+        **headers,
+    )
+
+    assert tenant_resp.status_code == 404
+    assert account_resp.status_code == 200
+    assert account_resp.json()["checkout_url"] == "https://creem.io/checkout/sess_back"
+    assert captured["body"]["metadata"]["billing_account_id"] == owner.billing_account.id
+    assert captured["body"]["customer"]["email"] == owner.email
+
+
+@pytest.mark.skipif(not _account_checkout_route_exists(), reason="account checkout route not wired in this tree")
+def test_account_checkout_needs_a_billing_account(monkeypatch: pytest.MonkeyPatch, settings) -> None:
+    settings.CREEM_API_KEY = "sk_test"
+    member = UserProfile.objects.create(firebase_uid="uid-member-only", email="member@example.com")
+    headers = _auth_headers(monkeypatch, member)
+
+    resp = Client().post(
+        "/api/v1/billing/plan-checkout",
+        data={"plan_key": "solo", "interval": "monthly", "return_url": "https://dashboard.example.com/tenant/select"},
+        content_type="application/json",
+        **headers,
+    )
+
+    assert resp.status_code == 404

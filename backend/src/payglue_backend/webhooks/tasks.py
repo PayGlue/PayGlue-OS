@@ -2,7 +2,6 @@
 # Licensed under the Business Source License 1.1, see LICENSE.md
 from datetime import timedelta
 from datetime import datetime
-from contextlib import nullcontext
 
 from celery import shared_task
 from django.conf import settings
@@ -23,9 +22,6 @@ from payglue_backend.core.models import TenantContext
 from payglue_backend.tenants.models import Tenant
 from payglue_backend.webhooks import wiring
 from payglue_backend.webhooks.models import WebhookInboundEvent
-
-if getattr(settings, "DJANGO_TENANTS_ENABLED", False):  # pragma: no cover
-    from django_tenants.utils import get_public_schema_name, schema_context
 
 
 NON_RETRYABLE_EXCEPTIONS = (
@@ -86,18 +82,13 @@ def process_inbound_webhook_event(
     tenant_slug: str | None = None,
     skip_verification: bool = False,
 ) -> None:
-    context_manager = nullcontext()
-    if getattr(settings, "DJANGO_TENANTS_ENABLED", False):
-        if not tenant_slug:
-            raise ValueError("tenant_slug is required when DJANGO_TENANTS_ENABLED=1")
-        with schema_context(get_public_schema_name()):
-            tenant = Tenant.objects.filter(slug=tenant_slug).only("schema_name").first()
-        if tenant is None:
-            return
-        context_manager = schema_context(tenant.schema_name)
-
-    with context_manager:
-        _process_inbound_webhook_event(event_id, ignore_timing=ignore_timing, skip_verification=skip_verification)
+    # tenant_slug is accepted and ignored. It picked a Postgres schema to run
+    # inside back when django_tenants was wired up, which PG-273 removed. The
+    # parameter stays because tasks queued before a deploy are executed after
+    # it, and dropping it would make those fail with a TypeError.
+    _process_inbound_webhook_event(
+        event_id, ignore_timing=ignore_timing, skip_verification=skip_verification
+    )
 
 
 def _process_inbound_webhook_event(event_id: int, ignore_timing: bool = False, skip_verification: bool = False) -> None:

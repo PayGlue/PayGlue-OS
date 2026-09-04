@@ -8,6 +8,7 @@ import AppShell from '../components/AppShell.vue'
 import { PageHeader, StatusPill, ProviderLogo } from '../components/ui'
 import { getGhostStripeStatus, getIntegrationConfig, listMappings, listWebhookEvents } from '../lib/api'
 import { CONNECTION_PROVIDERS, PROVIDER_ORDER, type ProviderKey } from '../lib/connectionProviders'
+import { deliveryHealthByProvider } from '../lib/deliveryHealth'
 import { useSessionStore } from '../stores/session'
 import type { ProductMapping, WebhookEvent } from '../types/api'
 
@@ -57,13 +58,10 @@ const load = async () => {
   }
 }
 
-const failuresByProvider = computed(() => {
-  const counts: Record<string, number> = {}
-  for (const e of events.value) {
-    if (e.status === 'failed' || e.status === 'dead_letter') counts[e.provider] = (counts[e.provider] ?? 0) + 1
-  }
-  return counts
-})
+// PG-264: recent deliveries only, and a retry told apart from a give-up.
+// Counting every failure ever recorded meant a provider that hiccuped once
+// during setup wore a warning for good.
+const healthByProvider = computed(() => deliveryHealthByProvider(events.value))
 
 const mappingsByProvider = computed(() => {
   const counts: Record<string, number> = {}
@@ -80,20 +78,28 @@ interface Card {
   sub: string
 }
 
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+
 const cards = computed<Card[]>(() =>
   PROVIDER_ORDER.map((key) => {
     const on = enabled.value[key]
-    const fails = failuresByProvider.value[key] ?? 0
+    const health = healthByProvider.value[key] ?? { retrying: 0, gaveUp: 0, needsAttention: false }
     const maps = mappingsByProvider.value[key] ?? 0
     let state: Card['state'] = 'off'
     let sub = 'Not set up yet'
     if (on) {
-      if (fails > 0) {
-        state = 'attention'
-        sub = `${maps} mapping${maps === 1 ? '' : 's'} · ${fails} to retry`
+      // The card describes the *connection*. Credentials configured means
+      // connected, whatever a single delivery did afterwards, because a
+      // webhook can fail on an unmapped product while the connection is
+      // perfectly healthy. Only a delivery nobody will retry is worth a colour.
+      state = health.needsAttention ? 'attention' : 'connected'
+      const mapped = maps > 0 ? plural(maps, 'active mapping') : 'Connected'
+      if (health.gaveUp > 0) {
+        sub = `${mapped} · ${health.gaveUp} failed, no retry left`
+      } else if (health.retrying > 0) {
+        sub = `${mapped} · ${plural(health.retrying, 'delivery')} retrying`
       } else {
-        state = 'connected'
-        sub = maps > 0 ? `${maps} active mapping${maps === 1 ? '' : 's'}` : 'Connected'
+        sub = mapped
       }
     }
     return { key, name: CONNECTION_PROVIDERS[key].name, state, sub }

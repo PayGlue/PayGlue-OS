@@ -1,77 +1,49 @@
 import type { ProductMapping } from '../types/api'
 
 /**
- * PG-233. Two rules that have to agree with each other, and with the database.
+ * Finding the one rule that says what buying a product does.
  *
- * `ProductMapping` carries a unique constraint over six fields, of which the
- * editors control four: provider, event type, product id and entitlement key.
- * Everything below exists so that the key we write and the mapping we look up
- * are derived from the same facts as that constraint.
+ * ## What changed, and why the lookup no longer mentions the key
+ *
+ * These helpers used to search on `(product, entitlement_key)`, because the key
+ * was part of the unique constraint and each editor wrote its own: a buy button
+ * wrote `button`, a paywall `paywall`, a pricing tier `product-<id>`. One
+ * product could therefore hold three rules that disagreed with each other, and
+ * a purchase applied all of them (PG-254).
+ *
+ * Since then the key is out of the constraint. There is exactly one rule per
+ * product, and its name is whatever it was created with, which for existing
+ * installations is words like `pro` or `founding_member`.
+ *
+ * Keeping the key in the lookup would now be actively harmful. A buy button
+ * asking for the rule under the name `button` would not find the one named
+ * `pro`, would show its defaults instead of what is actually configured, and
+ * would write those defaults over the real settings on the next save. So the
+ * lookup asks what the constraint asks: which product, from which provider.
  */
 
-/**
- * The entitlement key of a pricing tier used to be `pricing-tier-${index + 1}`.
- * That tied it to a position: reorder or delete a tier and the key moved onto a
- * different product, the old tier's mapping stayed behind under the orphaned
- * key, and the tier that inherited the position collided with it. Deriving the
- * key from the product instead makes it survive any reordering, and a tier
- * without a product has no mapping to key in the first place.
- */
+/** The name a rule gets when a pricing tier is the first thing to create it. */
 export function entitlementKeyForProduct(productId: string): string {
   return `product-${productId.trim()}`
 }
 
 /**
- * The key a widget with a fixed entitlement writes. Buy buttons and paywalls
- * are not positional, so they keep their historical keys.
- */
-export type FixedEntitlementKey = 'button' | 'paywall'
-
-/**
- * Find the mapping a widget owns for a product.
+ * The rule for a product, or undefined if nothing grants it yet.
  *
- * Matching on the product id alone was the second half of the bug: a buy button
- * and a paywall pointing at the same product both found whichever mapping came
- * first and then overwrote it with their own entitlement key, so one of the two
- * silently lost its mapping. The key belongs in the lookup because it is part
- * of the constraint.
- *
- * The event type deliberately stays out. It is editable in the form, and
- * matching on it would make a changed event type create a second mapping
- * instead of updating the existing one.
+ * The provider belongs in here because it is part of the identity: the same
+ * product id string could in principle exist at two providers, and those are
+ * two different things to sell.
  */
-export function findOwnMapping(
+export function ruleForProduct(
   mappings: readonly ProductMapping[],
+  provider: string,
   productId: string,
-  entitlementKey: string,
 ): ProductMapping | undefined {
+  if (!productId) return undefined
   return mappings.find(
     m =>
       m.external_product_id === productId &&
-      m.entitlement_key === entitlementKey &&
+      m.payment_provider === provider &&
       m.action === 'grant',
   )
-}
-
-export type MappingExpectation = { productId: string; entitlementKey: string; label: string }
-
-/**
- * Post-condition after saving.
- *
- * Reporting the error from the create call only covers the case where the call
- * throws. It does not establish that a mapping exists at the end, which is the
- * thing that actually matters: a widget saved without one takes money and
- * grants nothing, and the event log calls that "processed". Blocking the save
- * would have been the wrong shape, because the mapping is built from defaults
- * rather than from user input, so there is no missing field to insist on.
- *
- * Returns the labels of everything that should have a mapping and does not.
- */
-export function missingMappings(
-  mappings: readonly ProductMapping[],
-  expected: readonly MappingExpectation[],
-): string[] {
-  return expected
-    .filter(e => !findOwnMapping(mappings, e.productId, e.entitlementKey))
-    .map(e => e.label)
 }
