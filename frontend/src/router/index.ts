@@ -321,6 +321,15 @@ const router = createRouter({
   ],
 })
 
+const pausedRouteAllowed = (
+  routeName: string | symbol | null | undefined,
+  lapsedAt: string | null | undefined,
+): boolean => {
+  if (routeName === 'tenant-paused') return true
+  if (!lapsedAt) return false
+  return routeName === 'plans' || routeName === 'preferences'
+}
+
 router.beforeEach(async (to) => {
   const session = useSessionStore()
   if (!session.isAuthenticated && !session.isLoading && !to.meta.skipBootstrap) {
@@ -371,10 +380,15 @@ router.beforeEach(async (to) => {
       return { name: 'tenant-select' }
     }
 
-    // PG-141: a paused tenant stays in the switcher (so it's still visible
-    // and reachable for an upgrade), but every other route bounces to the
+    // A paused tenant stays in the switcher (so it's still visible and
+    // reachable for an upgrade), but every other route bounces to the
     // paused-state page instead of the normal dashboard.
-    if (membership.status === 'paused' && to.name !== 'tenant-paused') {
+    //
+    // After a lapsed subscription every workspace is paused, so there is no
+    // active one to reach the plans page or the account settings through.
+    // Both stay reachable then: plans to come back, the preferences for the
+    // danger zone. Neither view needs a tenant API.
+    if (membership.status === 'paused' && !pausedRouteAllowed(to.name, session.billing?.lapsed_at)) {
       return { name: 'tenant-paused', params: { tenantSlug: routeTenantSlug } }
     }
 
