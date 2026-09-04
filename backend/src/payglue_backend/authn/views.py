@@ -25,6 +25,7 @@ from payglue_backend.authn.creem_access import (
     CreemLicenseAlreadyUsedError,
     activate_license as activate_creem_license,
     cancel_subscription as cancel_creem_subscription,
+    creem_reference_id,
     resolve_customer_email,
     validate_checkout_any_mode as validate_creem_checkout_any_mode,
 )
@@ -174,10 +175,23 @@ class AuthSessionView(APIView):
                 grace_period_ends_at = billing_account.downgrade_detected_at + timedelta(
                     days=BillingAccount.GRACE_PERIOD_DAYS
                 )
+            # PG-298: the subscription grace period (after a cancellation or
+            # a card Creem gave up on) and the pause after it. Same window as
+            # the downgrade one, different meaning, so the banner can tell
+            # them apart.
+            subscription_grace_ends_at = None
+            if billing_account.cancellation_detected_at is not None:
+                subscription_grace_ends_at = billing_account.cancellation_detected_at + timedelta(
+                    days=BillingAccount.GRACE_PERIOD_DAYS
+                )
             billing_payload = {
                 "plan": billing_account.plan.key,
                 "downgrade_detected_at": billing_account.downgrade_detected_at,
                 "grace_period_ends_at": grace_period_ends_at,
+                "payment_failed_detected_at": billing_account.payment_failed_detected_at,
+                "cancellation_detected_at": billing_account.cancellation_detected_at,
+                "subscription_grace_ends_at": subscription_grace_ends_at,
+                "lapsed_at": billing_account.lapsed_at,
             }
 
         return Response(
@@ -376,7 +390,23 @@ class CreemCheckoutWebhookView(APIView):
                 billing_account.creem_customer_id = str(customer_id)
             if subscription_id:
                 billing_account.creem_subscription_id = str(subscription_id)
+            # PG-298: a completed checkout is a live subscription, whatever
+            # the poll last saw. Leave the lapse bookkeeping in place and the
+            # next daily run would put a paying customer straight back into
+            # the grace period it just left.
+            reactivated = billing_account.lapsed_at is not None
+            billing_account.last_known_subscription_status = "active"
+            billing_account.last_known_cancel_at_period_end = False
+            billing_account.payment_failed_detected_at = None
+            billing_account.cancellation_detected_at = None
+            billing_account.lapsed_at = None
+            billing_account.needs_admin_review = False
+            billing_account.admin_review_reason = ""
             billing_account.save()
+            if reactivated:
+                from payglue_backend.tenants.lapse import resume_paused_tenants
+
+                resume_paused_tenants(billing_account)
 
             # PG-148: fires right where the signal already exists -- no new
             # webhook needed. Only after save() succeeds, so a DB failure
@@ -429,14 +459,21 @@ class CreemCheckoutWebhookView(APIView):
             bool(license_key),
         )
 
-        InvitationGrant.objects.update_or_create(
-            email=email,
-            defaults={
-                "source": InvitationGrant.Source.CREEM_CHECKOUT,
-                "license_key": license_key,
-                "consumed_at": None,
-            },
-        )
+        # PG-298: the ids ride along on the grant until the BillingAccount
+        # exists. Left empty when the payload has none (a one-off product),
+        # never overwritten with nothing.
+        grant_defaults = {
+            "source": InvitationGrant.Source.CREEM_CHECKOUT,
+            "license_key": license_key,
+            "consumed_at": None,
+        }
+        webhook_customer_id = creem_reference_id(customer)
+        webhook_subscription_id = creem_reference_id(checkout.get("subscription"))
+        if webhook_customer_id:
+            grant_defaults["creem_customer_id"] = webhook_customer_id
+        if webhook_subscription_id:
+            grant_defaults["creem_subscription_id"] = webhook_subscription_id
+        InvitationGrant.objects.update_or_create(email=email, defaults=grant_defaults)
 
         # PG-201: activate the license at Creem so its dashboard reflects the
         # purchase (Inactive 0/1 -> Active 1/1). Done here (not only at signup
@@ -713,6 +750,12 @@ class AccessValidateView(APIView):
             }
             if creem_instance_id:
                 grant_defaults["creem_license_instance_id"] = creem_instance_id
+            # PG-298: same ids as the webhook stores, for the buyer who arrives
+            # through the checkout redirect before the webhook has landed.
+            if getattr(result, "customer_id", ""):
+                grant_defaults["creem_customer_id"] = result.customer_id
+            if getattr(result, "subscription_id", ""):
+                grant_defaults["creem_subscription_id"] = result.subscription_id
             InvitationGrant.objects.update_or_create(
                 email=provided_email,
                 defaults=grant_defaults,

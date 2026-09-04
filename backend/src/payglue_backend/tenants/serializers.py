@@ -109,6 +109,20 @@ class TenantCreateSerializer(serializers.Serializer):
             if founding_sale is not None:
                 billing_defaults["founding_tier"] = founding_sale.tier
                 billing_defaults["founding_price_cents"] = founding_sale.price_cents
+            # PG-298: the Creem ids the checkout left on the grant. Until now a
+            # first purchase never reached the BillingAccount, and the daily
+            # lifecycle poll skips accounts without a subscription id, so no
+            # first-time buyer was ever watched. last_known starts as active
+            # so the very next poll can already see a transition.
+            creem_grant = (
+                InvitationGrant.objects.filter(email__iexact=user_profile.email)
+                .exclude(creem_subscription_id="")
+                .first()
+            )
+            if creem_grant is not None:
+                billing_defaults["creem_customer_id"] = creem_grant.creem_customer_id
+                billing_defaults["creem_subscription_id"] = creem_grant.creem_subscription_id
+                billing_defaults["last_known_subscription_status"] = "active"
             billing_account, billing_created = BillingAccount.objects.get_or_create(
                 owner=user_profile,
                 defaults=billing_defaults,
@@ -181,7 +195,7 @@ class ServicePinSerializer(serializers.ModelSerializer):
 class SupportRequestSerializer(serializers.ModelSerializer):
     """What the customer is allowed to see about their own request.
 
-    Note what is absent: the Linear issue id, and any issue content. Internal
+    Note what is absent: the tracker issue id, and any issue content. Internal
     comments live on that issue, so exposing it is exactly the mistake this
     design exists to avoid. Reference plus status is the whole contract.
     """
@@ -191,7 +205,15 @@ class SupportRequestSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SupportRequest
-        fields = ["id", "reference", "topic", "status", "status_label", "created_at"]
+        fields = [
+            "id",
+            "reference",
+            "subject",
+            "topic",
+            "status",
+            "status_label",
+            "created_at",
+        ]
         read_only_fields = fields
 
 

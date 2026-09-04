@@ -84,7 +84,7 @@ const submit = async () => {
         <div class="w-full max-w-sm">
 
           <div class="mb-8">
-            <RouterLink to="/"><PayGlueLogo size="lg" /></RouterLink>
+            <a href="/"><PayGlueLogo size="lg" /></a>
           </div>
 
           <h1 class="text-3xl font-bold tracking-tight text-slate-900">New password</h1>

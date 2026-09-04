@@ -10,6 +10,7 @@ from payglue_backend.core.errors import (
     InvalidWebhookPayloadError,
     InvalidWebhookSignatureError,
     MissingCredentialsError,
+    UnsupportedEventTypeError,
 )
 from payglue_backend.core.models import TenantContext
 from payglue_backend.webhooks.adapters.polar import PolarPaymentAdapter
@@ -272,3 +273,124 @@ def test_parse_event_refuses_to_invent_a_product_id_from_the_order_item(caplog) 
         adapter.parse_event(
             json.dumps(payload).encode("utf-8"), {}, TenantContext(tenant_slug="tenant-a")
         )
+
+
+# --- PG-257: Polar's subscription payloads -----------------------------------
+#
+# Every one of these failed in production until 14.08.2026. `subscription.active`
+# and `subscription.revoked` went to the order parser, which asks for a
+# `data.items` array a subscription payload does not carry, and the cancel
+# parser only accepted the nested `data.subscription` shape that a real Polar
+# cancellation does not use. The grant side was covered by the separate
+# `order.paid` event, so nobody noticed. The cancel side was not: not one Polar
+# cancellation had ever been processed.
+#
+# The payloads below are the shapes taken off real events in production.
+
+
+def _subscription_payload(event_type: str, **overrides) -> dict:
+    """A Polar subscription payload, flat, as it actually arrives."""
+    data = {
+        "id": "sub_001",
+        "status": "active",
+        "customer": {"id": "cus_001", "email": "reader@example.com"},
+        "product": {"id": "prod_123"},
+        "amount": 500,
+        "currency": "usd",
+        "cancel_at_period_end": False,
+        "canceled_at": None,
+        "current_period_end": "2026-09-14T07:49:57Z",
+    }
+    data.update(overrides)
+    return {
+        "id": f"evt_{event_type}",
+        "type": event_type,
+        "timestamp": "2026-08-14T08:00:00Z",
+        "data": data,
+    }
+
+
+def _parse(payload: dict):
+    return PolarPaymentAdapter(credential_provider=StubCredentialProvider()).parse_event(
+        json.dumps(payload).encode("utf-8"), {}, TenantContext(tenant_slug="tenant-a")
+    )
+
+
+@pytest.mark.parametrize("event_type", ["subscription.active", "subscription.revoked"])
+def test_a_flat_subscription_payload_parses(event_type: str) -> None:
+    """The product sits in data.product, not in a data.items array."""
+    event = _parse(_subscription_payload(event_type))
+
+    assert event.event_type == event_type
+    assert event.customer.email == "reader@example.com"
+    assert [i.external_product_id for i in event.line_items] == ["prod_123"]
+
+
+def test_a_cancellation_booked_for_the_period_end_is_skipped() -> None:
+    """The member paid through current_period_end and keeps access until then.
+    Polar sends subscription.revoked once the period is actually over, and that
+    is the event that withdraws access. Skipped, not failed: doing nothing is
+    the right outcome here, so there is nothing to retry."""
+    with pytest.raises(UnsupportedEventTypeError):
+        _parse(
+            _subscription_payload(
+                "subscription.canceled",
+                cancel_at_period_end=True,
+                canceled_at="2026-08-14T08:08:17Z",
+                current_period_end="2099-01-01T00:00:00Z",
+            )
+        )
+
+
+def test_a_cancellation_whose_period_already_ran_out_is_an_ending() -> None:
+    event = _parse(
+        _subscription_payload(
+            "subscription.canceled",
+            cancel_at_period_end=True,
+            current_period_end="2020-01-01T00:00:00Z",
+        )
+    )
+
+    assert event.event_type == "subscription.canceled"
+
+
+def test_an_immediate_cancellation_is_an_ending() -> None:
+    """Without cancel_at_period_end there is no paid time left to honour."""
+    event = _parse(_subscription_payload("subscription.canceled"))
+
+    assert event.event_type == "subscription.canceled"
+
+
+def test_an_unreadable_period_end_keeps_the_access() -> None:
+    """Keeping access one cycle too long is a smaller wrong than taking it
+    from somebody who paid for it."""
+    with pytest.raises(UnsupportedEventTypeError):
+        _parse(
+            _subscription_payload(
+                "subscription.canceled",
+                cancel_at_period_end=True,
+                current_period_end="not a date",
+            )
+        )
+
+
+def test_the_nested_shape_still_parses() -> None:
+    """Some payloads wrap the subscription. Both shapes stay supported."""
+    payload = {
+        "id": "evt_nested",
+        "type": "subscription.canceled",
+        "timestamp": "2026-08-14T08:00:00Z",
+        "data": {
+            "subscription": {
+                "status": "canceled",
+                "customer": {"id": "cus_002", "email": "other@example.com"},
+                "product": {"id": "prod_999"},
+                "cancel_at_period_end": False,
+            }
+        },
+    }
+
+    event = _parse(payload)
+
+    assert event.customer.email == "other@example.com"
+    assert [i.external_product_id for i in event.line_items] == ["prod_999"]

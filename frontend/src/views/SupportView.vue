@@ -86,6 +86,7 @@ onMounted(() => {
 // which is what lets a request get a reference number and a status.
 const name = ref('')
 const email = ref(session.user?.email ?? '')
+const subject = ref('')
 const message = ref('')
 const sent = ref(false)
 const sending = ref(false)
@@ -106,9 +107,20 @@ const TOPICS = [
 const topic = ref<string>('')
 const contactError = ref<string | null>(null)
 
+const SUBJECT_MAX = 120
+
+// Deliberately strict about what surrounds the address rather than clever
+// about what an address may contain. A trailing comma passed the old
+// includes('@') check and then broke the confirmation, our internal notice and
+// the tracker link in one go, from a form that had said "Message sent".
+const EMAIL_PATTERN = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]{2,}$/
+
+const emailLooksValid = computed(() => EMAIL_PATTERN.test(email.value.trim()))
+
 const canSubmit = () =>
   name.value.trim().length > 0 &&
-  email.value.trim().includes('@') &&
+  emailLooksValid.value &&
+  subject.value.trim().length > 0 &&
   message.value.trim().length > 0
 
 async function submitContact() {
@@ -119,11 +131,15 @@ async function submitContact() {
   try {
     const created = await createSupportRequest(session.activeTenantSlug, session.idToken, {
       name: name.value,
+      email: email.value,
+      subject: subject.value,
       message: message.value,
       topic: topic.value,
     })
     reference.value = created.reference
     requests.value = [created, ...requests.value]
+    subject.value = ''
+    message.value = ''
     sent.value = true
   } catch {
     contactError.value = contactEmail
@@ -158,13 +174,25 @@ const loadRequests = async () => {
 
 const STATUS_STYLES: Record<string, string> = {
   open: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
-  in_progress: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300',
+  in_progress: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
   done: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
   cancelled: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-500',
 }
 
 const topicLabel = (key: string) =>
   TOPICS.find((t) => t.key === key)?.label ?? 'General question'
+
+// The short form for the chip in the history, deliberately the same words the
+// tracker uses as labels, so a conversation about a ticket needs no
+// translation in either direction.
+const TOPIC_CHIPS: Record<string, string> = {
+  integration: 'Integration',
+  billing: 'Billing',
+  bug: 'Bug',
+  feature: 'Feature',
+  account: 'Account',
+  other: 'General',
+}
 
 const formatDate = (iso: string) => {
   try { return new Date(iso).toLocaleDateString('de-DE', { dateStyle: 'medium' }) }
@@ -306,6 +334,33 @@ const formatDate = (iso: string) => {
               placeholder="you@example.com"
               class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
             />
+            <p
+              v-if="email.trim().length > 0 && !emailLooksValid"
+              class="mt-1 text-xs text-rose-600 dark:text-rose-400"
+            >
+              That does not look like an email address.
+            </p>
+            <p v-else class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Where we reply. Change it if a colleague should get the answer.
+            </p>
+          </div>
+          <div>
+            <div class="mb-1.5 flex items-baseline justify-between">
+              <label class="block text-sm font-medium text-slate-700 dark:text-slate-200" for="support-subject">What is it about?</label>
+              <span class="text-xs text-slate-400 dark:text-slate-500">{{ subject.length }}/{{ SUBJECT_MAX }}</span>
+            </div>
+            <input
+              id="support-subject"
+              v-model="subject"
+              required
+              type="text"
+              :maxlength="SUBJECT_MAX"
+              placeholder="Paywall shows nothing after a completed purchase"
+              class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+            />
+            <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              One line, so you can find this again later.
+            </p>
           </div>
           <div>
             <label class="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200" for="support-message">Message</label>
@@ -388,9 +443,9 @@ const formatDate = (iso: string) => {
           <p v-if="reference" class="mt-2 text-xs text-slate-500 dark:text-slate-400">Quote it in any reply and everything stays on one thread.</p>
         </div>
 
-        <!-- History. Deliberately status only: the Linear issue behind each of
-             these also carries our internal notes, so the conversation itself
-             stays in email where it belongs. -->
+        <!-- History. Deliberately status only: the tracker issue behind each
+             of these also carries our internal notes, so the conversation
+             itself stays in email where it belongs. -->
         <div v-if="requests.length" class="mt-8">
           <h3 class="text-sm font-semibold text-slate-900 dark:text-slate-100">Your requests</h3>
           <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
@@ -403,7 +458,11 @@ const formatDate = (iso: string) => {
               class="flex flex-wrap items-center gap-x-4 gap-y-1 bg-white dark:bg-slate-900 px-4 py-3"
             >
               <span class="font-mono text-xs font-semibold text-slate-900 dark:text-slate-100">{{ request.reference }}</span>
-              <span class="flex-1 truncate text-sm text-slate-600 dark:text-slate-300">{{ topicLabel(request.topic) }}</span>
+              <span
+                v-if="request.subject && TOPIC_CHIPS[request.topic]"
+                class="rounded-md bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-600 dark:text-slate-400"
+              >{{ TOPIC_CHIPS[request.topic] }}</span>
+              <span class="flex-1 truncate text-sm text-slate-600 dark:text-slate-300">{{ request.subject || topicLabel(request.topic) }}</span>
               <span class="text-xs text-slate-400 dark:text-slate-500">{{ formatDate(request.created_at) }}</span>
               <span
                 class="rounded-full px-2.5 py-0.5 text-xs font-medium"

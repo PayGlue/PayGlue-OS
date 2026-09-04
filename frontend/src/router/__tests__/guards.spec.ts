@@ -100,6 +100,62 @@ describe('router guards', () => {
     expect(router.currentRoute.value.params.tenantSlug).toBe('tenant-a')
   })
 
+  it('keeps plans and preferences reachable once the subscription lapsed (PG-298)', async () => {
+    // Hosted builds only: the self-hosted router has no plans page and no
+    // subscription lifecycle (PG-240), so the paused page is all it needs.
+    if (!router.hasRoute('plans')) return
+    const session = useSessionStore()
+    session.$patch({
+      user: { id: 'uid-1', email: 'owner@example.com' } as any,
+      accessToken: 'fake-access-token',
+      memberships: [
+        { tenant_id: 'tid-1', tenant_slug: 'tenant-a', tenant_name: 'Tenant A', role: 'owner', status: 'paused' },
+      ],
+      billing: {
+        plan: 'solo',
+        downgrade_detected_at: null,
+        grace_period_ends_at: null,
+        payment_failed_detected_at: null,
+        cancellation_detected_at: '2026-08-01T00:00:00Z',
+        subscription_grace_ends_at: '2026-08-31T00:00:00Z',
+        lapsed_at: '2026-09-01T00:00:00Z',
+      },
+    })
+
+    await router.push('/t/tenant-a/preferences')
+    expect(router.currentRoute.value.name).toBe('preferences')
+
+    await router.push('/t/tenant-a/plans')
+    expect(router.currentRoute.value.name).toBe('plans')
+
+    await router.push('/t/tenant-a/mappings')
+    expect(router.currentRoute.value.name).toBe('tenant-paused')
+  })
+
+  it('does not open preferences for a workspace paused by a plan limit', async () => {
+    const session = useSessionStore()
+    session.$patch({
+      user: { id: 'uid-1', email: 'owner@example.com' } as any,
+      accessToken: 'fake-access-token',
+      memberships: [
+        { tenant_id: 'tid-1', tenant_slug: 'tenant-a', tenant_name: 'Tenant A', role: 'owner', status: 'paused' },
+      ],
+      billing: {
+        plan: 'solo',
+        downgrade_detected_at: null,
+        grace_period_ends_at: null,
+        payment_failed_detected_at: null,
+        cancellation_detected_at: null,
+        subscription_grace_ends_at: null,
+        lapsed_at: null,
+      },
+    })
+
+    await router.push('/t/tenant-a/preferences')
+
+    expect(router.currentRoute.value.name).toBe('tenant-paused')
+  })
+
   it('lets navigation into the paused page itself proceed without looping', async () => {
     const session = useSessionStore()
     session.$patch({
