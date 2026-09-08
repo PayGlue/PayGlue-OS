@@ -86,6 +86,9 @@ docker compose up -d
 
 Then open the dashboard at `http://localhost:5173`. On first run it walks you through creating your account and your first publication, then asks for your Ghost site (URL + Admin API key). After that, connect a provider and map your products to Ghost tiers.
 
+<img width="1514" height="1474" alt="selfhost-onboarding" src="https://github.com/user-attachments/assets/ebb59614-9b61-46d7-b77b-8c63767e5fae" />
+
+
 That first-run screen appears only while the installation has no account. Once one exists, the address shows the normal sign-in page and there is no way back in except by invitation, which is checked on the server rather than in the browser.
 
 The complete walkthrough, including per-provider setup, auth options, and recommended services for Postgres/Redis/deployment, lives in **[SETUP.md](SETUP.md)**. Full product documentation is at **[docs.payglue.io](https://docs.payglue.io)**, written for the hosted version but the walkthroughs apply to self-hosted installs just the same.
