@@ -24,7 +24,7 @@
     "@tailwindcss/vite": "^4.3.2",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/vue": "^8.1.0",
-    "@types/node": "^26.4.0",
+    "@types/node": "^26.5.0",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/test-utils": "^2.5.0",
     "@vue/tsconfig": "^0.9.1",
