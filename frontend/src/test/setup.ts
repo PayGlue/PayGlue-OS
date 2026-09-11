@@ -1,7 +1,14 @@
 // Copyright (c) 2026 PayGlue by André Nünninghoff
 // Licensed under the Business Source License 1.1, see LICENSE.md
 
-import '@testing-library/jest-dom'
+import { expect } from 'vitest'
+import * as matchers from '@testing-library/jest-dom/matchers'
+
+// jest-dom's own vitest entry declares `Assertion<T>` with one type parameter,
+// and vitest 5 declares it with two (`Assertion<R, T>`). TypeScript refuses to
+// merge the two declarations, so the matcher types vanish from `expect(...)`.
+// Register the matchers by hand and carry the types in jest-dom.d.ts next door.
+expect.extend(matchers)
 
 // Node 25 ships its own global `localStorage`, and it wins over the one jsdom
 // would have installed -- on window as well as on globalThis, so there is no

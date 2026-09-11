@@ -37,6 +37,19 @@ const plansUrl = computed(() => {
 })
 
 const preferencesUrl = computed(() => `/t/${tenantSlug.value}/preferences`)
+
+// PG-303: a paused account is deleted after three months. The date is
+// derived here from lapsed_at rather than sent by the backend, so the
+// session payload stays what it is; the constant matches
+// tenants/lapse.DELETE_AFTER_PAUSED_DAYS.
+const DELETE_AFTER_PAUSED_DAYS = 90
+const deletionDate = computed(() => {
+  const lapsedAt = session.billing?.lapsed_at
+  if (!lapsedAt) return null
+  const date = new Date(lapsedAt)
+  date.setDate(date.getDate() + DELETE_AFTER_PAUSED_DAYS)
+  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+})
 </script>
 
 <template>
@@ -54,6 +67,9 @@ const preferencesUrl = computed(() => `/t/${tenantSlug.value}/preferences`)
         </p>
         <p class="mt-2 text-sm text-slate-500">
           Pick a plan and everything picks up where it left off. If you are done with PayGlue, you can delete your account from the account settings.
+        </p>
+        <p v-if="deletionDate" class="mt-2 text-sm text-slate-500">
+          Paused accounts are kept for three months. Without a plan, this account is deleted on {{ deletionDate }}.
         </p>
         <div class="mt-6 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
           <RouterLink
