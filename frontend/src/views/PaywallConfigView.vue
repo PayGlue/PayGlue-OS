@@ -865,6 +865,10 @@ const step2Config = computed(() => {
                 If the article is set to "Members only" or "Paid members only" in Ghost, Ghost overrides the paywall and blocks the article entirely before our snippet can run. The PayGlue paywall handles access control, so Ghost must not restrict visibility on its own.
               </p>
             </div>
+            <p class="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+              This is a client-side gate. Because the article is Public, its full text stays in your RSS feed, on the social web and in the Content API; the overlay hides it in the browser only. A softer paywall than Ghost's native one, by design.
+              <a href="https://docs.payglue.io/paywall/public-post" target="_blank" rel="noopener" class="underline underline-offset-2 hover:text-slate-700 dark:hover:text-slate-200">What it protects, and what it does not</a>
+            </p>
             <div>
               <div class="flex items-center justify-between mb-1.5">
                 <p class="text-xs font-medium text-emerald-800 dark:text-emerald-300">HTML card snippet for {{ step2Config.name }}</p>

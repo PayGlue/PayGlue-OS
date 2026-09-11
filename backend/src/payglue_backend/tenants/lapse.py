@@ -12,6 +12,10 @@ Three phases, all driven by the daily poll in send_lifecycle_emails:
 3. The grace period ran out. pause_lapsed_accounts pauses every workspace
    and records lapsed_at. Nothing is deleted: the owner can still sign in,
    pick a plan to come back, or delete the account from the danger zone.
+4. PG-303: the pause is not forever. A week before the end of it the owner
+   gets a notice; once three months of pause have passed and that notice has
+   gone out, delete_inactive_accounts removes the account the same way the
+   danger zone does. Payment records stay with the payment provider.
 
 A completed checkout (the webhook in authn/views.py) or a subscription the
 poll sees alive again ends whichever phase the account is in.
@@ -36,6 +40,11 @@ PAYMENT_FAILED_REMINDER_AFTER_DAYS = 3
 # later. Without a cap the account would sit in phase 1 with full access for
 # as long as Creem keeps the status, which is not a decision anyone made.
 PAYMENT_FAILED_MAX_DAYS = 14
+# Phase 4: how long a paused account is kept before it is deleted, and how
+# far ahead of that the owner is warned. Three months is long enough for a
+# holiday, a hospital stay or a forgotten inbox; it is not a free tier.
+DELETE_AFTER_PAUSED_DAYS = 90
+DELETION_NOTICE_DAYS_BEFORE = 7
 
 
 def pause_account_tenants(account: BillingAccount) -> list[Tenant]:

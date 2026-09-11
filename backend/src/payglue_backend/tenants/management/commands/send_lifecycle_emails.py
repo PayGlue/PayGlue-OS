@@ -68,6 +68,7 @@ class Command(BaseCommand):
 
         self._send_payment_failed_reminders(dry_run)
         self._send_cancellation_reminders(dry_run)
+        self._send_deletion_notices(dry_run)
         self._send_day15_checkins(dry_run)
 
     # ----------------------------------------------------------------- poll
@@ -250,11 +251,40 @@ class Command(BaseCommand):
             elif days >= 15:
                 self._send_reminder_once(account, Trigger.CANCELLATION_REMINDER_15D, dry_run)
 
-    def _send_reminder_once(self, account: BillingAccount, trigger: str, dry_run: bool) -> None:
+    def _send_deletion_notices(self, dry_run: bool) -> None:
+        """PG-303, phase 4: a week before a paused account is deleted, the
+        owner hears about it once. delete_inactive_accounts refuses to delete
+        an account this notice never reached, so a disabled template stalls
+        the deletion instead of skipping the warning."""
+        cutoff = timezone.now() - timedelta(
+            days=lapse.DELETE_AFTER_PAUSED_DAYS - lapse.DELETION_NOTICE_DAYS_BEFORE
+        )
+        due = BillingAccount.objects.filter(
+            lapsed_at__isnull=False, lapsed_at__lte=cutoff, needs_admin_review=False
+        ).select_related("owner", "plan")
+        for account in due:
+            deletion_date = account.lapsed_at + timedelta(days=lapse.DELETE_AFTER_PAUSED_DAYS)
+            self._send_reminder_once(
+                account,
+                Trigger.DELETION_NOTICE,
+                dry_run,
+                since=account.lapsed_at,
+                extra_context={"deletion_date": deletion_date.strftime("%-d %B %Y")},
+            )
+
+    def _send_reminder_once(
+        self,
+        account: BillingAccount,
+        trigger: str,
+        dry_run: bool,
+        since=None,
+        extra_context: dict[str, str] | None = None,
+    ) -> None:
         # Once per phase, not once per account: a customer who lapses twice
         # in a year gets the sequence twice. The log is scanned from the
         # phase start so an older send does not silence the current one.
-        since = account.cancellation_detected_at or account.payment_failed_detected_at
+        if since is None:
+            since = account.cancellation_detected_at or account.payment_failed_detected_at
         log = LifecycleEmailLog.objects.filter(billing_account=account, trigger=trigger)
         if since is not None:
             log = log.filter(sent_at__gte=since)
@@ -262,7 +292,7 @@ class Command(BaseCommand):
             return
         self.stdout.write(f"{account.owner.email}: sending {trigger}")
         if not dry_run:
-            send_lifecycle_email(account, trigger)
+            send_lifecycle_email(account, trigger, extra_context)
 
     def _send_day15_checkins(self, dry_run: bool) -> None:
         """Second onboarding email, roughly two weeks in.

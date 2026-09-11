@@ -297,6 +297,13 @@ class LifecycleEmailTemplate(models.Model):
         # PG-298: the grace period ran out and every workspace is paused. Not
         # deleted, which is the difference to ACCOUNT_DELETED below.
         ACCESS_PAUSED = "access_paused", "access_paused"
+        # PG-303: a week before a paused account is deleted, and the receipt
+        # after it was. Two triggers rather than reusing ACCOUNT_DELETED: that
+        # one confirms a deletion the owner asked for ("when you confirmed",
+        # "if you did not do this, reply"), which is the wrong copy for an
+        # account we removed for inactivity.
+        DELETION_NOTICE = "deletion_notice", "deletion_notice"
+        INACTIVE_ACCOUNT_DELETED = "inactive_account_deleted", "inactive_account_deleted"
         # PG-192: operational alert (not a subscription-lifecycle mail) -- warns
         # the creator when their Ghost delivery is repeatedly failing.
         GHOST_DELIVERY_FAILING = "ghost_delivery_failing", "ghost_delivery_failing"

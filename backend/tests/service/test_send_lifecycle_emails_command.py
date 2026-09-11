@@ -358,6 +358,60 @@ def test_reminder_repeats_for_a_second_lapse(monkeypatch: pytest.MonkeyPatch) ->
 # ------------------------------------------------------------- phase 3
 
 
+# ------------------------------------------------- deletion notice (PG-303)
+
+
+def _paused_for(days: int, email: str = "paused@example.com") -> BillingAccount:
+    return _billing_account(
+        email,
+        last_known_subscription_status="canceled",
+        cancellation_detected_at=timezone.now() - timedelta(days=days + 30),
+        lapsed_at=timezone.now() - timedelta(days=days),
+    )
+
+
+def test_deletion_notice_a_week_before_deletion_carries_the_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable("deletion_notice")
+    account = _paused_for(83)
+    _creem_says(monkeypatch, {"id": "sub_123", "status": "canceled"})
+
+    call_command("send_lifecycle_emails")
+    call_command("send_lifecycle_emails")
+
+    assert [m.to for m in mail.outbox] == [["paused@example.com"]]
+    expected = (account.lapsed_at + timedelta(days=90)).strftime("%-d %B %Y")
+    assert expected in mail.outbox[0].subject
+    assert expected in mail.outbox[0].body
+    assert LifecycleEmailLog.objects.filter(billing_account=account, trigger="deletion_notice").count() == 1
+
+
+def test_deletion_notice_not_before_day_83(monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable("deletion_notice")
+    _paused_for(82)
+    _creem_says(monkeypatch, {"id": "sub_123", "status": "canceled"})
+
+    call_command("send_lifecycle_emails")
+
+    assert mail.outbox == []
+
+
+def test_paying_again_after_the_notice_stops_everything(monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable("deletion_notice")
+    account = _paused_for(84)
+    tenant = Tenant.objects.create(
+        slug="back-tenant", schema_name="back_tenant", billing_account=account, status=Tenant.Status.PAUSED
+    )
+    _creem_says(monkeypatch, {"id": "sub_123", "status": "active"})
+
+    call_command("send_lifecycle_emails")
+
+    account.refresh_from_db()
+    tenant.refresh_from_db()
+    assert account.lapsed_at is None
+    assert tenant.status == Tenant.Status.ACTIVE
+    assert mail.outbox == []
+
+
 def test_lapsed_account_paying_again_resumes_tenants(monkeypatch: pytest.MonkeyPatch) -> None:
     account = _billing_account(
         "resume@example.com",

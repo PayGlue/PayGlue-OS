@@ -167,10 +167,15 @@ def _send_templated(
     return sent_all
 
 
-def send_lifecycle_email(billing_account: BillingAccount, trigger: str) -> bool:
+def send_lifecycle_email(
+    billing_account: BillingAccount, trigger: str, extra_context: dict[str, str] | None = None
+) -> bool:
     """Renders and sends the configured template for `trigger`, then logs
     it. Returns False (no-op) if no enabled template exists for this
-    trigger -- callers don't need to check first."""
+    trigger -- callers don't need to check first.
+
+    `extra_context` adds placeholders beyond $email and $plan for the few
+    templates that need one (PG-303: the deletion notice carries the date)."""
     template = LifecycleEmailTemplate.objects.filter(trigger=trigger, enabled=True).first()
     if template is None:
         return False
@@ -178,6 +183,7 @@ def send_lifecycle_email(billing_account: BillingAccount, trigger: str) -> bool:
     context = {
         "email": billing_account.owner.email,
         "plan": billing_account.plan.name,
+        **(extra_context or {}),
     }
     # safe_substitute, not substitute -- a typo'd $placeholder in an
     # admin-edited template must never crash the send, just pass through
@@ -332,6 +338,7 @@ def _test_render_context() -> dict[str, str]:
         "url": app_url("/t/your-publication/connection/ghost"),
         "new_owner": "teammate@example.com",
         "previous_owner": "you@example.com",
+        "deletion_date": "18 January 2027",
     }
 
 
@@ -611,6 +618,65 @@ _ACCOUNT_DELETED_FALLBACK_BODY = (
     "If you did not do this, reply immediately.\n\n"
     f"{_SIGN_OFF}"
 )
+
+
+_INACTIVE_ACCOUNT_DELETED_FALLBACK_SUBJECT = "Your PayGlue account has been deleted"
+_INACTIVE_ACCOUNT_DELETED_FALLBACK_BODY = (
+    "Hi,\n\n"
+    "Your PayGlue account has been deleted. Your subscription ended, the "
+    "workspaces were paused for three months without a new plan, and we let "
+    "you know a week ago that this was coming.\n\n"
+    "This has already happened: your profile, the publications you solely "
+    "owned, their connections, paywalls, buy buttons, pricing tables, product "
+    "mappings, stored provider credentials and webhook history were removed "
+    "from our servers, along with your sign-in account.\n\n"
+    "Your Ghost site is untouched. Member access lives in your own Ghost "
+    "instance, not in PayGlue, so nobody loses access because this account "
+    "is gone.\n\n"
+    "Invoices and payment records are the one exception. They sit with our "
+    "payment provider, who is required to keep them for the statutory "
+    "period (GDPR Article 17(3)(b)). We hold no copy.\n\n"
+    "If you want to come back, sign up again and set things up fresh. We "
+    "would be glad to have you.\n\n"
+    f"{_SIGN_OFF}"
+)
+
+
+def send_inactive_account_deleted_email(email: str, plan_name: str) -> bool:
+    """PG-303: the receipt after an account was deleted for inactivity.
+
+    A separate template from ACCOUNT_DELETED on purpose. That one confirms a
+    deletion the owner asked for ("when you confirmed", "if you did not do
+    this, reply immediately"); this one explains a deletion we carried out.
+    Same shape otherwise: past tense, the rows are gone, the address and plan
+    are passed in because nothing is left to read them from. Fail-safe."""
+    return _send_templated(
+        LifecycleEmailTemplate.Trigger.INACTIVE_ACCOUNT_DELETED,
+        {"email": email, "plan": plan_name},
+        [email],
+        _INACTIVE_ACCOUNT_DELETED_FALLBACK_SUBJECT,
+        _INACTIVE_ACCOUNT_DELETED_FALLBACK_BODY,
+    )
+
+
+def notify_admin_inactive_account_deleted(email: str, tenants_deleted: int, tenants_left: int) -> None:
+    """PG-303: the nightly job deleted an account for inactivity. Same shape
+    as the other admin notices: hard-wired copy, best-effort, sent after the
+    rows are gone, so counts come from the caller."""
+    subject = f"PayGlue account deleted for inactivity: {email}"
+    body = (
+        f"{email} was deleted by the nightly job: subscription ended, "
+        f"workspaces paused for three months, deletion notice sent a week ago.\n\n"
+        f"User: {email}\n"
+        f"Workspaces deleted with them: {tenants_deleted}\n"
+        f"Workspaces they only left (other owners remain): {tenants_left}\n\n"
+        "Nothing to do. This is the end of the lapse process; the customer "
+        "received a receipt."
+    )
+    try:
+        _send_branded(subject, body, [settings.INTERNAL_ADMIN_EMAIL])
+    except Exception:
+        logger.exception("Failed to send inactive-account-deleted notification for %s", email)
 
 
 def send_account_deleted_email(email: str) -> bool:
