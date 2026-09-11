@@ -141,16 +141,22 @@ class PolarPaymentAdapter:
         if abs(now_ts - timestamp) > self._timestamp_tolerance_seconds:
             raise InvalidWebhookSignatureError("signature timestamp is stale")
 
-        secret = self._decode_standard_secret(webhook_secret)
         signed_payload = f"{webhook_id}.{webhook_timestamp}.".encode("utf-8") + raw_body
-        expected_signature = base64.b64encode(
-            hmac.new(secret, signed_payload, hashlib.sha256).digest()
-        ).decode("ascii")
+        # Polar signs with one of two keys depending on when the secret was
+        # generated (Standard Webhooks since 8 September 2026, Polar's own
+        # scheme before). Nothing in the request says which, and the two are
+        # not distinguishable from the secret alone either, so both keys are
+        # tried, the way Polar's own SDKs do it.
+        expected_signatures = {
+            base64.b64encode(hmac.new(key, signed_payload, hashlib.sha256).digest()).decode("ascii")
+            for key in self._candidate_standard_keys(webhook_secret)
+        }
 
         provided_signatures = self._parse_standard_signatures(webhook_signature)
         if not any(
-            hmac.compare_digest(signature, expected_signature)
+            hmac.compare_digest(signature, expected)
             for signature in provided_signatures
+            for expected in expected_signatures
         ):
             raise InvalidWebhookSignatureError("signature mismatch")
 
@@ -432,14 +438,25 @@ class PolarPaymentAdapter:
         raise InvalidWebhookSignatureError(f"missing {header_name} header")
 
     @staticmethod
-    def _decode_standard_secret(webhook_secret: str) -> bytes:
-        encoded = webhook_secret
-        if encoded.startswith("whsec_"):
-            encoded = encoded.removeprefix("whsec_")
+    def _candidate_standard_keys(webhook_secret: str) -> list[bytes]:
+        """The HMAC keys a Polar secret may stand for.
+
+        Secrets generated on or after 8 September 2026 are Standard Webhooks:
+        the key is the base64-decoded part after ``whsec_``. Older Polar
+        secrets use the UTF-8 bytes of the entire ``whsec_...`` string. An
+        older secret can happen to be valid base64 too, so decoding alone
+        cannot tell them apart; the caller tries every key returned here.
+        """
+        keys: list[bytes] = []
+        encoded = webhook_secret.removeprefix("whsec_")
         try:
-            return base64.b64decode(encoded, validate=True)
+            keys.append(base64.b64decode(encoded, validate=True))
         except Exception:
-            return webhook_secret.encode("utf-8")
+            pass
+        raw = webhook_secret.encode("utf-8")
+        if raw not in keys:
+            keys.append(raw)
+        return keys
 
     @staticmethod
     def _parse_standard_signatures(signature_header: str) -> list[str]:

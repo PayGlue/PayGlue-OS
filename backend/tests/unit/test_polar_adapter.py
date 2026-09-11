@@ -138,6 +138,64 @@ def test_verify_webhook_accepts_standard_webhook_headers() -> None:
     adapter.verify_webhook(body, headers, TenantContext(tenant_slug="tenant-a"))
 
 
+def _standard_headers(key: bytes, event_id: str, timestamp: int, body: bytes) -> dict[str, str]:
+    message = f"{event_id}.{timestamp}.".encode("utf-8") + body
+    digest = hmac.new(key, message, hashlib.sha256).digest()
+    return {
+        "webhook-id": event_id,
+        "webhook-timestamp": str(timestamp),
+        "webhook-signature": f"v1,{base64.b64encode(digest).decode('ascii')}",
+    }
+
+
+def test_standard_webhook_accepts_secret_generated_after_september_2026() -> None:
+    """Standard Webhooks key: the base64-decoded part after whsec_."""
+    body = b'{"id":"evt_1"}'
+    timestamp = 1704067200
+    key = b"\x01\x02new-style-key-bytes\xff"
+    secret = "whsec_" + base64.b64encode(key).decode("ascii")
+    adapter = PolarPaymentAdapter(
+        credential_provider=StubCredentialProvider(secret),
+        now=lambda: datetime.fromtimestamp(timestamp, tz=UTC),
+    )
+
+    adapter.verify_webhook(
+        body, _standard_headers(key, "evt_new", timestamp, body), TenantContext(tenant_slug="tenant-a")
+    )
+
+
+def test_standard_webhook_accepts_older_polar_secret_that_looks_like_base64() -> None:
+    """Older Polar secrets sign with the UTF-8 bytes of the whole string. One
+    that happens to decode as base64 must still verify."""
+    body = b'{"id":"evt_1"}'
+    timestamp = 1704067200
+    secret = "whsec_abcdefghijklmnop"  # valid base64, but the key is the raw string
+    adapter = PolarPaymentAdapter(
+        credential_provider=StubCredentialProvider(secret),
+        now=lambda: datetime.fromtimestamp(timestamp, tz=UTC),
+    )
+
+    adapter.verify_webhook(
+        body,
+        _standard_headers(secret.encode("utf-8"), "evt_old", timestamp, body),
+        TenantContext(tenant_slug="tenant-a"),
+    )
+
+
+def test_standard_webhook_rejects_wrong_key_under_both_schemes() -> None:
+    body = b'{"id":"evt_1"}'
+    timestamp = 1704067200
+    adapter = PolarPaymentAdapter(
+        credential_provider=StubCredentialProvider("whsec_abcdefghijklmnop"),
+        now=lambda: datetime.fromtimestamp(timestamp, tz=UTC),
+    )
+
+    with pytest.raises(InvalidWebhookSignatureError):
+        adapter.verify_webhook(
+            body, _standard_headers(b"somebody-else", "evt_x", timestamp, body), TenantContext(tenant_slug="tenant-a")
+        )
+
+
 def test_parse_event_normalizes_order_paid_payload() -> None:
     adapter = PolarPaymentAdapter(credential_provider=StubCredentialProvider())
     payload = {

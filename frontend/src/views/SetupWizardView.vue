@@ -224,7 +224,8 @@ const stillNeedsSetup = computed(() => installationNeedsSetup())
               <span class="block font-semibold text-slate-900 dark:text-slate-100">Let&rsquo;s connect:</span>
               <a href="https://x.com/PayGlue_io" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">X</a>,
               <a href="https://www.threads.com/@payglue.io" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">Threads</a>,
-              <a href="https://bsky.app/profile/payglue.bsky.social" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">Bluesky</a>
+              <a href="https://bsky.app/profile/payglue.bsky.social" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">Bluesky</a>,
+              <a href="https://www.youtube.com/@payglue" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">YouTube</a>
               or find me on
               <a href="https://mastodon.social/@payglue" target="_blank" rel="noopener" class="font-semibold text-indigo-600 hover:underline dark:text-indigo-400">Mastodon</a>.
             </p>

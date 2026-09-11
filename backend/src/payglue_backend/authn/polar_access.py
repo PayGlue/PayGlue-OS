@@ -24,7 +24,17 @@ class PolarAccessError(Exception):
     pass
 
 
-_HEADERS = {"User-Agent": "PayGlue/1.0 (https://payglue.io)"}
+# Polar versions its API by date and rotates the default every quarter (the
+# first rotation is 2026-10-01). A request without the header follows whatever
+# is current, so a field or payload can change under us without a deploy on
+# our side. Pinning keeps the contract we tested against; moving to the next
+# version is a deliberate change here, not a calendar event at Polar.
+POLAR_API_VERSION = "2026-04"
+
+_HEADERS = {
+    "User-Agent": "PayGlue/1.0 (https://payglue.io)",
+    "Polar-Version": POLAR_API_VERSION,
+}
 
 
 def _get(url: str, api_key: str) -> dict:
