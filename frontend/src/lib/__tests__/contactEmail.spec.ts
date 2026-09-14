@@ -4,7 +4,7 @@
  * The pattern guarding the support form's contact address.
  *
  * Kept as its own test because the old check was `includes('@')`, which let
- * "nuenni@gmail.com," through. That one comma then broke the confirmation
+ * "someone@example.com," through. That one comma then broke the confirmation
  * email, our internal notification (the address rides along in Reply-To) and
  * the tracker's email link, from a form that had already said "Message sent".
  */
@@ -16,7 +16,7 @@ const ok = (value: string) => EMAIL_PATTERN.test(value.trim())
 describe('the contact address pattern', () => {
   it('accepts ordinary addresses', () => {
     for (const value of [
-      'nuenni@gmail.com',
+      'someone@example.com',
       'first.last@sub.example.co.uk',
       'a+tag@example.io',
       '  spaced@example.com  ',
@@ -26,18 +26,18 @@ describe('the contact address pattern', () => {
   })
 
   it('rejects the trailing comma that started all this', () => {
-    expect(ok('nuenni@gmail.com,')).toBe(false)
+    expect(ok('someone@example.com,')).toBe(false)
   })
 
   it('rejects the other ways a paste goes wrong', () => {
     for (const value of [
-      'nuenni@gmail.com;',
+      'someone@example.com;',
       'one@example.com, two@example.com',
-      'Nuenni <nuenni@gmail.com>',
-      'nuenni@gmail',
+      'Someone <someone@example.com>',
+      'someone@example',
       '@gmail.com',
-      'nuenni@',
-      'nuenni at gmail.com',
+      'someone@',
+      'someone at example.com',
       '',
     ]) {
       expect(ok(value), value).toBe(false)

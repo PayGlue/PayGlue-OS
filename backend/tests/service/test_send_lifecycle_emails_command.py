@@ -212,7 +212,7 @@ def test_phase_one_moves_to_phase_two_when_creem_gives_up(monkeypatch: pytest.Mo
     period because phase 1 proves there was a live subscription."""
     _enable("subscription_ended")
     account = _billing_account(
-        "maximus@example.com",
+        "lapsed-owner@example.com",
         last_known_subscription_status="past_due",
         payment_failed_detected_at=timezone.now() - timedelta(days=7),
     )

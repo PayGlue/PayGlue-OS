@@ -2,7 +2,7 @@
 # Licensed under the Business Source License 1.1, see LICENSE.md
 """Creem newsletter opt-in to the PayGlue blog.
 
-The payload assertions here are built from the real sandbox response André
+The payload assertions here are built from a real sandbox response we
 captured, not from the docs. The two things that differ between the two are
 exactly the two that would have shipped broken.
 """
@@ -104,8 +104,8 @@ def test_no_opt_in_creates_nothing() -> None:
 
 
 def test_a_different_store_is_ignored() -> None:
-    """Only this store's checkouts feed the blog; other Creem products of
-    André's are not PayGlue customers."""
+    """Only this store's checkouts feed the blog; other Creem products in
+    the same account are not PayGlue customers."""
     _routing()
     with mock.patch.object(newsletter, "_create_ghost_member") as create:
         assert newsletter.route_checkout(_payload(store_id="sto_somethingelse")) is False
