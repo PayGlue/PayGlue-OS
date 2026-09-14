@@ -309,15 +309,17 @@ def notify_admin_account_deleted(
 _GHOST_ALERT_FALLBACK_SUBJECT = "PayGlue: Your Ghost connection is failing"
 _GHOST_ALERT_FALLBACK_BODY = (
     "Hi,\n\n"
-    "Access delivery to your Ghost site ($tenant) has been failing repeatedly. "
-    "That means new purchases are NOT being unlocked automatically right now.\n\n"
-    "Most common cause: your Ghost Admin API key was rotated or has expired, or "
-    "your Ghost instance is temporarily unreachable.\n\n"
+    "Access delivery to your Ghost site ($tenant) is failing. $count purchase "
+    "event(s) since $since could not be delivered, so those buyers have not been "
+    "unlocked in Ghost yet.\n\n"
+    "Most common causes: your Ghost Admin API key was rotated or has expired, or "
+    "your Ghost site is temporarily unreachable.\n\n"
     "Please check your Ghost connection in PayGlue:\n"
     "$url\n\n"
-    "There you can update your Ghost credentials and re-test with 'Run health "
-    "check'. Once the connection works again, pending events are re-delivered "
-    "automatically.\n\n" + _SIGN_OFF
+    "There you can update the credentials and run the health check. Once the "
+    "connection works again, open the event log and use Replay on the failed "
+    "events, or reply to this mail and we do it for you. No purchase is lost, "
+    "the events stay in your log.\n\n" + _SIGN_OFF
 )
 
 
@@ -339,6 +341,10 @@ def _test_render_context() -> dict[str, str]:
         "new_owner": "teammate@example.com",
         "previous_owner": "you@example.com",
         "deletion_date": "18 January 2027",
+        # PG-319: the two delivery alerts.
+        "provider": "Polar",
+        "count": "3",
+        "since": "25 Aug 2026",
     }
 
 
@@ -493,32 +499,127 @@ def send_owner_transfer_rejected_email(
     )
 
 
-def send_ghost_delivery_alert(owner_email: str, tenant_slug: str) -> bool:
-    """PG-192: warns a creator when access delivery to their Ghost site has
-    been failing repeatedly (e.g. a rotated/expired Ghost Admin API key, or
-    Ghost being unreachable) -- new purchases silently stop unlocking until
-    they fix it.
+_PROVIDER_ALERT_FALLBACK_SUBJECT = "PayGlue: $provider webhooks for $tenant are being rejected"
+_PROVIDER_ALERT_FALLBACK_BODY = (
+    "Hi,\n\n"
+    "$provider is sending purchase events for $tenant, but PayGlue cannot verify "
+    "them. $count event(s) since $since were rejected, and those buyers have not "
+    "been unlocked in Ghost yet.\n\n"
+    "The usual cause is a webhook secret that does not match: the secret saved in "
+    "PayGlue is not the one $provider uses for this endpoint. Please compare both "
+    "here:\n"
+    "$url\n\n"
+    "If the secrets match and events keep failing, the problem is on our side. "
+    "Reply to this mail and we will look at it the same day. The failed events "
+    "stay in your event log and can be replayed once the cause is fixed, so no "
+    "purchase is lost.\n\n" + _SIGN_OFF
+)
 
-    The copy is admin-editable via the GHOST_DELIVERY_FAILING
-    LifecycleEmailTemplate (edited alongside the subscription templates in
-    Django Admin). Placeholders: $email, $tenant, $url. Disabling that template
-    intentionally silences the alert; if the row is missing
-    entirely we fall back to the built-in copy so the alert never goes dark by
-    accident. Best-effort and fail-safe: a send failure is logged, never
-    raised. The command dedups (only calls this on the healthy -> failing
-    transition). Returns True only if the send succeeded."""
+_CONNECTION_PATHS = {
+    "polar": "polar",
+    "lemonsqueezy": "lemonsqueezy",
+    "paypal": "paypal",
+    "gumroad": "gumroad",
+    "paddle": "paddle",
+    "kofi": "kofi",
+    "creem": "creem",
+    "patreon": "patreon",
+}
+
+
+def send_delivery_failure_alert(
+    owner_email: str,
+    *,
+    tenant_slug: str,
+    kind: str,
+    provider_key: str,
+    count: int,
+    since: str,
+) -> bool:
+    """PG-192/PG-319: the creator's purchase stopped reaching Ghost. Sent by
+    the worker on the first terminal failure of an incident, once.
+
+    `kind` picks the template: "ghost" when PayGlue could not write to the
+    creator's Ghost site (GHOST_DELIVERY_FAILING, links the Ghost connection
+    page), anything else when the provider's webhook could not be trusted or
+    read (PROVIDER_WEBHOOK_FAILING, links that provider's connection page).
+    Both are admin-editable; disabling one silences it, a missing row falls
+    back to the built-in copy. Placeholders: $email, $tenant, $url, $provider,
+    $count, $since. Fail-safe, returns True only if the send succeeded."""
+    from payglue_backend.webhooks.delivery_alerts import KIND_GHOST, provider_display_name
+
+    if kind == KIND_GHOST:
+        trigger = LifecycleEmailTemplate.Trigger.GHOST_DELIVERY_FAILING
+        url = app_url(f"/t/{tenant_slug}/connection/ghost")
+        fallback = (_GHOST_ALERT_FALLBACK_SUBJECT, _GHOST_ALERT_FALLBACK_BODY)
+    else:
+        trigger = LifecycleEmailTemplate.Trigger.PROVIDER_WEBHOOK_FAILING
+        path = _CONNECTION_PATHS.get(provider_key, "")
+        url = app_url(f"/t/{tenant_slug}/connection/{path}" if path else f"/t/{tenant_slug}/connections")
+        fallback = (_PROVIDER_ALERT_FALLBACK_SUBJECT, _PROVIDER_ALERT_FALLBACK_BODY)
+
     return _send_templated(
-        LifecycleEmailTemplate.Trigger.GHOST_DELIVERY_FAILING,
+        trigger,
         {
             "email": owner_email,
             "tenant": tenant_slug,
-            "url": app_url(f"/t/{tenant_slug}/connection/ghost"),
+            "url": url,
+            "provider": provider_display_name(provider_key),
+            "count": str(count),
+            "since": since,
         },
         [owner_email],
-        _GHOST_ALERT_FALLBACK_SUBJECT,
-        _GHOST_ALERT_FALLBACK_BODY,
+        *fallback,
     )
 
+
+def send_ghost_delivery_alert(owner_email: str, tenant_slug: str) -> bool:
+    """Kept for callers that only know the Ghost case."""
+    return send_delivery_failure_alert(
+        owner_email,
+        tenant_slug=tenant_slug,
+        kind="ghost",
+        provider_key="",
+        count=1,
+        since="",
+    )
+
+
+def send_delivery_escalation_notice(*, tenant_slug: str, owner_email: str, state: dict) -> bool:
+    """PG-319: internal only. A tenant has been failing for two days and no
+    event has gone through since. Not a copy of the creator's alert and not
+    sent at the same time as it: the operator gets one line to decide whether
+    to ask the creator how things are going. Silent when no internal address
+    is configured. Fail-safe."""
+    recipient = getattr(settings, "INTERNAL_ADMIN_EMAIL", "")
+    if not recipient:
+        return False
+    from payglue_backend.webhooks.delivery_alerts import provider_display_name
+
+    provider = provider_display_name(state.get("provider") or "")
+    kind = state.get("kind") or "ghost"
+    cause = (
+        "PayGlue could not write to their Ghost site"
+        if kind == "ghost"
+        else f"{provider} webhooks could not be verified"
+    )
+    subject = f"Delivery still failing for {tenant_slug} after two days"
+    body = (
+        f"{tenant_slug} was told on {state.get('notified_at', '')[:10]} that purchases "
+        f"are not reaching Ghost ({cause}). Nothing has been processed since.\n\n"
+        f"Provider: {provider}\n"
+        f"Failed events when they were told: {state.get('count', '?')}, first on {state.get('since', '?')}\n"
+        f"Owner: {owner_email}\n"
+        f"Event log: {app_url(f'/t/{tenant_slug}/events')}\n\n"
+        "This is the one internal notice for this incident. The creator was not "
+        "copied on it. Consider asking them how things are going."
+    )
+    try:
+        _send_branded(subject, body, [recipient])
+        return True
+    except Exception:
+        logger.exception("Failed to send delivery escalation notice for %s", tenant_slug)
+        return False
 
 _MEMBER_REMOVED_FALLBACK_SUBJECT = "You were removed from $tenant on PayGlue"
 _MEMBER_REMOVED_FALLBACK_BODY = (

@@ -46,6 +46,27 @@ describe('entitlementKeyForProduct', () => {
 })
 
 describe('ruleForProduct', () => {
+  it('ignores a rule that was switched off when the trigger changed', () => {
+    // A tier saved as one-time and then moved to subscription. The server keeps
+    // the old row but switches it off; the editor must show the new trigger.
+    const rules = [
+      mapping({ id: 29, event_type: 'order.paid', is_active: false }),
+      mapping({ id: 30, event_type: 'subscription.active' }),
+    ]
+
+    expect(ruleForProduct(rules, 'polar', 'prod_a')?.event_type).toBe('subscription.active')
+  })
+
+  it('prefers the newest rule when two are still active', () => {
+    // Rows from before the server switched the older one off.
+    const rules = [
+      mapping({ id: 29, event_type: 'order.paid' }),
+      mapping({ id: 30, event_type: 'subscription.active' }),
+    ]
+
+    expect(ruleForProduct(rules, 'polar', 'prod_a')?.id).toBe(30)
+  })
+
   it('finds the rule whatever it happens to be called', () => {
     // The case that matters for existing installations. Keys in use are words
     // like `pro` and `founding_member`, written long before any of this.

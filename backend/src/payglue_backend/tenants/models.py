@@ -307,6 +307,10 @@ class LifecycleEmailTemplate(models.Model):
         # PG-192: operational alert (not a subscription-lifecycle mail) -- warns
         # the creator when their Ghost delivery is repeatedly failing.
         GHOST_DELIVERY_FAILING = "ghost_delivery_failing", "ghost_delivery_failing"
+        # PG-319: the other cause of a stuck purchase. The payment provider's
+        # webhook could not be verified or read, so it never got as far as
+        # Ghost. Different copy because the creator looks in a different place.
+        PROVIDER_WEBHOOK_FAILING = "provider_webhook_failing", "provider_webhook_failing"
         # PG-182: emailed to the current owner when an ownership transfer is
         # requested, asking them to confirm/reject it in the dashboard.
         OWNER_TRANSFER_REQUESTED = "owner_transfer_requested", "owner_transfer_requested"
@@ -335,8 +339,9 @@ class LifecycleEmailTemplate(models.Model):
     body = models.TextField(
         help_text=(
             "Plain text. Placeholders depend on the trigger: the subscription "
-            "triggers expose $email and $plan; ghost_delivery_failing exposes "
-            "$email, $tenant and $url; the owner_transfer_* triggers expose "
+            "triggers expose $email and $plan; ghost_delivery_failing and "
+            "provider_webhook_failing expose $email, $tenant, $url, $provider, "
+            "$count and $since; the owner_transfer_* triggers expose "
             "$tenant, $url, $new_owner and $previous_owner. Missing/unknown "
             "placeholders are left as-is, never crash the send."
         )

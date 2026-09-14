@@ -72,13 +72,33 @@ class WebhookIngestView(APIView):
     throttle_classes = [DynamicScopedRateThrottle]
     throttle_scope = "webhook_ingest"
 
+    # Every header an adapter reads has to be in here. The delivery is verified
+    # later, from the queue, and the queue only has this snapshot: a header that
+    # is not listed is gone by the time the adapter looks for it, and the event
+    # fails with "missing <provider>-signature header" on every attempt. That is
+    # how every Creem purchase at a tenant failed between the provider's launch
+    # and 2026-09-13, while the adapter's own tests, which hand the headers over
+    # directly, stayed green (PG-318). tests/unit/test_inbound_header_allowlist.py
+    # reads the adapters and fails when one of them names a header missing here.
     _HEADER_ALLOWLIST = {
         "content-type",
+        # Polar: current Standard Webhooks headers plus the legacy one.
         "polar-signature",
         "webhook-id",
         "webhook-timestamp",
         "webhook-signature",
+        # Lemon Squeezy
         "x-signature",
+        # Creem
+        "creem-signature",
+        # Paddle
+        "paddle-signature",
+        # Gumroad
+        "x-gumroad-signature",
+        # Patreon: the event type travels in a header too.
+        "x-patreon-signature",
+        "x-patreon-event",
+        # PayPal
         "paypal-transmission-id",
         "paypal-transmission-time",
         "paypal-cert-url",
@@ -806,9 +826,16 @@ _PAYWALL_JS = r"""(function(){
 
   function buildCard(cfg){
     var color=cfg.button_color||'#4f46e5';
+    /* PG-324: the editor saves alignment, text colour, corner radius and
+       width, and showed them in its own preview only. The card applies them. */
+    var align=(cfg.alignment==='center'||cfg.alignment==='right')?cfg.alignment:'left';
+    var textColor=cfg.text_color||'#fff';
+    var radius=cfg.border_radius==='none'?'0':(cfg.border_radius==='full'?'9999px':'0.4em');
+    var fullWidth=cfg.width==='full';
+    var btnBase='display:'+(fullWidth?'block':'inline-block')+';'+(fullWidth?'width:100%;text-align:center;':'')+'background:'+color+';color:'+textColor+';padding:0.6em 1.75em;border-radius:'+radius+';font-size:0.95em;font-weight:600;box-sizing:border-box;';
     var card=document.createElement('div');
     card.setAttribute('data-payglue-gate','');
-    card.style.cssText='display:block;width:100%;margin:2rem 0;padding:2rem 1.75rem;background:#fff;border-top:4px solid '+color+';border-radius:0 0 8px 8px;box-shadow:0 4px 20px rgba(0,0,0,.08);font-family:inherit;box-sizing:border-box;';
+    card.style.cssText='display:block;width:100%;margin:2rem 0;padding:2rem 1.75rem;background:#fff;border-top:4px solid '+color+';border-radius:0 0 8px 8px;box-shadow:0 4px 20px rgba(0,0,0,.08);font-family:inherit;box-sizing:border-box;text-align:'+align+';';
     var h=document.createElement('div');
     h.setAttribute('data-payglue-headline','');
     h.textContent=cfg.headline||'Premium content';
@@ -821,7 +848,7 @@ _PAYWALL_JS = r"""(function(){
         var tableId=cfg.button_url.replace('payglue-table:','');
         var btn=document.createElement('button');
         btn.textContent=cfg.button_text||'Get access';
-        btn.style.cssText='display:inline-block;background:'+color+';color:#fff;padding:0.6em 1.75em;border-radius:0.4em;font-size:0.95em;font-weight:600;border:none;cursor:pointer;font-family:inherit;';
+        btn.style.cssText=btnBase+'border:none;cursor:pointer;font-family:inherit;';
         btn.onmouseover=function(){this.style.opacity='0.85';};
         btn.onmouseout=function(){this.style.opacity='1';};
         btn.addEventListener('click',function(){
@@ -835,7 +862,7 @@ _PAYWALL_JS = r"""(function(){
         var a=document.createElement('a');
         a.href=cfg.button_url;a.target='_blank';a.rel='noopener noreferrer';
         a.textContent=cfg.button_text||'Get access';
-        a.style.cssText='display:inline-block;background:'+color+';color:#fff;padding:0.6em 1.75em;border-radius:0.4em;font-size:0.95em;font-weight:600;text-decoration:none;';
+        a.style.cssText=btnBase+'text-decoration:none;';
         a.onmouseover=function(){this.style.opacity='0.85';};
         a.onmouseout=function(){this.style.opacity='1';};
         card.appendChild(a);
@@ -887,8 +914,12 @@ _PAYWALL_JS = r"""(function(){
         var _sym=_syms[tbl.currency||'EUR']||'€';
         if(tier.cta_type==='free_signup'){var _fr=document.createElement('span');_fr.textContent='Free';_fr.style.cssText='font-size:1.6em;font-weight:700;color:#0f172a;';priceEl.appendChild(_fr);}
         else{
-          var price=isYearly?tier.price_yearly:tier.price_monthly;
-          var period=tier.period;
+          // PG-320: same fallback as the inline embed. A tier with one price
+          // shows it in both views, with its own suffix.
+          var _m=tier.price_monthly||'',_y=tier.price_yearly||'';
+          var _preferY=!!tbl.show_toggle&&isYearly;
+          var price=_preferY?(_y||_m):(_m||_y);
+          var period=price===''?'':((_preferY?(_y!==''):(_m===''&&_y!==''))?'yr':'mo');
           // price/period are free-text tenant config (CharField) -- build via
           // textContent, never innerHTML, so a value like "<img onerror=...>"
           // can't execute on the creator's site (matches the rest of this embed).
@@ -901,7 +932,8 @@ _PAYWALL_JS = r"""(function(){
         if(tier.description){var d=document.createElement('div');d.textContent=tier.description;d.style.cssText='font-size:0.78em;color:#64748b;margin-bottom:0.75rem;line-height:1.4;';card.appendChild(d);}
         if(tier.features&&tier.features.length){
           var ul=document.createElement('ul');ul.style.cssText='list-style:none;padding:0;margin:0 0 1rem;';
-          tier.features.forEach(function(f){var li=document.createElement('li');li.textContent='✓ '+(f&&typeof f==='object'?f.text||'':f);li.style.cssText='font-size:0.78em;color:#475569;padding:0.2em 0;';ul.appendChild(li);});
+          var _glyph={check:'\u2713 ',dot:'\u2022 ',dash:'\u2013 ',cross:'\u2715 ',none:''};
+          tier.features.forEach(function(f){var li=document.createElement('li');var _ic=(f&&typeof f==='object'&&f.icon in _glyph)?_glyph[f.icon]:'\u2713 ';li.textContent=_ic+(f&&typeof f==='object'?f.text||'':f);li.style.cssText='font-size:0.78em;color:#475569;padding:0.2em 0;';ul.appendChild(li);});
           card.appendChild(ul);
         }
         if(tier.cta_type==='free_signup'){
@@ -909,8 +941,9 @@ _PAYWALL_JS = r"""(function(){
           ctaB.style.cssText='display:block;width:100%;text-align:center;padding:0.6em;border-radius:0.4em;font-size:0.85em;font-weight:600;cursor:pointer;margin-top:auto;border:1px solid #e2e8f0;background:#fff;color:#475569;';
           ctaB.addEventListener('click',function(){window.location.hash='#/portal/signup/free';});
           card.appendChild(ctaB);
-        }else if(tier.cta_url){
-          var ctaA=document.createElement('a');ctaA.href=tier.cta_url;ctaA.target='_blank';ctaA.rel='noopener noreferrer';
+        }else if(tier.cta_url||tier.cta_url_yearly){
+          var _ctaUrl=(!!tbl.show_toggle&&isYearly&&tier.cta_url_yearly)?tier.cta_url_yearly:(tier.cta_url||tier.cta_url_yearly);
+          var ctaA=document.createElement('a');ctaA.href=_ctaUrl;ctaA.target='_blank';ctaA.rel='noopener noreferrer';
           ctaA.textContent=tier.cta_label||'Get started';
           ctaA.style.cssText='display:block;text-align:center;padding:0.6em;border-radius:0.4em;font-size:0.85em;font-weight:600;text-decoration:none;margin-top:auto;'+(hl?'background:'+acc+';color:#fff;':'border:1px solid #e2e8f0;color:#475569;');
           card.appendChild(ctaA);
@@ -1657,7 +1690,22 @@ _PRICING_TABLE_JS = r"""(function(){
     if(i==='check')return '<span style="color:#22c55e;font-weight:700;line-height:1;">&#10003;</span>';
     if(i==='dot')return '<span style="color:#94a3b8;">&#8226;</span>';
     if(i==='dash')return '<span style="color:#cbd5e1;">&#8211;</span>';
+    if(i==='cross')return '<span style="color:#cbd5e1;font-weight:700;line-height:1;">&#10005;</span>';
     return '';
+  }
+
+  // PG-320: a tier that carries only one of the two prices shows that price in
+  // both views, with the suffix that belongs to it. Before, the monthly view
+  // fell silent for a tier with only a yearly price. With the toggle off a
+  // subscription tier shows its one price with its period.
+  function priceFor(t,showToggle,yearly){
+    var isSub=t.cta_type!=='one_time'&&t.cta_type!=='free_signup';
+    var m=t.price_monthly||'',y=t.price_yearly||'';
+    if(!isSub)return {raw:m||y,period:''};
+    var preferYearly=showToggle&&yearly;
+    var raw=preferYearly?(y||m):(m||y);
+    var period=raw===''?'':((preferYearly?(y!==''):(m===''&&y!==''))?' / yr':' / mo');
+    return {raw:raw,period:period};
   }
 
   function render(container,cfg){
@@ -1719,9 +1767,12 @@ _PRICING_TABLE_JS = r"""(function(){
       var SYMS={'EUR':'€','USD':'$','GBP':'£','CHF':'CHF '};
       var sym=SYMS[cfg.currency||'EUR']||'€';
       var tiersHTML=tiers.map(function(t){
-        var rawPrice=yearly?(t.price_yearly||t.price_monthly||''):(t.price_monthly||'');
-        var price=rawPrice!==''?(sym+rawPrice):'';
-        var period=(showToggle&&t.cta_type!=='one_time'&&t.cta_type!=='free_signup')?(yearly?' / yr':' / mo'):'';
+        var pf=priceFor(t,showToggle,yearly);
+        // PG-322: in the yearly view the button opens the yearly product when
+        // the tier has one. Before, both views sent the buyer to one checkout.
+        var ctaUrl=(showToggle&&yearly&&t.cta_url_yearly)?t.cta_url_yearly:(t.cta_url||'');
+        var price=pf.raw!==''?(sym+pf.raw):'';
+        var period=pf.period;
         var cc='pg-card'+(t.highlight?' hl':'');
         var rb=(t.highlight&&t.ribbon_text)?'<div class="pg-rb">'+esc(t.ribbon_text)+'</div>':'';
         var trial=t.trial_days?'<div class="pg-tr">'+esc(t.trial_days)+'-day free trial</div>':'';
@@ -1730,8 +1781,8 @@ _PRICING_TABLE_JS = r"""(function(){
         }).join('');
         var cta=t.cta_type==='free_signup'
           ?'<button class="pg-cta" data-pg-signup="true">'+esc(t.cta_label||'Get started for free')+'</button>'
-          :t.cta_url
-            ?'<a class="pg-cta" href="'+esc(t.cta_url)+'" target="_blank" rel="noopener noreferrer">'+esc(t.cta_label||'Get started')+'</a>'
+          :ctaUrl
+            ?'<a class="pg-cta" href="'+esc(ctaUrl)+'" target="_blank" rel="noopener noreferrer">'+esc(t.cta_label||'Get started')+'</a>'
             :'<span class="pg-cta">'+esc(t.cta_label||'Get started')+'</span>';
         return '<div class="'+esc(cc)+'">'+rb+'<div class="pg-n">'+esc(t.name)+'</div><div class="pg-d">'+esc(t.description)+'</div><div class="pg-p">'+esc(price)+'<em>'+esc(period)+'</em></div>'+trial+'<ul class="pg-fl">'+feats+'</ul>'+cta+'</div>';
       }).join('');
@@ -1791,8 +1842,10 @@ def _serialize_pricing_tier(tier: PricingTier) -> dict:
         "cta_type": tier.cta_type,
         "cta_label": tier.cta_label,
         "cta_url": tier.cta_url,
+        "cta_url_yearly": tier.cta_url_yearly,
         "features": tier.features,
         "product_provider": tier.product_provider,
+        "product_id_yearly": tier.product_id_yearly,
         "product_id": tier.product_id,
     }
 
@@ -1828,6 +1881,13 @@ def _replace_tiers(table: PricingTable, tiers_data: list) -> None:
         specs.append(
             _grant_spec(td.get("product_provider") or "", td.get("product_id") or "", td)
         )
+        # PG-322: the yearly product of a toggled tier grants the same access
+        # as its monthly sibling, so it shares the grant block, key included.
+        # A monthly and a yearly buyer of "Premium" are both Premium.
+        if td.get("product_id_yearly"):
+            specs.append(
+                _grant_spec(td.get("product_provider") or "", td.get("product_id_yearly") or "", td)
+            )
         PricingTier.objects.create(
             id=secrets.token_urlsafe(12),
             table=table,
@@ -1845,6 +1905,8 @@ def _replace_tiers(table: PricingTable, tiers_data: list) -> None:
             features=td.get("features") or [],
             product_provider=td.get("product_provider") or "",
             product_id=td.get("product_id") or "",
+            product_id_yearly=td.get("product_id_yearly") or "",
+            cta_url_yearly=td.get("cta_url_yearly") or "",
         )
     sync_grants(table.tenant_slug, specs)
 

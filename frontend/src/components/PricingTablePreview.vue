@@ -1,44 +1,51 @@
-// Copyright (c) 2026 PayGlue by André Nünninghoff
-// Licensed under the Business Source License 1.1, see LICENSE.md
-
+<!-- Copyright (c) 2026 PayGlue by André Nünninghoff -->
+<!-- Licensed under the Business Source License 1.1, see LICENSE.md -->
 <script setup lang="ts">
-import type { PricingPlan } from '../types/api'
+// PG-323: the table as a reader will see it, rendered by the same script
+// the embed uses, so the preview cannot drift from the real thing. The
+// script fetches its config from the API; inside the frame we hand it the
+// form state instead, so nothing has to be saved to look at it.
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { apiBaseUrl } from '../lib/publicUrls'
 
-defineProps<{
-  title: string
-  subtitle: string
-  plans: PricingPlan[]
-}>()
+const props = defineProps<{ config: Record<string, unknown> }>()
+
+const height = ref(320)
+const frame = ref<HTMLIFrameElement | null>(null)
+
+const srcdoc = computed(() => {
+  // A closing script tag inside a tier name would end the inline script early.
+  const json = JSON.stringify(props.config).replace(/<\//g, '<\\/')
+  // The tag names are assembled so the SFC compiler does not read them as
+  // blocks of this component.
+  const S = 'script'
+  const inline = `window.fetch=function(){return Promise.resolve({ok:true,json:function(){return Promise.resolve(${json})}})};`
+    + `new ResizeObserver(function(){parent.postMessage({payglue:'preview-height',height:document.documentElement.scrollHeight},'*')}).observe(document.body);`
+  return `<!doctype html><html><head><meta charset="utf-8"><${'style'}>html,body{margin:0;background:transparent}</${'style'}></head><body>`
+    + `<${S}>${inline}</${S}>`
+    + `<${S} src="${apiBaseUrl()}/pricing-table.js" data-table-id="preview"></${S}>`
+    + `</body></html>`
+})
+
+function onMessage(event: MessageEvent) {
+  const data = event.data
+  if (!data || data.payglue !== 'preview-height') return
+  if (frame.value && event.source !== frame.value.contentWindow) return
+  const next = Number(data.height)
+  if (Number.isFinite(next) && next > 0) height.value = Math.min(Math.max(next, 160), 1600)
+}
+
+onMounted(() => window.addEventListener('message', onMessage))
+onBeforeUnmount(() => window.removeEventListener('message', onMessage))
 </script>
 
 <template>
-  <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-    <div class="text-center">
-      <h3 class="text-2xl font-semibold text-slate-900">{{ title }}</h3>
-      <p class="mt-2 text-sm text-slate-600">{{ subtitle }}</p>
-    </div>
-
-    <div class="mt-6 grid gap-4 md:grid-cols-3">
-      <article
-        v-for="plan in plans"
-        :key="plan.id"
-        class="flex flex-col rounded-xl border border-slate-200 bg-gradient-to-b from-white to-slate-50 p-5"
-      >
-        <h4 class="text-lg font-semibold text-slate-900">{{ plan.name }}</h4>
-        <p class="mt-1 text-3xl font-bold text-blue-700">{{ plan.price }}</p>
-        <p class="mt-2 text-sm text-slate-600">{{ plan.description }}</p>
-
-        <ul class="mt-4 space-y-2 text-sm text-slate-700">
-          <li v-for="feature in plan.features" :key="feature" class="flex items-start gap-2">
-            <span class="mt-1 h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            <span>{{ feature }}</span>
-          </li>
-        </ul>
-
-        <button class="mt-6 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
-          {{ plan.ctaLabel }}
-        </button>
-      </article>
-    </div>
-  </section>
+  <iframe
+    ref="frame"
+    title="Pricing table preview"
+    :srcdoc="srcdoc"
+    sandbox="allow-scripts"
+    class="w-full rounded-xl border-0 bg-transparent"
+    :style="{ height: height + 'px' }"
+  />
 </template>

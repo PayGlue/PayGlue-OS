@@ -79,9 +79,17 @@ async function copyScript() {
           <pre class="overflow-x-auto rounded-lg bg-slate-900 p-4 text-xs text-slate-100 ring-1 ring-slate-800"><code>{{ headerScript }}</code></pre>
         </div>
 
-        <div class="rounded-lg border border-indigo-200 bg-white/60 p-3 text-xs text-indigo-600 dark:border-indigo-500/30 dark:bg-slate-900/60 dark:text-indigo-300">
-          Not suitable for highly confidential content: the overlay is client-side only. Content is visible in DevTools.
-          <a href="https://docs.payglue.io/paywall/overview" target="_blank" rel="noopener noreferrer" class="underline hover:text-indigo-800 dark:hover:text-indigo-200">Learn more</a>
+        <div class="flex gap-2.5 rounded-lg border border-indigo-200 dark:border-indigo-500/30 bg-indigo-50 dark:bg-indigo-500/10 px-3 py-2.5">
+          <svg class="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+          </svg>
+          <p class="text-xs text-indigo-900 dark:text-indigo-200 leading-relaxed">
+            <span class="font-semibold">The paywall is a client-side gate.</span>
+            A paywalled article stays Public in Ghost, so its full text remains in your RSS feed, on the social web and in the Content API; the overlay hides it in the browser only. Not the place for confidential content.
+            <a href="https://docs.payglue.io/paywall/public-post" target="_blank" rel="noopener noreferrer" class="font-medium underline underline-offset-2 hover:text-indigo-700 dark:hover:text-indigo-100">What it protects, and what it does not</a>.
+            Ghost's own gate is the alternative for posts that must stay out of feeds.
+            <a href="https://docs.payglue.io/paywall/overview#three-ways-to-gate-a-post" target="_blank" rel="noopener noreferrer" class="font-medium underline underline-offset-2 hover:text-indigo-700 dark:hover:text-indigo-100">Compare the three ways</a>
+          </p>
         </div>
       </section>
 

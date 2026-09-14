@@ -20,7 +20,7 @@ from payglue_backend.core.errors import (
 )
 from payglue_backend.core.models import TenantContext
 from payglue_backend.tenants.models import Tenant
-from payglue_backend.webhooks import wiring
+from payglue_backend.webhooks import delivery_alerts, wiring
 from payglue_backend.webhooks.models import WebhookInboundEvent
 
 
@@ -216,7 +216,7 @@ def _process_inbound_webhook_event(event_id: int, ignore_timing: bool = False, s
         if retryable:
             status = WebhookInboundEvent.Status.DEAD_LETTER
             dead_lettered_at = error_now
-        _update_if_current_processing(
+        updated = _update_if_current_processing(
             event_id=event.id,
             attempts=event.attempts,
             status=status,
@@ -226,10 +226,14 @@ def _process_inbound_webhook_event(event_id: int, ignore_timing: bool = False, s
             dead_lettered_at=dead_lettered_at,
             updated_at=error_now,
         )
+        if updated:
+            # Terminal: no retry is coming. The creator hears about it now,
+            # not at the nightly run (PG-319). Never raises.
+            delivery_alerts.record_delivery_failure(event, exc)
         return
 
     success_now = timezone.now()
-    _update_if_current_processing(
+    updated = _update_if_current_processing(
         event_id=event.id,
         attempts=event.attempts,
         status=WebhookInboundEvent.Status.PROCESSED,
@@ -240,3 +244,5 @@ def _process_inbound_webhook_event(event_id: int, ignore_timing: bool = False, s
         dead_lettered_at=None,
         updated_at=success_now,
     )
+    if updated:
+        delivery_alerts.record_delivery_success(event.tenant_slug)

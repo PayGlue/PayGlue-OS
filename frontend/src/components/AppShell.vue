@@ -8,6 +8,7 @@ import PayGlueLogo from './PayGlueLogo.vue'
 import CommandPalette, { type PaletteItem } from './CommandPalette.vue'
 import GracePeriodBanner from './GracePeriodBanner.vue'
 import { useSessionStore } from '../stores/session'
+import { usePageResetStore } from '../stores/pageReset'
 import { checkHeaderScript, getChangelogForBell, getGhostStripeStatus, getIntegrationConfig } from '../lib/api'
 import type { ChangelogBellEntry } from '../types/api'
 import { useHeaderScriptStatus } from '../composables/useHeaderScriptStatus'
@@ -82,6 +83,13 @@ onMounted(async () => {
 const session = useSessionStore()
 const route = useRoute()
 const router = useRouter()
+const pageReset = usePageResetStore()
+
+// A nav item or breadcrumb for the page that is already open: the router
+// would do nothing, so the view is told to return to its start instead.
+function onNavClick(to: string) {
+  if (isActive(to)) pageReset.reset()
+}
 const mobileSidebarOpen = ref(false)
 
 const justLinkedProvider = ref<string | null>(null)
@@ -337,10 +345,17 @@ const tabsForSection = (key: string): TabItem[] => {
 // The sub-item matching the current route, shown as the second breadcrumb
 // segment (e.g. "Connections / Creem") -- null when the section has no
 // sub-nav (Dashboard) or no sub-item is active yet.
-const activeSubLabel = computed(() => {
+const activeSubItem = computed(() => {
   const match = tabsForSection(activeSectionKey.value).find(t => !t.disabled && isActive(t.to))
-  return match ? match.label : null
+  return match ?? null
 })
+const activeSubLabel = computed(() => activeSubItem.value?.label ?? null)
+
+function onSubCrumbClick() {
+  if (!activeSubItem.value) return
+  onNavClick(activeSubItem.value.to)
+  router.push(activeSubItem.value.to)
+}
 
 // ---- Rail groups: which sections are expanded ----------------------------
 // Multiple groups can be open at once (matches the mobile drawer's previous
@@ -528,6 +543,7 @@ watch(
                     :to="tab.to"
                     class="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors"
                     :class="isActive(tab.to) ? 'bg-slate-800 font-medium text-white' : 'text-slate-400 hover:text-slate-100'"
+                    @click="onNavClick(tab.to)"
                   >
                     <span v-if="tab.dot" class="h-1.5 w-1.5 shrink-0 rounded-full" :class="tab.dot === 'good' ? 'bg-emerald-500' : 'bg-slate-600'" :title="tab.dot === 'good' ? 'Connected' : 'Not connected'"></span>
                     {{ tab.label }}
@@ -801,7 +817,13 @@ watch(
               </button>
               <template v-if="activeSubLabel">
                 <span class="text-slate-300 dark:text-slate-600">/</span>
-                <span class="truncate rounded-md px-1.5 py-1 font-medium text-slate-500 dark:text-slate-400">{{ activeSubLabel }}</span>
+                <button
+                  type="button"
+                  class="truncate rounded-md px-1.5 py-1 font-medium text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                  @click="onSubCrumbClick"
+                >
+                  {{ activeSubLabel }}
+                </button>
               </template>
             </div>
 

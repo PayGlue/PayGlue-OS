@@ -204,7 +204,7 @@ def test_pointing_a_button_at_a_different_product_leaves_the_old_rule_alone(owne
 
 
 def test_the_mapping_list_names_every_widget_offering_the_product(owner) -> None:
-    """What Andre saw on staging: a product on a buy button and a pricing tier
+    """Seen on staging: a product on a buy button and a pricing tier
     showed only the tier, because "used in" came from the rule's own metadata
     and the tier had saved last. With one rule between them that is not merely
     incomplete, it is wrong, so the server works it out from the widgets."""
@@ -234,3 +234,64 @@ def test_a_product_no_widget_offers_says_so_rather_than_naming_a_stale_one(owner
 
     assert len(rows) == 1
     assert rows[0]["used_in"] == []
+
+
+def test_switching_a_tier_from_one_time_to_subscription_leaves_one_active_rule(owner) -> None:
+    """A tier is first saved with the default trigger, one-time, and then moved
+    to subscription. The constraint keys on the event type, so the second save
+    used to add a second active rule next to the first. The editor then reloaded
+    whichever row came first and showed one-time again, and a subscription
+    purchase, for which Polar sends order.paid and subscription.active, applied
+    both rules. One product, one active grant; the old row is switched off."""
+    client = Client()
+    response = _post(client, "pricing-tables", _table_payload(event_type="order.paid"), owner)
+    assert response.status_code == 201
+    table_id = response.json()["id"]
+
+    response = client.patch(
+        f"/t/tenant-a/api/v1/pricing-tables/{table_id}",
+        data=json.dumps(_table_payload(event_type="subscription.active")),
+        content_type="application/json",
+        **owner,
+    )
+    assert response.status_code == 200
+
+    rules = list(ProductMapping.objects.order_by("id"))
+    assert [(r.event_type, r.is_active) for r in rules] == [
+        ("order.paid", False),
+        ("subscription.active", True),
+    ]
+    assert ProductMapping.objects.filter(is_active=True).get().event_type == "subscription.active"
+
+
+def test_a_toggled_tier_with_a_yearly_product_gets_a_rule_for_both_products(owner) -> None:
+    """PG-322: the yearly product grants the same access as the monthly one, so
+    both rules carry the tier's key. The table remembers the yearly product
+    and its checkout URL for the embed."""
+    payload = {
+        "name": "Homepage",
+        "show_toggle": True,
+        "tiers": [
+            {
+                "name": "Premium",
+                "cta_type": "subscription",
+                "product_provider": "polar",
+                "product_id": PRODUCT,
+                "product_id_yearly": "prod_yearly",
+                "cta_url": "https://buy.example/monthly",
+                "cta_url_yearly": "https://buy.example/yearly",
+                "grant": {"entitlement_key": "premium", "event_type": "subscription.active"},
+            }
+        ],
+    }
+
+    response = _post(Client(), "pricing-tables", payload, owner)
+
+    assert response.status_code == 201
+    rules = {r.external_product_id: r for r in ProductMapping.objects.all()}
+    assert set(rules) == {PRODUCT, "prod_yearly"}
+    assert rules["prod_yearly"].entitlement_key == rules[PRODUCT].entitlement_key == "premium"
+    assert rules["prod_yearly"].event_type == "subscription.active"
+    tier = response.json()["tiers"][0]
+    assert tier["product_id_yearly"] == "prod_yearly"
+    assert tier["cta_url_yearly"] == "https://buy.example/yearly"

@@ -85,7 +85,7 @@ export interface PricingPlan {
   entitlementKey: string
 }
 
-export type PricingFeatureIcon = 'check' | 'dot' | 'dash' | 'none'
+export type PricingFeatureIcon = 'check' | 'dot' | 'dash' | 'cross' | 'none'
 
 export interface PricingFeature {
   text: string
@@ -105,9 +105,11 @@ export interface PricingTierData {
   cta_type: 'custom_url' | 'free_signup' | 'one_time' | 'subscription'
   cta_label: string
   cta_url: string
+  cta_url_yearly?: string
   features: PricingFeature[]
   product_provider?: string
   product_id?: string
+  product_id_yearly?: string
 }
 
 export interface PricingTableData {

@@ -6,7 +6,9 @@ import { computed, onMounted, ref, watch } from 'vue'
 import AppShell from '../components/AppShell.vue'
 import { PageHeader, ProviderPicker, UiButton } from '../components/ui'
 import UpgradeBanner from '../components/UpgradeBanner.vue'
+import PricingTablePreview from '../components/PricingTablePreview.vue'
 import { useSessionStore } from '../stores/session'
+import { usePageResetStore } from '../stores/pageReset'
 import { isPlanLimitError, planKeyFromError } from '../lib/planUpgrade'
 import {
   listPricingTables,
@@ -45,6 +47,10 @@ interface LocalTier {
   cta_url: string
   features: LocalFeature[]
   selectedProductId: string
+  // PG-322: the yearly product of a toggled subscription tier, same provider.
+  selectedProductIdYearly: string
+  cta_url_yearly: string
+  existingMappingIdYearly: number | null
   selectedProvider: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon'
   mappingEventType: 'order.paid' | 'subscription.active'
   mappingGhostSubscribed: boolean
@@ -70,6 +76,9 @@ function defaultTier(partial: Partial<LocalTier> = {}): LocalTier {
     cta_url: '',
     features: [],
     selectedProductId: '',
+    selectedProductIdYearly: '',
+    cta_url_yearly: '',
+    existingMappingIdYearly: null,
     selectedProvider: 'polar',
     mappingEventType: 'order.paid',
     mappingGhostSubscribed: true,
@@ -88,8 +97,45 @@ const formName = ref('')
 const formTemplate = ref<'classic' | 'minimal' | 'bold'>('classic')
 const formAccentColor = ref('#4f46e5')
 const formCurrency = ref<'EUR' | 'USD' | 'GBP' | 'CHF'>('EUR')
-const formTiers = ref<LocalTier[]>([defaultTier()])
-const formShowToggle = computed(() => formTiers.value.some(t => t.cta_type === 'subscription'))
+const formTiers = ref<LocalTier[]>([defaultTier({ cta_type: 'free_signup', cta_label: 'Sign up free' })])
+// PG-320: the toggle used to switch itself on whenever a tier was a
+// subscription, with no way to turn it off. A creator with separate monthly
+// and yearly products wants two columns, not one column with a switch. The
+// choice is stored on the table; the switch only shows once a subscription
+// tier exists, because it means nothing without one.
+const hasSubscriptionTier = computed(() => formTiers.value.some(t => t.cta_type === 'subscription'))
+const formToggleEnabled = ref(false)
+const formShowToggle = computed(() => hasSubscriptionTier.value && formToggleEnabled.value)
+
+// Choosing the toggle is choosing subscriptions: a one-time or custom tier
+// cannot have a monthly and a yearly price, so it becomes a subscription the
+// moment the toggle is switched on. Free tiers stay free. Nothing is converted
+// back when the toggle goes off, there is nothing to restore it to.
+watch(formToggleEnabled, (on) => {
+  if (!on) return
+  for (const tier of formTiers.value) {
+    if (tier.cta_type === 'one_time' || tier.cta_type === 'custom_url') tier.cta_type = 'subscription'
+  }
+})
+
+// With the toggle off a subscription tier has one price and one period. The
+// value still lives in price_monthly or price_yearly, so the embed and the
+// overlay know which suffix to show without a new field.
+function tierPeriod(tier: LocalTier): 'mo' | 'yr' {
+  return tier.price_yearly && !tier.price_monthly ? 'yr' : 'mo'
+}
+function singlePrice(tier: LocalTier): string {
+  return tier.price_monthly || tier.price_yearly
+}
+function setSinglePrice(tier: LocalTier, value: string) {
+  if (tierPeriod(tier) === 'yr') { tier.price_yearly = value; tier.price_monthly = '' }
+  else { tier.price_monthly = value; tier.price_yearly = '' }
+}
+function setTierPeriod(tier: LocalTier, period: 'mo' | 'yr') {
+  const value = singlePrice(tier)
+  if (period === 'yr') { tier.price_yearly = value; tier.price_monthly = '' }
+  else { tier.price_monthly = value; tier.price_yearly = '' }
+}
 
 const saving = ref(false)
 const saveError = ref<string | null>(null)
@@ -348,6 +394,9 @@ watch(allProducts, () => {
 function setTierProvider(tier: LocalTier, provider: LocalTier['selectedProvider']) {
   tier.selectedProvider = provider
   tier.selectedProductId = ''
+  tier.selectedProductIdYearly = ''
+  tier.cta_url_yearly = ''
+  tier.existingMappingIdYearly = null
 }
 
 function resetForm() {
@@ -356,7 +405,9 @@ function resetForm() {
   formTemplate.value = 'classic'
   formAccentColor.value = '#4f46e5'
   formCurrency.value = 'EUR'
-  formTiers.value = [defaultTier()]
+  formToggleEnabled.value = false
+  // A table almost always opens with the free tier; the paid ones come after it.
+  formTiers.value = [defaultTier({ cta_type: 'free_signup', cta_label: 'Sign up free' })]
   saveError.value = null
   justSaved.value = null
   editorOpen.value = false
@@ -366,6 +417,10 @@ function resetForm() {
   overlayRadius.value = 'md'
   overlayAlign.value = 'center'
 }
+
+// The shell asks the page to start over when its nav item or breadcrumb is clicked again.
+const pageReset = usePageResetStore()
+watch(() => pageReset.tick, () => { if (editorOpen.value) resetForm() })
 
 function openNew() {
   resetForm()
@@ -381,6 +436,7 @@ function startEdit(table: PricingTableData) {
   formTemplate.value = table.template
   formAccentColor.value = table.accent_color || '#4f46e5'
   formCurrency.value = (table.currency as 'EUR' | 'USD' | 'GBP' | 'CHF') || 'EUR'
+  formToggleEnabled.value = table.show_toggle !== false
   const KNOWN_PROVIDERS = ['polar', 'lemonsqueezy', 'paypal', 'gumroad', 'paddle', 'kofi', 'creem', 'patreon'] as const
   formTiers.value = table.tiers.map(t => {
     // Tiers saved since PR (product_provider/product_id) restore directly --
@@ -406,6 +462,9 @@ function startEdit(table: PricingTableData) {
       cta_label: t.cta_label,
       cta_url: t.cta_url,
       selectedProductId: pId,
+      selectedProductIdYearly: t.product_id_yearly || '',
+      cta_url_yearly: t.cta_url_yearly || '',
+      existingMappingIdYearly: t.product_id_yearly ? (ruleForProduct(mappings.value, pProv, t.product_id_yearly)?.id ?? null) : null,
       selectedProvider: pProv,
       mappingEventType: (em?.event_type as 'order.paid' | 'subscription.active') || 'order.paid',
       mappingGhostSubscribed: em?.metadata?.ghost_subscribed ?? true,
@@ -414,14 +473,14 @@ function startEdit(table: PricingTableData) {
       features: (t.features ?? []).map(f => ({ ...f })),
     })
   })
-  if (formTiers.value.length === 0) formTiers.value = [defaultTier()]
+  if (formTiers.value.length === 0) formTiers.value = [defaultTier({ cta_type: 'free_signup', cta_label: 'Sign up free' })]
   saveError.value = null
   editorOpen.value = true
 }
 
 function addTier() {
   if (formTiers.value.length >= 3) return
-  formTiers.value.push(defaultTier())
+  formTiers.value.push(defaultTier({ cta_type: 'subscription', cta_label: 'Subscribe' }))
 }
 
 function removeTier(idx: number) {
@@ -476,6 +535,14 @@ function onKofiProductInput(tier: LocalTier) {
   }
 }
 
+function onYearlyProductSelect(tier: LocalTier, productId: string) {
+  tier.selectedProductIdYearly = productId
+  tier.cta_url_yearly = productId ? checkoutUrlForProduct(tier, productId) : ''
+  tier.existingMappingIdYearly = productId
+    ? (ruleForProduct(mappings.value, tier.selectedProvider, productId)?.id ?? null)
+    : null
+}
+
 function onProductSelect(tier: LocalTier, productId: string) {
   tier.selectedProductId = productId
   if (productId) {
@@ -488,6 +555,45 @@ function onProductSelect(tier: LocalTier, productId: string) {
     tier.mappingEmailType = 'signin'
   }
 }
+
+// PG-323: what the embed will render, built from the form. The public
+// endpoint sends the same shape, so the preview and the live table agree.
+// Debounced, because every keystroke would otherwise reload the frame.
+const previewConfig = ref<Record<string, unknown>>({})
+function buildPreviewConfig(): Record<string, unknown> {
+  return {
+    id: 'preview',
+    template: formTemplate.value,
+    show_toggle: formShowToggle.value,
+    accent_color: formAccentColor.value || '#4f46e5',
+    currency: formCurrency.value,
+    tiers: formTiers.value.map((t, i) => ({
+      id: String(i),
+      position: i,
+      name: t.name || 'Tier',
+      description: t.description,
+      price_monthly: t.price_monthly,
+      price_yearly: t.price_yearly,
+      trial_days: t.trial_days,
+      highlight: t.highlight,
+      ribbon_text: t.ribbon_text,
+      cta_type: t.cta_type,
+      cta_label: t.cta_label,
+      cta_url: t.cta_url,
+      cta_url_yearly: (formShowToggle.value && t.cta_type === 'subscription') ? t.cta_url_yearly : '',
+      features: t.features,
+    })),
+  }
+}
+let previewTimer: ReturnType<typeof setTimeout> | null = null
+watch(
+  [formTemplate, formShowToggle, formAccentColor, formCurrency, formTiers],
+  () => {
+    if (previewTimer) clearTimeout(previewTimer)
+    previewTimer = setTimeout(() => { previewConfig.value = buildPreviewConfig() }, 350)
+  },
+  { deep: true, immediate: true },
+)
 
 async function save() {
   if (!session.activeTenantSlug || !session.idToken) return
@@ -513,13 +619,17 @@ async function save() {
         cta_label: t.cta_label,
         cta_url: t.cta_url,
         features: t.features,
-        product_provider: t.selectedProductId ? t.selectedProvider : '',
+        product_provider: (t.selectedProductId || t.selectedProductIdYearly) ? t.selectedProvider : '',
         product_id: t.selectedProductId,
+        // Only a toggled subscription tier sells a second product (PG-322).
+        product_id_yearly: (formShowToggle.value && t.cta_type === 'subscription') ? t.selectedProductIdYearly : '',
+        cta_url_yearly: (formShowToggle.value && t.cta_type === 'subscription') ? t.cta_url_yearly : '',
         // Travels with the tier, so the server can write the rule for this
         // product in the same transaction as the table (PG-254).
         grant: {
           event_type: t.mappingEventType,
-          entitlement_key: entitlementKeyForProduct(t.selectedProductId || ''),
+          // One key per tier, so the yearly product grants what the monthly one grants (PG-322).
+          entitlement_key: entitlementKeyForProduct(t.selectedProductId || t.selectedProductIdYearly || ''),
           metadata: {
             ghost_subscribed: t.mappingGhostSubscribed,
             ghost_email_types: t.mappingEmailType ? [t.mappingEmailType] : [],
@@ -607,10 +717,18 @@ async function copyOverlay() {
   setTimeout(() => { copiedOverlay.value = false }, 2000)
 }
 
+const TIER_TYPES: { value: LocalTier['cta_type']; label: string; hint: string }[] = [
+  { value: 'free_signup', label: 'Free sign-up', hint: 'Ghost free member, no payment' },
+  { value: 'subscription', label: 'Subscription', hint: 'Monthly or yearly, via your provider' },
+  { value: 'one_time', label: 'One-time', hint: 'A single purchase' },
+  { value: 'custom_url', label: 'Custom URL', hint: 'Any link, e.g. pay what you want' },
+]
+
 const ICON_OPTIONS: { value: PricingFeatureIcon; label: string }[] = [
   { value: 'check', label: '✓' },
   { value: 'dot', label: '•' },
   { value: 'dash', label: '–' },
+  { value: 'cross', label: '✕' },
   { value: 'none', label: '∅' },
 ]
 
@@ -684,7 +802,7 @@ onMounted(async () => {
               v-model="formName"
               type="text"
               placeholder="e.g. Main pricing page"
-              class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
             />
           </div>
 
@@ -723,7 +841,7 @@ onMounted(async () => {
                   v-model="formAccentColor"
                   type="text"
                   maxlength="7"
-                  class="w-24 rounded border border-slate-300 dark:border-slate-700 px-2 py-1 text-xs font-mono text-slate-700 dark:text-slate-200 focus:border-indigo-400 focus:outline-none"
+                  class="w-24 rounded border border-slate-300 dark:border-slate-700 px-2 py-1 text-xs font-mono text-slate-700 dark:text-slate-200 focus:border-indigo-400 focus:outline-none bg-white dark:bg-slate-900"
                   placeholder="#4f46e5"
                 />
               </div>
@@ -739,10 +857,60 @@ onMounted(async () => {
                 <option value="GBP">GBP (£)</option>
                 <option value="CHF">CHF</option>
               </select>
-              <span v-if="formShowToggle" class="ml-2 inline-flex items-center gap-1 rounded-full bg-indigo-50 dark:bg-indigo-500/10 px-2 py-0.5 text-[11px] font-medium text-indigo-600 dark:text-indigo-400">
-                <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h8M8 12h5m-5 5h8"/></svg>
-                Monthly / yearly toggle active
-              </span>
+            </div>
+          </div>
+
+          <!-- How do you sell? (PG-320): the layout decision, made where it
+               can be seen, with an example of each. Only once a tier is a
+               subscription, because it means nothing before that. -->
+          <div v-if="hasSubscriptionTier" class="space-y-2">
+            <p class="text-xs font-medium text-slate-700 dark:text-slate-200">How do you sell?</p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3" role="radiogroup" aria-label="How do you sell?">
+              <label
+                class="rounded-xl border-2 p-3.5 cursor-pointer transition-colors"
+                :class="!formToggleEnabled ? 'border-indigo-500 bg-indigo-50/40 dark:bg-indigo-500/10' : 'border-slate-200 dark:border-slate-800 hover:border-slate-300'"
+              >
+                <div class="flex items-start gap-2.5">
+                  <input type="radio" name="sell-mode" :value="false" v-model="formToggleEnabled" class="mt-0.5 accent-indigo-600" aria-label="One price per tier" />
+                  <div class="min-w-0">
+                    <p class="text-sm font-semibold text-slate-900 dark:text-slate-100">One price per tier</p>
+                    <p class="text-xs text-slate-600 dark:text-slate-400 mt-0.5">Every column has one price and one period. Pick this when monthly and yearly are separate products at your provider, or when you sell a single plan.</p>
+                    <div class="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+                      <span class="rounded-md border border-slate-200 dark:border-slate-700 px-1.5 py-0.5">Free</span>
+                      <span class="rounded-md border border-indigo-300 dark:border-indigo-500/50 px-1.5 py-0.5 font-medium">Monthly <span class="text-slate-400">6 / mo</span></span>
+                      <span class="rounded-md border border-slate-200 dark:border-slate-700 px-1.5 py-0.5">Yearly <span class="text-slate-400">60 / yr</span></span>
+                    </div>
+                  </div>
+                </div>
+              </label>
+              <label
+                class="rounded-xl border-2 p-3.5 cursor-pointer transition-colors"
+                :class="formToggleEnabled ? 'border-indigo-500 bg-indigo-50/40 dark:bg-indigo-500/10' : 'border-slate-200 dark:border-slate-800 hover:border-slate-300'"
+              >
+                <div class="flex items-start gap-2.5">
+                  <input type="radio" name="sell-mode" :value="true" v-model="formToggleEnabled" class="mt-0.5 accent-indigo-600" aria-label="Monthly / yearly toggle" />
+                  <div class="min-w-0">
+                    <p class="text-sm font-semibold text-slate-900 dark:text-slate-100">Monthly / yearly toggle</p>
+                    <p class="text-xs text-slate-600 dark:text-slate-400 mt-0.5">Visitors flip the period on the table. Pick this when you have several plans and each exists monthly and yearly. Each tier gets a product for both periods, and the button follows the toggle.</p>
+                    <div class="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <span class="text-indigo-600 dark:text-indigo-400 font-medium">Monthly</span><span class="inline-block h-3 w-6 rounded-full bg-indigo-500 align-middle"></span><span class="text-slate-400">Yearly</span>
+                      <span class="rounded-md border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 ml-1">Basic <span class="text-slate-400">5 / mo</span></span>
+                      <span class="rounded-md border border-indigo-300 dark:border-indigo-500/50 px-1.5 py-0.5 font-medium">Premium <span class="text-slate-400">12 / mo</span></span>
+                    </div>
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- Preview (PG-323): the reader's view, rendered by the embed script itself -->
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between">
+              <p class="text-xs font-medium text-slate-700 dark:text-slate-200">Preview</p>
+              <p class="text-[11px] text-slate-400 dark:text-slate-500">Updates as you type. Buttons are inactive here.</p>
+            </div>
+            <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 p-2">
+              <PricingTablePreview :config="previewConfig" />
             </div>
           </div>
 
@@ -784,15 +952,66 @@ onMounted(async () => {
                 </button>
               </div>
 
-              <!-- Name & description -->
-              <div class="grid grid-cols-2 gap-3">
+              <!-- Tier type first: it decides which fields follow and what the button does -->
+              <div>
+                <p class="text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1.5">Tier type</p>
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5" role="radiogroup" aria-label="Tier type">
+                  <button
+                    v-for="opt in TIER_TYPES"
+                    :key="opt.value"
+                    type="button"
+                    role="radio"
+                    :aria-checked="tier.cta_type === opt.value"
+                    :aria-label="opt.label"
+                    @click="tier.cta_type = opt.value"
+                    class="rounded-lg border px-2.5 py-2 text-left transition-colors"
+                    :class="tier.cta_type === opt.value
+                      ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-500/10 ring-1 ring-indigo-500'
+                      : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700'"
+                  >
+                    <span class="block text-xs font-semibold" :class="tier.cta_type === opt.value ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-700 dark:text-slate-200'">{{ opt.label }}</span>
+                    <span class="block text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">{{ opt.hint }}</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Name, description, highlight -->
+              <div class="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3 items-start">
                 <div>
                   <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Name</label>
-                  <input v-model="tier.name" type="text" placeholder="Free" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                  <input v-model="tier.name" type="text" placeholder="Free" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900" />
                 </div>
                 <div>
                   <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Description</label>
-                  <input v-model="tier.description" type="text" placeholder="For everyone" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                  <input v-model="tier.description" type="text" placeholder="For everyone" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900" />
+                </div>
+                <div class="md:pt-[19px]">
+                  <div class="flex items-center gap-2">
+                      <button
+                        type="button"
+                        @click="toggleHighlight(idx)"
+                        class="flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-[11px] font-medium transition-all"
+                        :class="tier.highlight
+                          ? 'border-indigo-300 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300'
+                          : 'border-slate-200 dark:border-slate-800 bg-white text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:border-slate-700'"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.562.562 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
+                        </svg>
+                        {{ tier.highlight ? 'Highlighted' : 'Highlight this tier' }}
+                      </button>
+                  </div>
+                  <div v-if="tier.highlight" class="mt-1.5 w-40">
+                    <input
+                      v-model="tier.ribbon_text"
+                      maxlength="10"
+                      type="text"
+                      placeholder="Popular"
+                      aria-label="Ribbon text"
+                      class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
+                    />
+                    <p class="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">Ribbon ({{ tier.ribbon_text.length }}/10)</p>
+                  </div>
                 </div>
               </div>
 
@@ -801,15 +1020,42 @@ onMounted(async () => {
                 class="grid gap-3"
                 :class="(tier.cta_type === 'one_time' || tier.cta_type === 'free_signup') ? 'grid-cols-2' : (formShowToggle ? 'grid-cols-3' : 'grid-cols-2')"
               >
-                <div>
+                <div v-if="tier.cta_type === 'subscription' && !formShowToggle">
+                  <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Price</label>
+                  <div class="flex gap-1.5">
+                    <input
+                      :value="singlePrice(tier)"
+                      @input="setSinglePrice(tier, ($event.target as HTMLInputElement).value)"
+                      type="text"
+                      placeholder="€0"
+                      aria-label="Price"
+                      class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
+                    />
+                    <select
+                      :value="tierPeriod(tier)"
+                      @change="setTierPeriod(tier, ($event.target as HTMLSelectElement).value as 'mo' | 'yr')"
+                      aria-label="Billing period"
+                      class="shrink-0 rounded-lg border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-sm bg-white dark:bg-slate-900 focus:border-indigo-500 focus:outline-none"
+                    >
+                      <option value="mo">/ mo</option>
+                      <option value="yr">/ yr</option>
+                    </select>
+                  </div>
+                </div>
+                <div v-else>
                   <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
                     {{ tier.cta_type === 'one_time' ? 'Price' : tier.cta_type === 'free_signup' ? 'Display price' : (formShowToggle ? 'Monthly price' : 'Price') }}
                   </label>
-                  <input v-model="tier.price_monthly" type="text" placeholder="€0" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                  <input v-model="tier.price_monthly" type="text" placeholder="€0" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900" />
+                  <!-- A toggled table shows this tier's one price in both views; say so, or the
+                       missing yearly field reads as a bug (staging feedback, 14.09.). -->
+                  <p v-if="formShowToggle && (tier.cta_type === 'one_time' || tier.cta_type === 'free_signup')" class="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
+                    {{ tier.cta_type === 'one_time' ? 'One-time tier: one price, shown in both views. Switch the call to action to Subscription for a monthly and a yearly price.' : 'Free tier: shown the same in both views.' }}
+                  </p>
                 </div>
                 <div v-if="formShowToggle && tier.cta_type !== 'one_time' && tier.cta_type !== 'free_signup'">
                   <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Yearly price</label>
-                  <input v-model="tier.price_yearly" type="text" placeholder="€0" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                  <input v-model="tier.price_yearly" type="text" placeholder="€0" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900" />
                 </div>
                 <div v-if="tier.cta_type !== 'free_signup' && tier.cta_type !== 'one_time'">
                   <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Trial days</label>
@@ -819,51 +1065,16 @@ onMounted(async () => {
                     type="number"
                     min="0"
                     placeholder="—"
-                    class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
                   />
-                </div>
-              </div>
-
-              <!-- Highlight & ribbon -->
-              <div class="flex items-start gap-4">
-                <div class="flex items-center gap-2">
-                  <button
-                    type="button"
-                    @click="toggleHighlight(idx)"
-                    class="flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-[11px] font-medium transition-all"
-                    :class="tier.highlight
-                      ? 'border-indigo-300 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300'
-                      : 'border-slate-200 dark:border-slate-800 bg-white text-slate-600 dark:text-slate-300 hover:border-slate-300 dark:border-slate-700'"
-                  >
-                    <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.562.562 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z" />
-                    </svg>
-                    {{ tier.highlight ? 'Highlighted' : 'Highlight this tier' }}
-                  </button>
-                </div>
-                <div v-if="tier.highlight" class="flex-1">
-                  <input
-                    v-model="tier.ribbon_text"
-                    maxlength="10"
-                    type="text"
-                    placeholder="Popular"
-                    class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                  />
-                  <p class="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">Ribbon text ({{ tier.ribbon_text.length }}/10 chars)</p>
                 </div>
               </div>
 
               <!-- CTA -->
               <div class="space-y-2">
-                <p class="text-[11px] font-medium text-slate-600 dark:text-slate-300">Call to action</p>
-                <div class="grid grid-cols-3 gap-2">
-                  <select v-model="tier.cta_type" class="col-span-1 rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900">
-                    <option value="custom_url">Custom URL</option>
-                    <option value="free_signup">Free Sign-Up</option>
-                    <option value="one_time">One-time</option>
-                    <option value="subscription">Subscription</option>
-                  </select>
-                  <input v-model="tier.cta_label" type="text" placeholder="Get started" class="col-span-2 rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                <p class="text-[11px] font-medium text-slate-600 dark:text-slate-300">Button label</p>
+                <div class="grid grid-cols-1 gap-2">
+                  <input v-model="tier.cta_label" type="text" placeholder="Get started" aria-label="Button label" class="rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900" />
                 </div>
                 <!-- Free Sign-Up info box -->
                 <div v-if="tier.cta_type === 'free_signup'" class="rounded-lg border border-indigo-100 dark:border-indigo-500/30 bg-indigo-50 dark:bg-indigo-500/10 px-3 py-2.5 text-[11px] text-indigo-700 dark:text-indigo-300 leading-relaxed">
@@ -872,13 +1083,14 @@ onMounted(async () => {
                 <!-- Product picker for paid types -->
                 <div v-if="tier.cta_type === 'one_time' || tier.cta_type === 'subscription'" class="space-y-1.5">
                   <ProviderPicker :model-value="tier.selectedProvider" @update:model-value="v => setTierProvider(tier, v as typeof tier.selectedProvider)" />
+                  <p v-if="formShowToggle && tier.cta_type === 'subscription'" class="text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-slate-400">Monthly product</p>
                   <template v-if="tier.selectedProvider === 'kofi'">
                     <input
                       v-model="tier.selectedProductId"
                       @input="onKofiProductInput(tier)"
                       type="text"
                       placeholder="Paste a shop item link (ko-fi.com/s/...), a tier name, or kofi-support"
-                      class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
                     />
                     <p class="text-[10px] text-slate-400 dark:text-slate-500">For shop items, just paste the item's share link (Share &rarr; Copy link, e.g. <code>ko-fi.com/s/c0e30e5fcf</code>), we extract the item code and fill the checkout URL for you. For memberships, type the exact tier name as it appears on your Ko-fi page. Use <code>kofi-support</code> for plain tips.</p>
                   </template>
@@ -899,6 +1111,41 @@ onMounted(async () => {
                     <p v-if="productsErrorForProvider(tier.selectedProvider)" class="text-[10px] text-amber-600 dark:text-amber-400">{{ productsErrorForProvider(tier.selectedProvider) }}</p>
                     <p v-if="tier.selectedProvider === 'paddle'" class="text-[10px] text-slate-400 dark:text-slate-500">Paddle checkout is driven client-side and has no direct checkout link. Enter your Paddle checkout link manually after selecting a product.</p>
                   </template>
+                  <!-- PG-322: second product for the yearly view of a toggled tier -->
+                  <div v-if="formShowToggle && tier.cta_type === 'subscription'" class="rounded-lg border border-slate-200 dark:border-slate-800 p-2.5 space-y-1.5">
+                    <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-slate-400">Yearly product</p>
+                    <template v-if="tier.selectedProvider === 'kofi'">
+                      <input
+                        v-model="tier.selectedProductIdYearly"
+                        type="text"
+                        placeholder="Yearly tier name or shop item code"
+                        aria-label="Yearly product"
+                        class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
+                      />
+                    </template>
+                    <select
+                      v-else
+                      :value="tier.selectedProductIdYearly"
+                      @change="onYearlyProductSelect(tier, ($event.target as HTMLSelectElement).value)"
+                      aria-label="Yearly product"
+                      class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
+                      :disabled="productsLoadingForProvider(tier.selectedProvider)"
+                    >
+                      <option value="">Select the yearly product</option>
+                      <option v-for="p in productsForProvider(tier.selectedProvider)" :key="p.id" :value="p.id">{{ p.name }}</option>
+                    </select>
+                    <input
+                      v-model="tier.cta_url_yearly"
+                      type="url"
+                      placeholder="Yearly checkout URL (auto-filled from the product)"
+                      aria-label="Yearly checkout URL"
+                      class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
+                    />
+                    <p class="text-[10px] text-slate-400 dark:text-slate-500">
+                      Visitors who switch to yearly buy this product. It grants the same access as the monthly one.
+                      <span v-if="tier.selectedProductIdYearly" :class="tier.existingMappingIdYearly !== null ? 'text-emerald-600' : 'text-rose-600'">{{ tier.existingMappingIdYearly !== null ? 'Mapped.' : 'Rule is created on save.' }}</span>
+                    </p>
+                  </div>
                   <!-- Ghost actions mapping -->
                   <div v-if="tier.selectedProductId" class="rounded-lg border border-indigo-100 dark:border-indigo-500/30 bg-indigo-50/40 dark:bg-indigo-500/10 px-3 py-2.5 space-y-2">
                     <div class="flex items-center justify-between">
@@ -961,7 +1208,7 @@ onMounted(async () => {
                     v-model="tier.cta_url"
                     type="url"
                     placeholder="https://"
-                    class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
                   />
                 </div>
               </div>
@@ -1005,7 +1252,7 @@ onMounted(async () => {
                     v-model="feat.text"
                     type="text"
                     placeholder="Feature description"
-                    class="flex-1 rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    class="flex-1 rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
                   />
                   <button
                     type="button"
@@ -1096,7 +1343,7 @@ onMounted(async () => {
               v-model="overlayLabel"
               type="text"
               placeholder="View plans"
-              class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
             />
           </div>
           <!-- Button style options -->
@@ -1105,7 +1352,7 @@ onMounted(async () => {
               <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Button color</label>
               <div class="flex items-center gap-1.5">
                 <input v-model="overlayBgColor" type="color" class="h-8 w-8 cursor-pointer rounded border border-slate-300 dark:border-slate-700 p-0.5 bg-white shrink-0" />
-                <input v-model="overlayBgColor" type="text" maxlength="7" class="w-full rounded border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-xs font-mono text-slate-700 dark:text-slate-200 focus:border-indigo-400 focus:outline-none" placeholder="#4f46e5" />
+                <input v-model="overlayBgColor" type="text" maxlength="7" class="w-full rounded border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-xs font-mono text-slate-700 dark:text-slate-200 focus:border-indigo-400 focus:outline-none bg-white dark:bg-slate-900" placeholder="#4f46e5" />
               </div>
             </div>
             <div>

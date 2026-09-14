@@ -7,6 +7,7 @@ import AppShell from '../components/AppShell.vue'
 import UpgradeBanner from '../components/UpgradeBanner.vue'
 import { PageHeader, ProviderPicker } from '../components/ui'
 import { useSessionStore } from '../stores/session'
+import { usePageResetStore } from '../stores/pageReset'
 import { isPlanLimitError, planKeyFromError } from '../lib/planUpgrade'
 import {
   listBuyButtons,
@@ -335,6 +336,10 @@ function resetForm() {
   mappingEmailType.value = 'signin'
   saveError.value = null
 }
+
+// The shell asks the page to start over when its nav item or breadcrumb is clicked again.
+const pageReset = usePageResetStore()
+watch(() => pageReset.tick, () => resetForm())
 
 function toggleUseProduct() {
   useProduct.value = !useProduct.value

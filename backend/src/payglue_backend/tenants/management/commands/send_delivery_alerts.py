@@ -1,66 +1,36 @@
 # Copyright (c) 2026 PayGlue by André Nünninghoff
 # Licensed under the Business Source License 1.1, see LICENSE.md
-"""PG-192: proactively email a creator when access delivery to their Ghost
-site is repeatedly failing.
+"""Nightly follow-up for delivery incidents (PG-192, reshaped in PG-319).
 
-We already have the event log + replay + dead-letter, but nothing warns the
-creator proactively when their Ghost delivery breaks (a rotated/expired Ghost
-Admin API key, Ghost down, ...). It fails silently -- new purchases stop
-unlocking -- until someone checks the event log or members complain.
+The creator is no longer alerted from here. The worker mails them the moment
+a purchase ends in a terminal failure (webhooks/delivery_alerts.py), because
+the old rule, three failures inside 24 hours, was never met by a creator with
+one sale a day. This job does the two things that need distance:
 
-Threshold: a tenant's Ghost delivery is "failing" when the
-last 3 *terminal* delivery outcomes within the last 24h are all failed/
-dead_letter. Terminal = processed (success) or failed/dead_letter (failure);
-received/processing (in flight) and skipped (not for us) are ignored. A single
-success among the latest 3 clears it, so a one-off retry blip never alerts.
+1. Escalate, once, internally. A tenant that was told about the failure
+   ESCALATE_AFTER_HOURS ago and has not had a single processed event since is
+   probably not going to fix it alone. The operator gets one notice and can
+   decide whether to ask how things are going. The creator is not copied.
+2. Reset as a fallback. Recovery is normally recorded by the worker on the
+   next processed event. If that write was missed, a processed event newer
+   than the alert clears the state here, so the next incident mails again.
 
-Dedup (same idea as the lifecycle mails): the alert state lives on the Ghost
-IntegrationConfig.metadata, and we email only on the healthy -> failing
-transition. Recovery resets the state (no "recovered" email, no nagging).
-
-Provider signature/token failures are rejected at ingestion and never become
-failed WebhookInboundEvents, so the failed/dead_letter events counted here are
-effectively the Ghost-delivery failures -- exactly the case the creator can act
-on.
-
-Run daily (Railway cron), like the other maintenance commands. Fails safe: a
-per-tenant error is logged and skipped, never aborts the whole run.
+Fails safe: a per-tenant error is logged and skipped, never aborts the run.
 """
+
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from django.core.management.base import BaseCommand
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
-from payglue_backend.authn.lifecycle_emails import send_ghost_delivery_alert
+from payglue_backend.authn.lifecycle_emails import send_delivery_escalation_notice
 from payglue_backend.tenants.models import TenantMembership
+from payglue_backend.webhooks.delivery_alerts import ESCALATE_AFTER_HOURS
 from payglue_backend.webhooks.models import IntegrationConfig, WebhookInboundEvent
 
 logger = logging.getLogger(__name__)
-
-FAIL_STREAK = 3
-WINDOW_HOURS = 24
-
-_Status = WebhookInboundEvent.Status
-_TERMINAL = [_Status.PROCESSED, _Status.FAILED, _Status.DEAD_LETTER]
-_FAILURE = {_Status.FAILED, _Status.DEAD_LETTER}
-
-
-def is_ghost_delivery_failing(tenant_slug: str) -> bool:
-    """True when the last FAIL_STREAK terminal delivery outcomes within
-    WINDOW_HOURS are all failures. Fewer than FAIL_STREAK terminal events in
-    the window is treated as healthy (not enough signal to alarm)."""
-    since = timezone.now() - timedelta(hours=WINDOW_HOURS)
-    recent = list(
-        WebhookInboundEvent.objects.filter(
-            tenant_slug=tenant_slug,
-            created_at__gte=since,
-            status__in=_TERMINAL,
-        )
-        .order_by("-created_at")
-        .values_list("status", flat=True)[:FAIL_STREAK]
-    )
-    return len(recent) >= FAIL_STREAK and all(s in _FAILURE for s in recent)
 
 
 def _owner_email(tenant_slug: str) -> str | None:
@@ -74,10 +44,18 @@ def _owner_email(tenant_slug: str) -> str | None:
     return membership.user_profile.email if membership else None
 
 
+def _processed_since(tenant_slug: str, moment: datetime) -> bool:
+    return WebhookInboundEvent.objects.filter(
+        tenant_slug=tenant_slug,
+        status=WebhookInboundEvent.Status.PROCESSED,
+        created_at__gt=moment,
+    ).exists()
+
+
 class Command(BaseCommand):
     help = (
-        "PG-192: email tenant owners when access delivery to their Ghost site "
-        "is repeatedly failing (healthy -> failing transition only)."
+        "PG-319: one internal notice per delivery incident that is still failing "
+        f"{ESCALATE_AFTER_HOURS}h after the creator was told, plus a fallback reset."
     )
 
     def add_arguments(self, parser):
@@ -89,44 +67,63 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         dry_run = options["dry_run"]
-        # Only tenants with an enabled Ghost (cms) connection can have delivery.
+        now = timezone.now()
         configs = IntegrationConfig.objects.filter(provider_key="cms", enabled=True)
-        alerted = recovered = 0
+        escalated = recovered = 0
 
         for config in configs:
             slug = config.tenant_slug
             try:
-                failing = is_ghost_delivery_failing(slug)
                 metadata = config.metadata or {}
-                prior = metadata.get("delivery_alert", {}).get("state", "healthy")
+                state = metadata.get("delivery_alert") or {}
+                if state.get("state") != "failing":
+                    continue
 
-                if failing and prior != "failing":
-                    owner = _owner_email(slug)
-                    if not owner:
-                        self.stdout.write(f"{slug}: failing but no owner email, skipping")
-                        continue
-                    self.stdout.write(f"{slug}: Ghost delivery failing -> alerting {owner}")
+                notified_at = parse_datetime(state.get("notified_at") or "")
+                if notified_at is None:
+                    # Written by the pre-PG-319 command, which never stored a
+                    # time. Treat as "told just now" so it escalates in two days.
+                    notified_at = now
+                    state["notified_at"] = now.isoformat()
+                    metadata["delivery_alert"] = state
                     if not dry_run:
-                        if send_ghost_delivery_alert(owner, slug):
-                            metadata["delivery_alert"] = {
-                                "state": "failing",
-                                "notified_at": timezone.now().isoformat(),
-                            }
-                            config.metadata = metadata
-                            config.save(update_fields=["metadata", "updated_at"])
-                            alerted += 1
+                        config.metadata = metadata
+                        config.save(update_fields=["metadata", "updated_at"])
+                elif timezone.is_naive(notified_at):
+                    notified_at = timezone.make_aware(notified_at)
 
-                elif not failing and prior == "failing":
-                    self.stdout.write(f"{slug}: Ghost delivery recovered")
+                if _processed_since(slug, notified_at):
+                    self.stdout.write(f"{slug}: delivery recovered")
                     if not dry_run:
                         metadata["delivery_alert"] = {"state": "healthy"}
                         config.metadata = metadata
                         config.save(update_fields=["metadata", "updated_at"])
-                        recovered += 1
+                    recovered += 1
+                    continue
+
+                if state.get("escalated_at"):
+                    continue
+                if now - notified_at < timedelta(hours=ESCALATE_AFTER_HOURS):
+                    continue
+
+                owner = _owner_email(slug) or ""
+                self.stdout.write(
+                    f"{slug}: still failing {ESCALATE_AFTER_HOURS}h after the alert -> internal notice"
+                )
+                if dry_run:
+                    continue
+                if send_delivery_escalation_notice(
+                    tenant_slug=slug, owner_email=owner, state=state
+                ):
+                    state["escalated_at"] = now.isoformat()
+                    metadata["delivery_alert"] = state
+                    config.metadata = metadata
+                    config.save(update_fields=["metadata", "updated_at"])
+                    escalated += 1
             except Exception:
                 logger.exception("send_delivery_alerts: failed for tenant %s", slug)
 
         self.stdout.write(
-            f"Done. alerted={alerted} recovered={recovered} "
+            f"Done. escalated={escalated} recovered={recovered} "
             f"checked={configs.count()}{' (dry-run)' if dry_run else ''}"
         )

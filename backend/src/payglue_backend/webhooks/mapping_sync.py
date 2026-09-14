@@ -97,6 +97,20 @@ def sync_grant(tenant_slug: str, spec: GrantSpec) -> ProductMapping | None:
     mapping, _ = ProductMapping.objects.update_or_create(
         **identity, defaults=on_update, create_defaults=on_create
     )
+    # The constraint keys on the event type, so switching a tier from one-time
+    # to subscription would otherwise leave the old rule active next to the new
+    # one. A subscription purchase then fires both (Polar sends order.paid and
+    # subscription.active for the same checkout), the editor reloads whichever
+    # row comes first and shows the trigger the customer just moved away from.
+    # One product, one active grant: the others are switched off, not deleted,
+    # for the same reason nothing else here is deleted.
+    ProductMapping.objects.filter(
+        tenant_slug=tenant_slug,
+        payment_provider=identity["payment_provider"],
+        external_product_id=identity["external_product_id"],
+        action=ProductMapping.Action.GRANT,
+        is_active=True,
+    ).exclude(id=mapping.id).update(is_active=False)
     return mapping
 
 
@@ -128,11 +142,18 @@ def widgets_offering(tenant_slug: str, product_ids: list[str]) -> dict[str, list
     for paywall in PaywallConfig.objects.filter(tenant_slug=tenant_slug, product_id__in=wanted):
         offers[paywall.product_id].append(f"Paywall: {paywall.name}")
 
+    from django.db.models import Q
+
     tiers = PricingTier.objects.filter(
-        table__tenant_slug=tenant_slug, product_id__in=wanted
+        Q(product_id__in=wanted) | Q(product_id_yearly__in=wanted),
+        table__tenant_slug=tenant_slug,
     ).select_related("table")
     for tier in tiers:
-        offers[tier.product_id].append(f"Pricing Table: {tier.table.name} · {tier.name}")
+        label = f"Pricing Table: {tier.table.name} · {tier.name}"
+        if tier.product_id in wanted:
+            offers[tier.product_id].append(label)
+        if tier.product_id_yearly in wanted and tier.product_id_yearly != tier.product_id:
+            offers[tier.product_id_yearly].append(label + " (yearly)")
 
     return {product: sorted(labels) for product, labels in offers.items() if labels}
 

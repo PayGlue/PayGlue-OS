@@ -223,6 +223,12 @@ class PricingTier(models.Model):
     # needed here too since that guess never worked for Ko-fi.
     product_provider = models.CharField(max_length=32, blank=True, default="")
     product_id = models.CharField(max_length=255, blank=True, default="")
+    # PG-322: with the monthly/yearly toggle a tier sells two products, one per
+    # period, and the button has to follow the toggle. Same provider as
+    # product_id. Empty when the table has no toggle or the tier is not a
+    # subscription; the embed then falls back to product_id and cta_url.
+    product_id_yearly = models.CharField(max_length=255, blank=True, default="")
+    cta_url_yearly = models.CharField(max_length=512, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

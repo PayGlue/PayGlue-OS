@@ -7,6 +7,7 @@ import AppShell from '../components/AppShell.vue'
 import { PageHeader, ProviderPicker } from '../components/ui'
 import UpgradeBanner from '../components/UpgradeBanner.vue'
 import { useSessionStore } from '../stores/session'
+import { usePageResetStore } from '../stores/pageReset'
 import { isPlanLimitError, planKeyFromError } from '../lib/planUpgrade'
 import {
   getPolarProducts,
@@ -190,6 +191,10 @@ function resetForm() {
   mappingGhostSubscribed.value = true
   mappingEmailType.value = 'signin'
 }
+
+// The shell asks the page to start over when its nav item or breadcrumb is clicked again.
+const pageReset = usePageResetStore()
+watch(() => pageReset.tick, () => resetForm())
 
 function startEdit(cfg: PaywallConfigData) {
   justSavedConfig.value = null
@@ -790,7 +795,7 @@ const step2Config = computed(() => {
                 <div class="h-2.5 w-4/5 rounded-full bg-slate-400" />
               </div>
               <div class="absolute inset-0 flex items-end justify-center pb-4 bg-gradient-to-b from-transparent via-white/60 to-white/95">
-                <div class="mx-4 w-full max-w-sm rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-lg">
+                <div class="mx-4 w-full max-w-sm rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-lg" :style="{ textAlign: formAlignment }">
                   <p class="text-base font-semibold text-slate-900 dark:text-slate-100">{{ headline || 'Premium content' }}</p>
                   <p class="mt-2 text-sm text-slate-500 dark:text-slate-400 leading-relaxed">{{ body || 'Purchase access to continue reading.' }}</p>
                   <div
@@ -856,19 +861,18 @@ const step2Config = computed(() => {
               </h2>
             </div>
             <p class="text-xs text-emerald-700 dark:text-emerald-300">In Ghost, open the article, add an HTML card, and paste this snippet where you want the paywall to appear.</p>
-            <div class="flex gap-2.5 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-2.5">
-              <svg class="mt-0.5 h-4 w-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+            <div class="flex gap-2.5 rounded-lg border border-indigo-200 dark:border-indigo-500/30 bg-indigo-50 dark:bg-indigo-500/10 px-3 py-2.5">
+              <svg class="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
               </svg>
-              <p class="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
-                <span class="font-semibold">Set the Ghost article to Public.</span>
-                If the article is set to "Members only" or "Paid members only" in Ghost, Ghost overrides the paywall and blocks the article entirely before our snippet can run. The PayGlue paywall handles access control, so Ghost must not restrict visibility on its own.
+              <p class="text-xs text-indigo-900 dark:text-indigo-200 leading-relaxed">
+                <span class="font-semibold">This is a client-side gate.</span>
+                The article stays Public, so its full text remains in your RSS feed, on the social web and in the Content API; the overlay hides it in the browser only. A softer paywall than Ghost's native one, by design, and not the place for confidential content.
+                <a href="https://docs.payglue.io/paywall/public-post" target="_blank" rel="noopener" class="font-medium underline underline-offset-2 hover:text-indigo-700 dark:hover:text-indigo-100">What it protects, and what it does not</a>.
+                It is one of three ways to gate a post; the other two use Ghost's own gate and keep the text out of feeds.
+                <a href="https://docs.payglue.io/paywall/overview#three-ways-to-gate-a-post" target="_blank" rel="noopener" class="font-medium underline underline-offset-2 hover:text-indigo-700 dark:hover:text-indigo-100">Compare the three</a>
               </p>
             </div>
-            <p class="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-              This is a client-side gate. Because the article is Public, its full text stays in your RSS feed, on the social web and in the Content API; the overlay hides it in the browser only. A softer paywall than Ghost's native one, by design.
-              <a href="https://docs.payglue.io/paywall/public-post" target="_blank" rel="noopener" class="underline underline-offset-2 hover:text-slate-700 dark:hover:text-slate-200">What it protects, and what it does not</a>
-            </p>
             <div>
               <div class="flex items-center justify-between mb-1.5">
                 <p class="text-xs font-medium text-emerald-800 dark:text-emerald-300">HTML card snippet for {{ step2Config.name }}</p>
@@ -888,6 +892,15 @@ const step2Config = computed(() => {
             </div>
             <div class="rounded-lg border border-emerald-200 dark:border-emerald-500/30 bg-white/60 dark:bg-slate-900/50 p-3 text-xs text-emerald-700 dark:text-emerald-300">
               Content <span class="font-semibold">above</span> this snippet in your Ghost article is visible to everyone. Content <span class="font-semibold">below</span> is hidden behind the paywall overlay.
+            </div>
+            <div class="flex gap-2.5 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-2.5">
+              <svg class="mt-0.5 h-4 w-4 shrink-0 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+              </svg>
+              <p class="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
+                <span class="font-semibold">Set the Ghost article to Public.</span>
+                If the article is set to "Members only" or "Paid members only" in Ghost, Ghost overrides the paywall and blocks the article entirely before our snippet can run. The PayGlue paywall handles access control, so Ghost must not restrict visibility on its own.
+              </p>
             </div>
           </section>
 

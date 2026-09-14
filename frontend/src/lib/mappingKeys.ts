@@ -40,10 +40,18 @@ export function ruleForProduct(
   productId: string,
 ): ProductMapping | undefined {
   if (!productId) return undefined
-  return mappings.find(
+  // Only what is switched on counts. A tier that moved from one-time to
+  // subscription leaves the old rule behind as inactive; picking it up here
+  // would show the trigger the customer just moved away from. Among active
+  // rules the newest wins, which matters only for rows written before the
+  // server started switching the others off.
+  const active = mappings.filter(
     m =>
       m.external_product_id === productId &&
       m.payment_provider === provider &&
-      m.action === 'grant',
+      m.action === 'grant' &&
+      m.is_active !== false,
   )
+  if (active.length === 0) return undefined
+  return active.reduce((best, m) => (m.id > best.id ? m : best))
 }
