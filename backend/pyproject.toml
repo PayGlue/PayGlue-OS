@@ -7,7 +7,10 @@ requires-python = ">=3.13"
 dependencies = [
     "celery>=5.4,<6",
     "cryptography>=50.0.0,<51",
-    "django>=5.2.16,<7",
+    # Kept on the 5.2 LTS line on purpose. A ceiling that spans major versions
+    # lets a routine security bump jump a whole release, and this tree is
+    # tested against 5.2.
+    "django>=5.2.17,<6",
     "django-tenants>=3.7,<4",
     "djangorestframework>=3.15,<4",
     "gunicorn>=23,<27",
