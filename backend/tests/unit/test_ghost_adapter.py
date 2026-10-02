@@ -49,6 +49,7 @@ class StubHttpClient:
         self.get_calls: list[dict[str, object]] = []
         self.post_calls: list[dict[str, object]] = []
         self.put_calls: list[dict[str, object]] = []
+        self.delete_calls: list[dict[str, object]] = []
 
     def get(self, url: str, headers: dict[str, str]) -> StubResponse:
         self.get_calls.append({"url": url, "headers": headers})
@@ -71,6 +72,12 @@ class StubHttpClient:
         if self._error is not None:
             raise self._error
         return self._put_response
+
+    def delete(self, url: str, headers: dict[str, str]) -> StubResponse:
+        self.delete_calls.append({"url": url, "headers": headers})
+        if self._error is not None:
+            raise self._error
+        return StubResponse(204)
 
 
 def _customer(email: str = "user@example.com", name: str | None = None) -> CanonicalCustomer:
@@ -478,3 +485,64 @@ def test_a_repeat_purchase_clears_the_ending() -> None:
     member = client.put_calls[0]["json_body"]["members"][0]  # type: ignore[index]
     assert "Ended" not in member["note"]
     assert {"name": "payglue-active"} in member["labels"]
+
+
+# PG-325: sandbox and test-mode purchases are marked; everything else follows the rule.
+
+
+def test_test_purchase_gets_the_test_label_and_keeps_the_rule() -> None:
+    client = StubHttpClient()
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+    instruction = EntitlementInstruction(
+        entitlement_key="tier.basic",
+        action="grant",
+        metadata={"ghost_subscribed": True, "_is_test": True, "_provider": "creem"},
+    )
+
+    adapter.apply_entitlement(_customer(), instruction, TenantContext(tenant_slug="tenant-a"))
+
+    member = client.post_calls[-1]["json_body"]["members"][0]
+    labels = {label["name"] for label in member["labels"]}
+    assert "payglue-test" in labels
+    assert member["subscribed"] is True, "a test shows what the rule does, so the newsletter follows the rule"
+    assert "Test purchase" in member["note"]
+
+
+def test_live_purchase_carries_no_test_label() -> None:
+    client = StubHttpClient()
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+    instruction = EntitlementInstruction(
+        entitlement_key="tier.basic", action="grant", metadata={"ghost_subscribed": True, "_is_test": False}
+    )
+
+    adapter.apply_entitlement(_customer(), instruction, TenantContext(tenant_slug="tenant-a"))
+
+    member = client.post_calls[-1]["json_body"]["members"][0]
+    assert "payglue-test" not in {label["name"] for label in member["labels"]}
+    assert member["subscribed"] is True
+
+
+def test_purge_deletes_only_what_ghost_returns_for_the_test_label_filter() -> None:
+    listing = json.dumps({"members": [{"id": "m1", "email": "a@example.com"}, {"id": "m2", "email": "b@example.com"}]})
+
+    class PagingClient(StubHttpClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.pages = [StubResponse(200, listing), StubResponse(200, json.dumps({"members": []}))]
+
+        def get(self, url: str, headers: dict[str, str]) -> StubResponse:
+            self.get_calls.append({"url": url, "headers": headers})
+            return self.pages.pop(0)
+
+    client = PagingClient()
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+
+    result = adapter.purge_test_members(TenantContext(tenant_slug="tenant-a"), older_than_days=14)
+
+    assert result == {"deleted": 2, "failed": 0}
+    assert "label%3Apayglue-test" in client.get_calls[0]["url"]
+    assert "created_at%3A%3C" in client.get_calls[0]["url"]
+    assert [c["url"] for c in client.delete_calls] == [
+        "https://ghost.test/ghost/api/admin/members/m1/",
+        "https://ghost.test/ghost/api/admin/members/m2/",
+    ]

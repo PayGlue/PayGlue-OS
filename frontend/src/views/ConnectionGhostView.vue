@@ -31,6 +31,7 @@ const config = reactive<IntegrationConfig>({
 
 const form = reactive({ apiBaseUrl: '', contentApiKey: '', adminApiKey: '' })
 
+
 const DEV_URL = 'https://dev.example.com'
 const DEV_CONTENT = 'acac4d839f6cfa04b907a04cf4deadbeef'
 const DEV_ADMIN = '6a3145b0e72c430001fdcd39:f0533b2bdeadbeefdeadbeefdeadbeef'
@@ -327,6 +328,7 @@ onMounted(load)
           </div>
         </div>
       </UiCard>
+
     </div>
   </AppShell>
 </template>

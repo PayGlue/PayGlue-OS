@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from urllib import error, request
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 from payglue_backend.core.errors import (
     CmsApplyEntitlementError,
@@ -42,6 +42,8 @@ class HttpApiClient(Protocol):
     ) -> HttpResponse: ...
 
     def get(self, url: str, headers: dict[str, str]) -> HttpResponse: ...
+
+    def delete(self, url: str, headers: dict[str, str]) -> HttpResponse: ...
 
 
 class UrllibHttpApiClient:
@@ -80,6 +82,22 @@ class UrllibHttpApiClient:
         except error.HTTPError as exc:
             payload = exc.read().decode("utf-8") if exc.fp else ""
             return HttpResponse(status_code=exc.code, text=payload)
+
+    def delete(self, url: str, headers: dict[str, str]) -> HttpResponse:
+        req = request.Request(url=url, headers=headers, method="DELETE")
+        try:
+            with request.urlopen(req, timeout=5) as response:
+                payload = response.read().decode("utf-8")
+                return HttpResponse(status_code=response.status, text=payload)
+        except error.HTTPError as exc:
+            payload = exc.read().decode("utf-8") if exc.fp else ""
+            return HttpResponse(status_code=exc.code, text=payload)
+
+
+# The label a sandbox or test-mode purchase leaves on the Ghost member. The
+# retention job selects by it, so it must not change without a migration of
+# existing members.
+TEST_LABEL = "payglue-test"
 
 
 def _slugify(value: str) -> str:
@@ -176,6 +194,11 @@ class GhostCmsAdapter:
         )
         email_types: list[str] = [t for t in raw_types if t]
         extra_labels: list[str] = meta.get("ghost_labels", []) or []
+        # PG-325: a sandbox or test-mode purchase is marked with a label, and
+        # that is all. The newsletter and the emails follow the rule like for a
+        # real purchase, because a test is there to show what the rule does.
+        # The label is what a filter, and the operator's retention job, use.
+        is_test = bool(meta.get("_is_test"))
 
         labels = [
             {"name": "source:payglue"},
@@ -198,10 +221,14 @@ class GhostCmsAdapter:
         # says who took the money.
         labels.append({"name": "payglue-active" if is_grant else "payglue-ended"})
         labels.append({"name": f"payglue-provider:{_slugify(meta.get('_provider', 'payglue'))}"})
+        if is_test:
+            labels.append({"name": TEST_LABEL})
         provider = meta.get("_provider", "payglue")
         product_id = meta.get("_product_id", instruction.entitlement_key)
         event_id = meta.get("_event_id", "")
         note_lines = [f"Direct via PayGlue | Provider: {provider}", f"Product: {product_id}"]
+        if is_test:
+            note_lines.append("Test purchase (provider sandbox or test mode)")
         order = self._stamped_line("Order", meta.get("_occurred_at"), event_id)
         if order:
             note_lines.append(order)
@@ -351,6 +378,61 @@ class GhostCmsAdapter:
             pass
 
         return None, ""
+
+    def purge_test_members(self, tenant_ctx: TenantContext, older_than_days: int) -> dict[str, int]:
+        """PG-325: delete members that carry the test label and were created
+        more than `older_than_days` ago. Only the label decides; a real member
+        never carries it, because it is written from the provider's own
+        sandbox flag. Returns how many were deleted and how many failed."""
+        credentials = self._credential_provider.get_credentials(
+            tenant_ctx=tenant_ctx, provider_key=self._provider_key
+        )
+        base_url = credentials.get("api_base_url")
+        api_key = credentials.get("admin_api_key")
+        if not base_url or not api_key:
+            raise MissingCredentialsError(
+                tenant_slug=tenant_ctx.tenant_slug,
+                provider_key=self._provider_key,
+                missing_fields=("api_base_url", "admin_api_key"),
+            )
+        self._validate_base_url(base_url)
+        headers = {
+            "Authorization": f"Ghost {self._build_admin_jwt(api_key)}",
+            "Accept-Version": "v5.0",
+        }
+        members_url = f"{base_url.rstrip('/')}/ghost/api/admin/members/"
+        cutoff = (datetime.now(tz=UTC) - timedelta(days=max(int(older_than_days), 1))).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        member_filter = quote(f"label:{TEST_LABEL}+created_at:<'{cutoff}'", safe="")
+        deleted = failed = 0
+        # Ghost pages at 100 by default; deleting shifts the pages, so the
+        # first page is fetched again until it comes back empty.
+        for _ in range(50):
+            response = self._http_client.get(
+                url=f"{members_url}?filter={member_filter}&limit=100&fields=id,email", headers=headers
+            )
+            if response.status_code >= 400:
+                raise CmsApplyEntitlementError(
+                    f"ghost member listing returned status {response.status_code}"
+                )
+            members = json.loads(response.text).get("members") or []
+            if not members:
+                break
+            progressed = False
+            for member in members:
+                member_id = member.get("id")
+                if not member_id:
+                    continue
+                result = self._http_client.delete(url=f"{members_url}{member_id}/", headers=headers)
+                if result.status_code in (200, 204):
+                    deleted += 1
+                    progressed = True
+                else:
+                    failed += 1
+            if not progressed:
+                break
+        return {"deleted": deleted, "failed": failed}
 
     def health_check(self, tenant_ctx: TenantContext) -> dict[str, object]:
         credentials = self._credential_provider.get_credentials(

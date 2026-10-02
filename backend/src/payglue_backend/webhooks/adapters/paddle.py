@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 import hashlib
 import hmac
 import json
+from dataclasses import replace
 import urllib.error
 import urllib.request
 from typing import Callable, Mapping
@@ -155,6 +156,24 @@ class PaddlePaymentAdapter:
             raise InvalidWebhookSignatureError("signature mismatch")
 
     def parse_event(
+        self, raw_body: bytes, headers: Mapping[str, str], tenant_ctx: TenantContext
+    ) -> CanonicalPaymentEvent:
+        event = self._parse_event_untagged(raw_body, headers, tenant_ctx)
+        try:
+            is_test = self._is_test_event(raw_body, headers, tenant_ctx)
+        except Exception:  # noqa: BLE001 - a broken test-mode probe must not fail the payment
+            is_test = False
+        return replace(event, is_test=is_test)
+
+    def _is_test_event(self, raw_body: bytes, headers: Mapping[str, str], tenant_ctx: TenantContext) -> bool:
+        """The payload does not say; the connection does. A sandbox connection
+        only ever receives sandbox events."""
+        credentials = self._credential_provider.get_credentials(
+            tenant_ctx=tenant_ctx, provider_key=self._provider_key
+        )
+        return credentials.get("sandbox", "") in ("true", "1", True)
+
+    def _parse_event_untagged(
         self, raw_body: bytes, headers: Mapping[str, str], tenant_ctx: TenantContext
     ) -> CanonicalPaymentEvent:
         try:

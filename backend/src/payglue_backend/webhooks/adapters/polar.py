@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import json
+from dataclasses import replace
 from typing import Callable, Protocol
 from typing import Mapping
 
@@ -161,6 +162,33 @@ class PolarPaymentAdapter:
             raise InvalidWebhookSignatureError("signature mismatch")
 
     def parse_event(
+        self, raw_body: bytes, headers: Mapping[str, str], tenant_ctx: TenantContext
+    ) -> CanonicalPaymentEvent:
+        event = self._parse_event_untagged(raw_body, headers, tenant_ctx)
+        try:
+            is_test = self._is_test_event(raw_body, headers, tenant_ctx)
+        except Exception:  # noqa: BLE001 - a broken test-mode probe must not fail the payment
+            is_test = False
+        return replace(event, is_test=is_test)
+
+    @staticmethod
+    def _is_test_event(raw_body: bytes, headers: Mapping[str, str], tenant_ctx: TenantContext) -> bool:
+        """Polar's payload carries no environment flag. The products endpoint
+        learns whether the connection's token is a sandbox token when the editor
+        loads the product list, and remembers it on the connection. Until
+        somebody has opened a product picker, sandbox events pass as live."""
+        from payglue_backend.webhooks.models import IntegrationConfig
+
+        metadata = (
+            IntegrationConfig.objects.filter(
+                tenant_slug=tenant_ctx.tenant_slug, provider_key="polar"
+            )
+            .values_list("metadata", flat=True)
+            .first()
+        )
+        return bool(isinstance(metadata, dict) and metadata.get("sandbox") is True)
+
+    def _parse_event_untagged(
         self, raw_body: bytes, headers: Mapping[str, str], tenant_ctx: TenantContext
     ) -> CanonicalPaymentEvent:
         payload = self._parse_payload(raw_body)

@@ -1897,6 +1897,23 @@ def start_plan_checkout(request: Request, support_path: str) -> Response:
     return Response({"checkout_url": checkout_url})
 
 
+def _remember_polar_sandbox(tenant_slug: str, is_sandbox: bool) -> None:
+    """PG-325: the only place that learns whether a Polar token is a sandbox
+    token is this probe. The webhook adapter reads the answer from the
+    connection, so sandbox purchases can be marked as tests."""
+    from payglue_backend.webhooks.models import IntegrationConfig
+
+    config = IntegrationConfig.objects.filter(tenant_slug=tenant_slug, provider_key="polar").first()
+    if config is None:
+        return
+    metadata = dict(config.metadata) if isinstance(config.metadata, dict) else {}
+    if metadata.get("sandbox") is is_sandbox:
+        return
+    metadata["sandbox"] = is_sandbox
+    config.metadata = metadata
+    config.save(update_fields=["metadata", "updated_at"])
+
+
 class PolarProductsView(_PolarBaseMixin, APIView):
     """Returns the tenant's own Polar products using their stored access_token."""
 
@@ -1974,6 +1991,7 @@ class PolarProductsView(_PolarBaseMixin, APIView):
             except PolarAccessError:
                 return Response({"products": [], "has_token": True, "error": "Polar API call failed. Check your access token and its scopes (needs products:read)."})
 
+        _remember_polar_sandbox(tenant_slug, is_sandbox)
         return Response({"products": products, "has_token": True, "sandbox": is_sandbox})
 
 

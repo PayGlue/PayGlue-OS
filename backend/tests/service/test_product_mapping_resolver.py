@@ -473,3 +473,27 @@ def test_a_purchase_does_not_reach_across_products() -> None:
     )
 
     assert instructions == ()
+
+
+def test_resolver_carries_the_test_flag_into_the_instruction() -> None:
+    """PG-325: the Ghost adapter decides label and newsletter from it."""
+    from dataclasses import replace
+
+    ProductMapping.objects.create(
+        tenant_slug="tenant-a",
+        payment_provider="polar",
+        event_type="order.paid",
+        external_product_id="prod_basic",
+        entitlement_key="tier.basic",
+        action="grant",
+        quantity=1,
+        is_active=True,
+    )
+    event = replace(
+        _event((CanonicalLineItem(external_product_id="prod_basic", quantity=1, amount_minor=500, currency="USD"),)),
+        is_test=True,
+    )
+
+    instructions = DbProductMappingResolver().resolve(event, TenantContext(tenant_slug="tenant-a"))
+
+    assert instructions[0].metadata["_is_test"] is True

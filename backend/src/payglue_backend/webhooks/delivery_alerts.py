@@ -17,14 +17,23 @@ first delivery that ends in a terminal failure, and knows two causes:
   compares the secret on the provider's connection page; if it matches, the
   fault is ours and the mail says so.
 
-Dedup is a small state on the Ghost IntegrationConfig's metadata, as before:
-one mail on the healthy -> failing transition, a reset on the next processed
-event, nothing in between. The operator is not copied on the creator's mail
-(a support mail arriving together with the system's error reads as pressure).
-The nightly job escalates once, internally, when a tenant has been failing
-for ESCALATE_AFTER_HOURS without a processed event since.
+Dedup is one DeliveryAlert row per tenant: one mail on the healthy -> failing
+transition, a reset on the next processed event, nothing in between. The
+operator is not copied on the creator's mail (a support mail arriving together
+with the system's error reads as pressure). The nightly job escalates once,
+internally, when a tenant has been failing for ESCALATE_AFTER_HOURS without a
+processed event since.
 
-Everything here is best effort: a failure to alert is logged and never
+A mail that cannot be sent is not the end of the incident (PG-326). The state
+used to be written only after a successful send, and it lived on the Ghost
+connection. A worker without mail credentials raises inside the mail backend,
+the sender logs that and returns, and nothing was left behind: no state, no
+retry, no escalation, only a log line. Now the failure is recorded first, as
+PENDING with the reason, and the nightly job, which runs in a different
+process with its own configuration, retries it. A tenant without a Ghost connection is covered too, because the
+row no longer hangs off that connection.
+
+Everything here is best effort: a failure to alert is recorded and never
 changes what happens to the webhook event itself.
 """
 
@@ -33,13 +42,14 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
+from django.db import transaction
 from django.utils import timezone
 
 from payglue_backend.core.errors import (
     CmsApplyEntitlementError,
     MissingCredentialsError,
 )
-from payglue_backend.webhooks.models import IntegrationConfig, WebhookInboundEvent
+from payglue_backend.webhooks.models import DeliveryAlert, WebhookInboundEvent
 
 logger = logging.getLogger(__name__)
 
@@ -87,12 +97,6 @@ def classify_failure(error: Exception) -> str:
     return KIND_PROVIDER
 
 
-def _ghost_config(tenant_slug: str) -> IntegrationConfig | None:
-    return IntegrationConfig.objects.filter(
-        tenant_slug=tenant_slug, provider_key="cms", enabled=True
-    ).first()
-
-
 def _owner_email(tenant_slug: str) -> str | None:
     from payglue_backend.tenants.models import TenantMembership
 
@@ -129,52 +133,80 @@ def _failures_since_last_success(tenant_slug: str) -> tuple[int, str]:
     return max(count, 1), first_date
 
 
+def _notify(alert: DeliveryAlert) -> bool:
+    """One attempt to tell the creator. Writes the outcome on the row either
+    way: FAILING with a timestamp when the mail went out, PENDING with the
+    reason when it did not. The caller holds the row lock."""
+    from payglue_backend.authn.lifecycle_emails import send_delivery_failure_alert
+
+    count, since = _failures_since_last_success(alert.tenant_slug)
+    alert.failure_count = count
+    alert.failing_since = since
+    alert.send_attempts += 1
+
+    sent = False
+    reason = ""
+    owner = _owner_email(alert.tenant_slug)
+    if not owner:
+        reason = "the publication has no owner with an email address"
+    else:
+        errors: list[str] = []
+        try:
+            sent = send_delivery_failure_alert(
+                owner,
+                tenant_slug=alert.tenant_slug,
+                kind=alert.kind or KIND_PROVIDER,
+                provider_key=alert.provider,
+                count=count,
+                since=since,
+                errors=errors,
+            )
+        except Exception as exc:  # the sender is fail-safe; this is the belt
+            errors.append(f"{type(exc).__name__}: {exc}")
+        if not sent:
+            reason = errors[0] if errors else "the mail was not sent"
+
+    if sent:
+        alert.state = DeliveryAlert.State.FAILING
+        alert.notified_at = timezone.now()
+        alert.last_send_error = ""
+    else:
+        alert.state = DeliveryAlert.State.PENDING
+        alert.last_send_error = reason[:2000]
+        logger.error(
+            "delivery alert: %s could not be told (%s), left pending for the nightly run",
+            alert.tenant_slug,
+            reason,
+        )
+    alert.save()
+    return sent
+
+
 def record_delivery_failure(event: WebhookInboundEvent, error: Exception) -> bool:
     """Called by the worker after an event ended in FAILED (no retry left) or
     DEAD_LETTER. Mails the owner once per incident. Returns True when a mail
-    went out."""
+    went out. When it could not go out, the incident stays PENDING with the
+    reason and the nightly job tries again."""
     try:
-        config = _ghost_config(event.tenant_slug)
-        if config is None:
-            return False
-        metadata = config.metadata or {}
-        state = metadata.get("delivery_alert") or {}
-        if state.get("state") == "failing":
-            return False
-
-        owner = _owner_email(event.tenant_slug)
-        if not owner:
-            logger.info(
-                "delivery alert: %s failing but has no owner email", event.tenant_slug
+        with transaction.atomic():
+            DeliveryAlert.objects.get_or_create(tenant_slug=event.tenant_slug)
+            # Two purchases can reach their last attempt in the same second.
+            # The lock makes the second one see what the first one decided,
+            # so the creator gets one mail and not two.
+            alert = DeliveryAlert.objects.select_for_update().get(
+                tenant_slug=event.tenant_slug
             )
-            return False
-
-        kind = classify_failure(error)
-        count, since = _failures_since_last_success(event.tenant_slug)
-        from payglue_backend.authn.lifecycle_emails import send_delivery_failure_alert
-
-        sent = send_delivery_failure_alert(
-            owner,
-            tenant_slug=event.tenant_slug,
-            kind=kind,
-            provider_key=event.provider,
-            count=count,
-            since=since,
-        )
-        if not sent:
-            return False
-        metadata["delivery_alert"] = {
-            "state": "failing",
-            "kind": kind,
-            "provider": event.provider,
-            "notified_at": timezone.now().isoformat(),
-            "since": since,
-            "count": count,
-            "escalated_at": None,
-        }
-        config.metadata = metadata
-        config.save(update_fields=["metadata", "updated_at"])
-        return True
+            if alert.state == DeliveryAlert.State.FAILING:
+                return False
+            if alert.state == DeliveryAlert.State.HEALTHY:
+                alert.first_failed_at = timezone.now()
+                alert.notified_at = None
+                alert.escalated_at = None
+                alert.send_attempts = 0
+                alert.last_send_error = ""
+            alert.kind = classify_failure(error)
+            alert.provider = event.provider
+            return _notify(alert)
     except Exception:
         logger.exception(
             "delivery alert: failed to record failure for %s", event.tenant_slug
@@ -182,20 +214,31 @@ def record_delivery_failure(event: WebhookInboundEvent, error: Exception) -> boo
         return False
 
 
+def retry_pending(tenant_slug: str) -> bool:
+    """The nightly job's second chance for an incident the worker could not
+    mail. Returns True when the creator has now been told."""
+    try:
+        with transaction.atomic():
+            alert = (
+                DeliveryAlert.objects.select_for_update()
+                .filter(tenant_slug=tenant_slug, state=DeliveryAlert.State.PENDING)
+                .first()
+            )
+            if alert is None:
+                return False
+            return _notify(alert)
+    except Exception:
+        logger.exception("delivery alert: retry failed for %s", tenant_slug)
+        return False
+
+
 def record_delivery_success(tenant_slug: str) -> None:
     """Called by the worker after a processed event. Clears the incident so
     the next failure mails again. No recovery mail, no nagging."""
     try:
-        config = _ghost_config(tenant_slug)
-        if config is None:
-            return
-        metadata = config.metadata or {}
-        state = metadata.get("delivery_alert") or {}
-        if state.get("state") != "failing":
-            return
-        metadata["delivery_alert"] = {"state": "healthy"}
-        config.metadata = metadata
-        config.save(update_fields=["metadata", "updated_at"])
+        DeliveryAlert.objects.filter(tenant_slug=tenant_slug).exclude(
+            state=DeliveryAlert.State.HEALTHY
+        ).update(state=DeliveryAlert.State.HEALTHY, updated_at=timezone.now())
     except Exception:
         logger.exception(
             "delivery alert: failed to record recovery for %s", tenant_slug

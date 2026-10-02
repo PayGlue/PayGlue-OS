@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 import hashlib
 import hmac
 import json
+from dataclasses import replace
 import urllib.error
 import urllib.request
 from typing import Callable, Mapping
@@ -176,6 +177,24 @@ class CreemPaymentAdapter:
             raise InvalidWebhookSignatureError("signature mismatch")
 
     def parse_event(
+        self, raw_body: bytes, headers: Mapping[str, str], tenant_ctx: TenantContext
+    ) -> CanonicalPaymentEvent:
+        event = self._parse_event_untagged(raw_body, headers, tenant_ctx)
+        try:
+            is_test = self._is_test_event(raw_body, headers, tenant_ctx)
+        except Exception:  # noqa: BLE001 - a broken test-mode probe must not fail the payment
+            is_test = False
+        return replace(event, is_test=is_test)
+
+    @staticmethod
+    def _is_test_event(raw_body: bytes, headers: Mapping[str, str], tenant_ctx: TenantContext) -> bool:
+        """Creem stamps every object with its mode; test-mode checkouts and
+        subscriptions carry "test"."""
+        payload = json.loads(raw_body)
+        obj = payload.get("object") if isinstance(payload, dict) else None
+        return isinstance(obj, dict) and str(obj.get("mode") or "").lower() == "test"
+
+    def _parse_event_untagged(
         self, raw_body: bytes, headers: Mapping[str, str], tenant_ctx: TenantContext
     ) -> CanonicalPaymentEvent:
         try:

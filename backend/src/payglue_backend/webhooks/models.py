@@ -80,6 +80,45 @@ class IntegrationConfig(models.Model):
         ]
 
 
+class DeliveryAlert(models.Model):
+    """One row per tenant: whether purchases are reaching Ghost, and whether
+    the creator has been told (PG-319, PG-326).
+
+    The state used to live in the metadata of the tenant's Ghost connection.
+    That had two holes. A tenant without a Ghost connection could never be
+    alerted, and a mail that failed to send left no trace at all: the state
+    was only written after a successful send, so the incident vanished and
+    nothing tried again. PENDING closes the second hole. It records that a
+    failure happened and the creator does not know yet, with the reason, and
+    the nightly job keeps trying until the mail is out or the tenant recovers.
+    """
+
+    class State(models.TextChoices):
+        HEALTHY = "healthy", "healthy"
+        PENDING = "pending", "pending"
+        FAILING = "failing", "failing"
+
+    tenant_slug = models.CharField(max_length=64, unique=True)
+    state = models.CharField(max_length=16, choices=State.choices, default=State.HEALTHY)
+    kind = models.CharField(max_length=16, blank=True, default="")
+    provider = models.CharField(max_length=64, blank=True, default="")
+    failure_count = models.PositiveIntegerField(default=0)
+    # The date as the mail prints it ("25 Aug 2026"), kept as text so the
+    # internal notice quotes exactly what the creator was told.
+    failing_since = models.CharField(max_length=32, blank=True, default="")
+    first_failed_at = models.DateTimeField(null=True, blank=True)
+    notified_at = models.DateTimeField(null=True, blank=True)
+    escalated_at = models.DateTimeField(null=True, blank=True)
+    send_attempts = models.PositiveIntegerField(default=0)
+    # Why the last attempt to tell the creator did not go out. Empty once it did.
+    last_send_error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"{self.tenant_slug}: {self.state}"
+
+
 class TenantProviderCredential(models.Model):
     tenant_slug = models.CharField(max_length=64)
     provider_key = models.CharField(max_length=64)
