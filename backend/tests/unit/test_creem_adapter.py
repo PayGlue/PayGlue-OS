@@ -260,3 +260,26 @@ def test_supports_event() -> None:
     assert adapter.supports_event("order.paid") is True
     assert adapter.supports_event("subscription.active") is True
     assert adapter.supports_event("unknown") is False
+
+
+def test_parse_event_marks_test_mode_objects() -> None:
+    """PG-325: Creem stamps test-mode objects with mode=test; live ones say prod."""
+    adapter = CreemPaymentAdapter(credential_provider=StubCredentialProvider())
+
+    def event_for(mode: str):
+        payload = {
+            "id": "evt_mode",
+            "eventType": "checkout.completed",
+            "object": {
+                "id": "ch_mode",
+                "mode": mode,
+                "customer": {"id": "cust_001", "email": "buyer@example.com"},
+                "product": {"id": "prod_1"},
+                "amount": 500,
+                "currency": "usd",
+            },
+        }
+        return adapter.parse_event(json.dumps(payload).encode("utf-8"), {}, TenantContext(tenant_slug="tenant-a"))
+
+    assert event_for("test").is_test is True
+    assert event_for("prod").is_test is False

@@ -1,5 +1,6 @@
 # Copyright (c) 2026 PayGlue by André Nünninghoff
 # Licensed under the Business Source License 1.1, see LICENSE.md
+import re
 import hashlib
 import secrets
 
@@ -327,6 +328,12 @@ class LifecycleEmailTemplate(models.Model):
         TEAM_MEMBER_REMOVED = "team_member_removed", "team_member_removed"
         TEAM_MEMBER_REMOVED_NOTICE = "team_member_removed_notice", "team_member_removed_notice"
         ACCOUNT_DELETED = "account_deleted", "account_deleted"
+        # PG-327: the text for a sub-processor notice. Not fired by an event:
+        # the operator turns one into a Broadcast draft from the admin, fills
+        # in who and what, and sends it. Two triggers because a removal gives
+        # nobody a right to object, so it is a different letter.
+        SUBPROCESSOR_ADDED = "subprocessor_added", "subprocessor_added"
+        SUBPROCESSOR_REMOVED = "subprocessor_removed", "subprocessor_removed"
         # Onboarding sequence. Unlike the triggers above these fire once per
         # account and never again, which the partial constraint on
         # LifecycleEmailLog enforces rather than trusting every caller to
@@ -342,8 +349,10 @@ class LifecycleEmailTemplate(models.Model):
             "triggers expose $email and $plan; ghost_delivery_failing and "
             "provider_webhook_failing expose $email, $tenant, $url, $provider, "
             "$count and $since; the owner_transfer_* triggers expose "
-            "$tenant, $url, $new_owner and $previous_owner. Missing/unknown "
-            "placeholders are left as-is, never crash the send."
+            "$tenant, $url, $new_owner and $previous_owner; the subprocessor_* "
+            "triggers expose $name, $purpose, $location, $website, "
+            "$effective_date and $url (the public sub-processor list). "
+            "Missing/unknown placeholders are left as-is, never crash the send."
         )
     )
     enabled = models.BooleanField(
@@ -847,6 +856,9 @@ class StepUpGrant(models.Model):
         return f"Step-up grant ({self.purpose}) for {self.user_profile.email} ({status})"
 
 
+_MARKER = re.compile(r"\[\[[^\[\]\n]{1,60}\]\]")
+
+
 class Broadcast(models.Model):
     """A one-off announcement: an outage, a new tier, anything that is news
     rather than lifecycle.
@@ -896,6 +908,14 @@ class Broadcast(models.Model):
     @property
     def is_sent(self) -> bool:
         return self.sent_at is not None
+
+    def unfilled_markers(self) -> list[str]:
+        """Markers like [[NAME]] a draft made from a template still carries
+        (PG-327). A broadcast has no placeholders at send time, so anything
+        left in double brackets is text the operator has not written yet, and
+        the send action refuses to mail it to every customer."""
+        found = _MARKER.findall(f"{self.subject}\n{self.body}")
+        return list(dict.fromkeys(found))
 
     def recipients(self) -> list[str]:
         """Owner email addresses for the chosen audience.

@@ -35,6 +35,10 @@ class CanonicalPaymentEvent:
     customer: CanonicalCustomer
     line_items: tuple[CanonicalLineItem, ...]
     status: str
+    # True when the provider ran this in its sandbox or test mode. The Ghost
+    # member gets a payglue-test label and no newsletter, and a publication can
+    # have such members expire (PG-325).
+    is_test: bool = False
 
 
 @dataclass(frozen=True)

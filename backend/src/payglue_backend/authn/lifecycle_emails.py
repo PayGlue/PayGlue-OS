@@ -137,6 +137,7 @@ def _send_templated(
     recipients: list[str],
     fallback_subject: str,
     fallback_body: str,
+    errors: list[str] | None = None,
 ) -> bool:
     """Render the admin-editable template for `trigger` and send it.
 
@@ -145,9 +146,16 @@ def _send_templated(
     row falls back to the built-in copy so an alert can't go dark by accident.
     Each recipient gets their own send, so nobody's address shows up in
     somebody else's To header. Fail-safe: failures are logged, never raised.
-    Returns True only if every recipient was sent to."""
+    Returns True only if every recipient was sent to.
+
+    A caller that needs to know why nothing went out passes `errors`, a list
+    this appends one line per reason to (PG-326). The log line alone is not
+    enough: logs expire, and the delivery alert has to say later why a creator
+    was never told."""
     template = LifecycleEmailTemplate.objects.filter(trigger=trigger).first()
     if template is not None and not template.enabled:
+        if errors is not None:
+            errors.append(f"the {trigger} template is switched off")
         return False
     subject_tpl = template.subject if template is not None else fallback_subject
     body_tpl = template.body if template is not None else fallback_body
@@ -161,8 +169,10 @@ def _send_templated(
     for recipient in dict.fromkeys(r for r in recipients if r):
         try:
             _send_branded(subject, body, [recipient])
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to send %s email to %s", trigger, recipient)
+            if errors is not None:
+                errors.append(f"{type(exc).__name__}: {exc}")
             sent_all = False
     return sent_all
 
@@ -348,7 +358,11 @@ def _test_render_context() -> dict[str, str]:
     }
 
 
-def send_test_lifecycle_email_error(template: LifecycleEmailTemplate, recipient: str) -> str:
+def send_test_lifecycle_email_error(
+    template: LifecycleEmailTemplate,
+    recipient: str,
+    extra_context: dict[str, str] | None = None,
+) -> str:
     """PG-191: render `template` with dummy placeholder values and send it to
     `recipient` (the admin themselves) so subject/body/placeholders can be
     eyeballed before a template is switched on. Sends regardless of the
@@ -360,7 +374,9 @@ def send_test_lifecycle_email_error(template: LifecycleEmailTemplate, recipient:
     the admin can show exactly why a test send failed -- typically a
     RESEND_API_KEY / verified-sender-domain problem -- instead of a generic
     'failed'. Never raises."""
-    context = {**_test_render_context(), "email": recipient}
+    # `extra_context` lets a caller that owns a template supply its example
+    # values, instead of this module having to know every template's subject.
+    context = {**_test_render_context(), "email": recipient, **(extra_context or {})}
     subject = "[Test] " + Template(template.subject).safe_substitute(context)
     body = Template(template.body).safe_substitute(context)
     try:
@@ -373,9 +389,13 @@ def send_test_lifecycle_email_error(template: LifecycleEmailTemplate, recipient:
         return str(exc) or exc.__class__.__name__
 
 
-def send_test_lifecycle_email(template: LifecycleEmailTemplate, recipient: str) -> bool:
+def send_test_lifecycle_email(
+    template: LifecycleEmailTemplate,
+    recipient: str,
+    extra_context: dict[str, str] | None = None,
+) -> bool:
     """Bool wrapper (used by the bulk list action). True on success."""
-    return send_test_lifecycle_email_error(template, recipient) == ""
+    return send_test_lifecycle_email_error(template, recipient, extra_context) == ""
 
 
 _OWNER_TRANSFER_FALLBACK_SUBJECT = "PayGlue: Ownership transfer requested for $tenant"
@@ -535,6 +555,7 @@ def send_delivery_failure_alert(
     provider_key: str,
     count: int,
     since: str,
+    errors: list[str] | None = None,
 ) -> bool:
     """PG-192/PG-319: the creator's purchase stopped reaching Ghost. Sent by
     the worker on the first terminal failure of an incident, once.
@@ -570,6 +591,7 @@ def send_delivery_failure_alert(
         },
         [owner_email],
         *fallback,
+        errors=errors,
     )
 
 
@@ -604,11 +626,24 @@ def send_delivery_escalation_notice(*, tenant_slug: str, owner_email: str, state
         else f"{provider} webhooks could not be verified"
     )
     subject = f"Delivery still failing for {tenant_slug} after two days"
+    notified = (state.get("notified_at") or "")[:10]
+    if notified:
+        opening = (
+            f"{tenant_slug} was told on {notified} that purchases "
+            f"are not reaching Ghost ({cause}). Nothing has been processed since.\n\n"
+        )
+    else:
+        # PG-326: the creator's mail never went out. The operator has to know
+        # that before writing to them, and why, so the cause gets fixed too.
+        opening = (
+            f"Purchases for {tenant_slug} are not reaching Ghost ({cause}), and the "
+            f"creator has NOT been told: {state.get('send_error') or 'the alert mail could not be sent'}. "
+            "Nothing has been processed since.\n\n"
+        )
     body = (
-        f"{tenant_slug} was told on {state.get('notified_at', '')[:10]} that purchases "
-        f"are not reaching Ghost ({cause}). Nothing has been processed since.\n\n"
-        f"Provider: {provider}\n"
-        f"Failed events when they were told: {state.get('count', '?')}, first on {state.get('since', '?')}\n"
+        opening
+        + f"Provider: {provider}\n"
+        f"Failed events: {state.get('count', '?')}, first on {state.get('since', '?')}\n"
         f"Owner: {owner_email}\n"
         f"Event log: {app_url(f'/t/{tenant_slug}/events')}\n\n"
         "This is the one internal notice for this incident. The creator was not "
