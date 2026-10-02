@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/PayGlue/PayGlue-OS/releases"><img src="https://img.shields.io/github/v/release/PayGlue/PayGlue-OS" alt="Latest release"></a>
   <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-BUSL--1.1-blue" alt="License: BUSL 1.1"></a>
-  <img src="https://img.shields.io/badge/python-3.12+-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
+  <img src="https://img.shields.io/badge/python-3.13+-3776AB?logo=python&logoColor=white" alt="Python 3.13+">
   <img src="https://img.shields.io/badge/vue-3-42b883?logo=vuedotjs&logoColor=white" alt="Vue 3">
   <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs welcome"></a>
 </p>
@@ -99,7 +99,7 @@ The complete walkthrough, including per-provider setup, auth options, and recomm
 | Layer | Technology |
 | --- | --- |
 | Frontend | Vue 3 + TypeScript, Cloudflare Pages |
-| Backend | Django + Celery, Python 3.12+ |
+| Backend | Django + Celery, Python 3.13+ |
 | Auth | Accounts kept by the installation, or Supabase Auth (ES256 JWT) / any JWKS-compatible issuer |
 | Database | PostgreSQL |
 | Queue / Cache | Redis |

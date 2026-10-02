@@ -7,7 +7,6 @@
 # staticfiles). When the private repo gains env vars or defaults, port them
 # here by hand as part of the next release.
 import json
-import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -75,26 +74,19 @@ if not DEBUG:
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
 
-DJANGO_TENANTS_AVAILABLE = importlib.util.find_spec("django_tenants") is not None
-DJANGO_TENANTS_ENABLED = (
-    os.environ.get("DJANGO_TENANTS_ENABLED", "0") == "1" and DJANGO_TENANTS_AVAILABLE
-)
-
-SHARED_APPS = [
+# One list. This used to be split into SHARED_APPS and TENANT_APPS, the names
+# django-tenants uses to decide which app lives in the public schema and which
+# is installed per tenant. Nothing here was ever routed that way: publications
+# share one schema and are told apart by a column. The split described a
+# mechanism that did not exist, and the package behind it kept the project on
+# an older Django.
+INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.auth",
     "payglue_backend.tenants",
-]
-
-TENANT_APPS = [
     "rest_framework",
     "payglue_backend.webhooks",
 ]
-
-if DJANGO_TENANTS_ENABLED:
-    SHARED_APPS = ["django_tenants", *SHARED_APPS]
-
-INSTALLED_APPS = [*SHARED_APPS, *[app for app in TENANT_APPS if app not in SHARED_APPS]]
 
 MIDDLEWARE = [
     # SecurityMiddleware for the generic hardening headers (nosniff, HSTS).
@@ -164,23 +156,6 @@ def _build_database_settings() -> dict[str, dict[str, object]]:
 
 DATABASES = _build_database_settings()
 
-if (
-    DJANGO_TENANTS_ENABLED
-    and DATABASES["default"]["ENGINE"] != "django.db.backends.postgresql"
-):
-    raise RuntimeError(
-        "DJANGO_TENANTS_ENABLED requires a PostgreSQL database configuration."
-    )
-
-if (
-    DJANGO_TENANTS_ENABLED
-    and DATABASES["default"]["ENGINE"] == "django.db.backends.postgresql"
-):
-    DATABASES["default"]["ENGINE"] = "django_tenants.postgresql_backend"
-    DATABASE_ROUTERS = ("django_tenants.routers.TenantSyncRouter",)
-
-TENANT_MODEL = "tenants.Tenant"
-TENANT_DOMAIN_MODEL = "tenants.TenantDomain"
 PUBLIC_SCHEMA_NAME = "public"
 
 
