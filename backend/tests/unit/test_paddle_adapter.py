@@ -159,6 +159,70 @@ def test_parse_event_subscription_canceled_uses_nested_customer_email() -> None:
     assert event.line_items[0].external_product_id == "pro_2"
 
 
+def test_parse_event_subscription_without_nested_customer_resolves_email(monkeypatch) -> None:
+    """A real Paddle subscription webhook carries customer_id only. The nested
+    customer object exists on API reads with ?include=customer, never on the
+    notification itself, so the address has to be looked up like it is for
+    transactions."""
+
+    class _FakeResponse:
+        def __init__(self, body: bytes) -> None:
+            self._body = body
+
+        def read(self) -> bytes:
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    seen: list[str] = []
+
+    def fake_urlopen(req, timeout=10):
+        seen.append(req.full_url)
+        return _FakeResponse(json.dumps({"data": {"email": "member@example.com"}}).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    adapter = PaddlePaymentAdapter(credential_provider=StubCredentialProvider())
+    payload = {
+        "event_id": "ntf_478",
+        "event_type": "subscription.activated",
+        "data": {
+            "id": "sub_123",
+            "customer_id": "ctm_003",
+            "status": "active",
+            "currency_code": "USD",
+            "items": [{"price": {"id": "pri_3", "product_id": "pro_3"}}],
+        },
+    }
+
+    event = adapter.parse_event(
+        json.dumps(payload).encode("utf-8"), {}, TenantContext(tenant_slug="tenant-a")
+    )
+
+    assert event.event_type == "subscription.active"
+    assert event.customer.email == "member@example.com"
+    assert event.customer.external_id == "ctm_003"
+    assert len(seen) == 1 and seen[0].endswith("/customers/ctm_003")
+
+
+def test_parse_event_subscription_without_any_customer_reference_is_rejected() -> None:
+    adapter = PaddlePaymentAdapter(credential_provider=StubCredentialProvider())
+    payload = {
+        "event_id": "ntf_479",
+        "event_type": "subscription.canceled",
+        "data": {"id": "sub_124", "status": "canceled"},
+    }
+
+    with pytest.raises(InvalidWebhookPayloadError, match="customer_id"):
+        adapter.parse_event(
+            json.dumps(payload).encode("utf-8"), {}, TenantContext(tenant_slug="tenant-a")
+        )
+
+
 def test_parse_event_raises_on_unsupported_event_type() -> None:
     adapter = PaddlePaymentAdapter(credential_provider=StubCredentialProvider())
     payload = {"event_id": "ntf_1", "event_type": "product.created", "data": {"id": "pro_1"}}

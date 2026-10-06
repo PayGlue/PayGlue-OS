@@ -23,11 +23,12 @@ from payglue_backend.core.models import (
     TenantContext,
 )
 
-# Paddle's transaction events don't carry an email directly (only
-# customer_id), so a transaction.completed event needs one extra API call
-# to resolve the buyer's address. Subscription events do include a nested
-# customer object with an email -- see Paddle's docs, not independently
-# verified against a real event as of this writing.
+# Paddle events carry the buyer only as customer_id, both on transactions
+# and on subscriptions: the subscription entity has no nested customer object
+# unless it is fetched from the API with ?include=customer, and webhooks never
+# are. Every event therefore resolves the address with one extra API call. A
+# payload that does carry customer.email (older fixtures, replays with an
+# included customer) is accepted as is and skips the call.
 _EVENT_MAP = {
     "transaction.completed": "order.paid",
     "subscription.activated": "subscription.active",
@@ -208,7 +209,7 @@ class PaddlePaymentAdapter:
 
         if event_type == "transaction.completed":
             return self._parse_transaction(data, event_id, canonical_type, occurred_at, tenant_ctx)
-        return self._parse_subscription(data, event_id, canonical_type, occurred_at)
+        return self._parse_subscription(data, event_id, canonical_type, occurred_at, tenant_ctx)
 
     def _resolve_customer_email(
         self, customer_id: str, tenant_ctx: TenantContext
@@ -287,12 +288,20 @@ class PaddlePaymentAdapter:
         )
 
     def _parse_subscription(
-        self, data: dict, event_id: str, canonical_type: str, occurred_at: datetime
+        self,
+        data: dict,
+        event_id: str,
+        canonical_type: str,
+        occurred_at: datetime,
+        tenant_ctx: TenantContext,
     ) -> CanonicalPaymentEvent:
+        customer_id = data.get("customer_id")
         customer = data.get("customer") or {}
-        email = customer.get("email")
+        email = customer.get("email") if isinstance(customer, dict) else None
         if not email:
-            raise InvalidWebhookPayloadError("missing customer.email in subscription event")
+            if not customer_id:
+                raise InvalidWebhookPayloadError("missing customer_id in subscription event")
+            email = self._resolve_customer_email(customer_id, tenant_ctx)
 
         items = data.get("items") or []
         product_id = event_id
@@ -305,7 +314,7 @@ class PaddlePaymentAdapter:
             provider_event_id=event_id,
             event_type=canonical_type,
             occurred_at=occurred_at,
-            customer=CanonicalCustomer(email=email, external_id=data.get("customer_id")),
+            customer=CanonicalCustomer(email=email, external_id=customer_id),
             line_items=(
                 CanonicalLineItem(
                     external_product_id=str(product_id),
