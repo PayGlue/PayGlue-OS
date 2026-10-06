@@ -65,6 +65,44 @@ def test_process_inbound_event_marks_processed_on_success(monkeypatch) -> None:
 
 
 @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+def test_a_retry_does_not_verify_the_signature_again(monkeypatch) -> None:
+    """The first attempt verifies. A retry runs after the backoff, and a
+    provider that signs with a timestamp (Paddle allows about a minute) would
+    fail that check on the clock alone, hiding the error the first attempt
+    hit. An event that reaches attempt two has passed verification: a failed
+    check is terminal and never retried."""
+    seen: list[bool] = []
+
+    class FailsOnceOrchestrator:
+        def process_webhook(self, *, skip_verification: bool = False, **kwargs) -> OrchestrationResult:
+            seen.append(skip_verification)
+            if len(seen) == 1:
+                raise CmsApplyEntitlementError("ghost returned status 500")
+            return OrchestrationResult(status="processed", event_id="evt_1", applied_count=1)
+
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.wiring.get_webhook_orchestrator",
+        lambda: FailsOnceOrchestrator(),
+    )
+    event = WebhookInboundEvent.objects.create(
+        tenant_slug="tenant-a",
+        provider="paddle",
+        status=WebhookInboundEvent.Status.RECEIVED,
+        payload_raw=b"{}",
+        headers_snapshot={"Paddle-Signature": "ts=1;h1=abc"},
+        max_attempts=3,
+        endpoint_path="/t/tenant-a/webhooks/paddle/endpoint-token/",
+    )
+
+    process_inbound_webhook_event.delay(event.id)
+
+    event.refresh_from_db()
+    assert event.status == WebhookInboundEvent.Status.PROCESSED
+    assert event.attempts == 2
+    assert seen == [False, True]
+
+
+@override_settings(CELERY_TASK_ALWAYS_EAGER=True)
 def test_process_inbound_event_retries_then_dead_letters(monkeypatch) -> None:
     class FailingOrchestrator:
         def process_webhook(

@@ -100,6 +100,20 @@ class UrllibHttpApiClient:
 TEST_LABEL = "payglue-test"
 
 
+# Ghost's own list (isActiveSubscriptionStatus): a subscription in one of these
+# still grants access, so a complimentary one in this state is what to cancel.
+ACTIVE_SUBSCRIPTION_STATUSES = frozenset({"active", "trialing", "unpaid", "past_due"})
+
+
+def _filter_value(value: str) -> str:
+    """A value for Ghost's `filter=` query parameter, percent-encoded in full.
+    The filter travels in the URL, so a "+" that is left as it is arrives at
+    Ghost as a space and the lookup for an address like name+tag@example.com
+    finds nothing. The quote is encoded too, so it cannot close the filter
+    string early."""
+    return quote(value, safe="")
+
+
 def _slugify(value: str) -> str:
     normalized = re.sub(r"[._\s]+", "-", value.lower().strip())
     return re.sub(r"[^a-z0-9-]", "", normalized).strip("-")
@@ -234,7 +248,9 @@ class GhostCmsAdapter:
             note_lines.append(order)
         note = "\n".join(note_lines)
 
-        member_id, existing_note = self._find_member(members_url, email, headers)
+        found = self._find_member(members_url, email, headers)
+        member_id = str(found["id"]) if found and found.get("id") else None
+        existing_note = str(found.get("note") or "") if found else ""
         if not is_grant:
             if member_id is None:
                 # Creating a member here would invent a cancellation for someone
@@ -323,6 +339,84 @@ class GhostCmsAdapter:
                 f"ghost returned status {response.status_code}"
             )
 
+        if not is_grant and stripe_connected and member_id is not None:
+            self._end_complimentary_access(members_url, member_id, headers)
+
+    def _end_complimentary_access(
+        self, members_url: str, member_id: str, headers: dict[str, str]
+    ) -> None:
+        """Cancel the Complimentary subscription that `comped: true` created.
+
+        With Stripe connected, Ghost expresses a comped member as a zero-amount
+        Stripe subscription whose price is nicknamed "Complimentary". Sending
+        `comped: false` is meant to cancel it, but Ghost's member edit only
+        loads the labels relation, so its check for an existing complimentary
+        subscription comes back empty and the subscription stays. Verified on
+        Ghost 6.68. The member then keeps the tier, keeps `status: comped`, and
+        the paywall keeps letting them in. So after the edit we read the member
+        back and cancel every active complimentary subscription ourselves,
+        through the same Admin API endpoint the Ghost admin uses. Ghost syncs
+        the member's status and tier off the cancelled subscription.
+
+        A member with no active complimentary subscription left (Ghost did
+        cancel it, or the comp was never Stripe-backed) needs nothing here.
+        """
+        member = self._get_member(members_url, member_id, headers)
+        subscriptions = member.get("subscriptions") or []
+        if not isinstance(subscriptions, list):
+            return
+        for subscription in subscriptions:
+            if not isinstance(subscription, dict):
+                continue
+            if subscription.get("status") not in ACTIVE_SUBSCRIPTION_STATUSES:
+                continue
+            nickname = (
+                (subscription.get("price") or {}).get("nickname")
+                or (subscription.get("plan") or {}).get("nickname")
+                or ""
+            )
+            if str(nickname).lower() != "complimentary":
+                continue
+            subscription_id = subscription.get("id")
+            if not subscription_id:
+                continue
+            logger.info(
+                "ghost cancel complimentary subscription member_id=%s subscription_id=%s",
+                member_id,
+                subscription_id,
+            )
+            try:
+                response = self._http_client.put(
+                    url=f"{members_url}{member_id}/subscriptions/{subscription_id}/",
+                    json_body={"cancel_at_period_end": True, "status": "canceled"},
+                    headers=headers,
+                )
+            except Exception as exc:
+                raise CmsApplyEntitlementError("ghost subscription cancel failed") from exc
+            if response.status_code >= 400:
+                raise CmsApplyEntitlementError(
+                    f"ghost subscription cancel returned status {response.status_code}: {response.text[:300]}"
+                )
+
+    def _get_member(
+        self, members_url: str, member_id: str, headers: dict[str, str]
+    ) -> dict[str, object]:
+        try:
+            response = self._http_client.get(url=f"{members_url}{member_id}/", headers=headers)
+        except Exception as exc:
+            raise CmsApplyEntitlementError("ghost member read failed") from exc
+        if response.status_code >= 400:
+            raise CmsApplyEntitlementError(
+                f"ghost member read returned status {response.status_code}"
+            )
+        try:
+            members = json.loads(response.text).get("members", [])
+        except (json.JSONDecodeError, AttributeError):
+            return {}
+        if isinstance(members, list) and members and isinstance(members[0], dict):
+            return members[0]
+        return {}
+
     @staticmethod
     def _stamped_line(label: str, occurred_at: object, event_id: str) -> str:
         """One note line: what happened, when, and which event says so. Both the
@@ -351,16 +445,16 @@ class GhostCmsAdapter:
 
     def _find_member(
         self, members_url: str, email: str, headers: dict[str, str]
-    ) -> tuple[str | None, str]:
-        safe_email = email.replace("'", "%27")
-        lookup_url = f"{members_url}?filter=email:'{safe_email}'"
+    ) -> dict[str, object] | None:
+        """The member with this email as Ghost returns it, or None."""
+        lookup_url = f"{members_url}?filter=email:'{_filter_value(email)}'"
         try:
             response = self._http_client.get(url=lookup_url, headers=headers)
         except Exception as exc:
             raise CmsApplyEntitlementError("ghost member lookup failed") from exc
 
         if response.status_code == 404:
-            return None, ""
+            return None
         if response.status_code >= 400:
             raise CmsApplyEntitlementError(
                 f"ghost member lookup returned status {response.status_code}"
@@ -369,15 +463,13 @@ class GhostCmsAdapter:
         try:
             data = json.loads(response.text)
             members = data.get("members", [])
-            if isinstance(members, list) and members:
-                member_id = members[0].get("id")
-                note = members[0].get("note") or ""
-                if member_id:
-                    return str(member_id), str(note)
+            if isinstance(members, list) and members and isinstance(members[0], dict):
+                if members[0].get("id"):
+                    return members[0]
         except (json.JSONDecodeError, AttributeError):
             pass
 
-        return None, ""
+        return None
 
     def purge_test_members(self, tenant_ctx: TenantContext, older_than_days: int) -> dict[str, int]:
         """PG-325: delete members that carry the test label and were created
@@ -537,8 +629,7 @@ class GhostCmsAdapter:
         auth_token = self._build_admin_jwt(api_key)
         headers = {"Authorization": f"Ghost {auth_token}", "Accept-Version": "v5.0"}
         self._validate_base_url(base_url)
-        safe_email = email.replace("'", "%27")
-        url = f"{base_url.rstrip('/')}/ghost/api/admin/members/?filter=email:'{safe_email}'&include=labels"
+        url = f"{base_url.rstrip('/')}/ghost/api/admin/members/?filter=email:'{_filter_value(email)}'&include=labels"
 
         try:
             response = self._http_client.get(url=url, headers=headers)
