@@ -182,6 +182,112 @@ def test_apply_entitlement_revoke_sets_comped_false() -> None:
     assert member["comped"] is False
 
 
+class RoutingClient(StubHttpClient):
+    """GET answers by URL: the settings call, the lookup by email, the member read."""
+
+    def __init__(self, *, stripe_connected: bool, lookup: dict[str, object] | None, member: dict[str, object] | None = None) -> None:
+        super().__init__()
+        settings = [{"key": "stripe_connect_account_id", "value": "acct_1" if stripe_connected else ""}]
+        self._settings = StubResponse(200, json.dumps({"settings": settings}))
+        self._lookup = StubResponse(200, json.dumps({"members": [lookup] if lookup else []}))
+        self._member = StubResponse(200, json.dumps({"members": [member or lookup or {}]}))
+
+    def get(self, url: str, headers: dict[str, str]) -> StubResponse:
+        self.get_calls.append({"url": url, "headers": headers})
+        if "/settings/" in url:
+            return self._settings
+        if "filter=email" in url:
+            return self._lookup
+        return self._member
+
+
+def _complimentary(sub_id: str = "sub_comp", status: str = "active") -> dict[str, object]:
+    return {"id": sub_id, "status": status, "price": {"nickname": "Complimentary", "amount": 0}}
+
+
+def test_revoke_with_stripe_connected_cancels_the_complimentary_subscription() -> None:
+    """Ghost's own `comped: false` does not cancel it (its member edit never
+    loads the subscriptions it checks), so the adapter cancels it through the
+    subscription endpoint after the edit. Without that the member keeps the
+    tier and the paywall keeps letting them in."""
+    client = RoutingClient(
+        stripe_connected=True,
+        lookup={"id": "m1", "email": "user@example.com", "note": "Direct via PayGlue"},
+        member={"id": "m1", "status": "comped", "subscriptions": [_complimentary(), {"id": "sub_old", "status": "canceled", "price": {"nickname": "Complimentary"}}]},
+    )
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+
+    adapter.apply_entitlement(_customer(), _instruction(action="revoke"), _ctx())
+
+    assert [c["url"] for c in client.put_calls] == [
+        "https://ghost.test/ghost/api/admin/members/m1/",
+        "https://ghost.test/ghost/api/admin/members/m1/subscriptions/sub_comp/",
+    ]
+    assert client.put_calls[0]["json_body"]["members"][0]["comped"] is False  # type: ignore[index]
+    assert client.put_calls[1]["json_body"] == {"cancel_at_period_end": True, "status": "canceled"}
+    # the member was read back after the edit, not judged from the lookup
+    assert client.get_calls[-1]["url"] == "https://ghost.test/ghost/api/admin/members/m1/"
+
+
+def test_revoke_with_stripe_connected_leaves_a_paid_subscription_alone() -> None:
+    client = RoutingClient(
+        stripe_connected=True,
+        lookup={"id": "m1", "email": "user@example.com"},
+        member={"id": "m1", "status": "paid", "subscriptions": [{"id": "sub_paid", "status": "active", "price": {"nickname": "Monthly", "amount": 500}}]},
+    )
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+
+    adapter.apply_entitlement(_customer(), _instruction(action="revoke"), _ctx())
+
+    assert [c["url"] for c in client.put_calls] == ["https://ghost.test/ghost/api/admin/members/m1/"]
+
+
+def test_revoke_without_stripe_does_not_read_the_member_back() -> None:
+    client = RoutingClient(stripe_connected=False, lookup={"id": "m1", "email": "user@example.com"})
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+
+    adapter.apply_entitlement(_customer(), _instruction(action="revoke"), _ctx())
+
+    assert len(client.put_calls) == 1
+    assert all("/members/m1/" != c["url"] for c in client.get_calls)
+
+
+def test_a_failed_subscription_cancel_fails_the_event() -> None:
+    client = RoutingClient(
+        stripe_connected=True,
+        lookup={"id": "m1", "email": "user@example.com"},
+        member={"id": "m1", "status": "comped", "subscriptions": [_complimentary()]},
+    )
+    client._put_response = StubResponse(500, "boom")
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+
+    with pytest.raises(CmsApplyEntitlementError):
+        adapter.apply_entitlement(_customer(), _instruction(action="revoke"), _ctx())
+
+
+def test_member_lookup_encodes_the_email_for_the_filter() -> None:
+    """A "+" left as it is arrives at Ghost as a space: the member is not
+    found, the grant creates a second one, and Ghost answers 422 "Member
+    already exists"."""
+    client = StubHttpClient()
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+
+    adapter.apply_entitlement(_customer(email="name+tag@example.com"), _instruction(), _ctx())
+
+    lookup = client.get_calls[1]["url"]
+    assert "filter=email:'name%2Btag%40example.com'" in lookup
+    assert "+" not in str(lookup).split("filter=")[1]
+
+
+def test_paywall_check_encodes_the_email_for_the_filter() -> None:
+    client = StubHttpClient(get_response=_member_response(email="name+tag@example.com"))
+    adapter = GhostCmsAdapter(http_client=client, credential_provider=StubCredentialProvider())
+
+    adapter.paywall_check(email="name+tag@example.com", tenant_ctx=_ctx())
+
+    assert "filter=email:'name%2Btag%40example.com'" in str(client.get_calls[0]["url"])
+
+
 def test_revoke_for_an_unknown_email_creates_nothing() -> None:
     # This used to create the member, which invented a cancellation for someone
     # who never bought anything. Reachable through the revoke-everything path

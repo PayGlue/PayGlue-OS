@@ -139,6 +139,13 @@ def _process_inbound_webhook_event(event_id: int, ignore_timing: bool = False, s
 
     orchestrator = wiring.get_webhook_orchestrator()
     tenant_ctx = TenantContext(tenant_slug=event.tenant_slug)
+    # The signature is checked on the first attempt only. A failed check is
+    # terminal (InvalidWebhookSignatureError is not retried), so an event that
+    # reaches a second attempt has passed it. Checking again would compare a
+    # timestamped signature against the clock after the backoff, and from the
+    # second retry on that comparison fails for every provider that signs
+    # with a timestamp, hiding the error the first attempt actually hit.
+    verify = not skip_verification and event.attempts == 1
     try:
         orchestrator.process_webhook(
             payment_provider_key=event.provider,
@@ -146,7 +153,7 @@ def _process_inbound_webhook_event(event_id: int, ignore_timing: bool = False, s
             raw_body=bytes(event.payload_raw),
             headers=event.headers_snapshot,
             tenant_ctx=tenant_ctx,
-            skip_verification=skip_verification,
+            skip_verification=not verify,
         )
     except UnsupportedEventTypeError as exc:
         # Unsupported event types are silently skipped — not a failure, not retried.
