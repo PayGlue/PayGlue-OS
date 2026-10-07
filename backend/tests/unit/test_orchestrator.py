@@ -174,6 +174,25 @@ def test_orchestrator_short_circuits_when_event_is_duplicate() -> None:
     assert len(cms.applied) == 1
 
 
+def test_a_forced_run_processes_an_event_that_was_already_processed() -> None:
+    """A replay from the Events page. Without force the second run is a
+    duplicate and the CMS is never called, which made replaying a processed
+    event a silent no-op."""
+    payment = StubPaymentAdapter(event=make_event())
+    cms = StubCmsAdapter()
+    orchestrator = build_orchestrator(payment, cms)
+    tenant_ctx = TenantContext(tenant_slug="tenant-a")
+
+    orchestrator.process_webhook("polar", "ghost", b"{}", {}, tenant_ctx)
+    again = orchestrator.process_webhook("polar", "ghost", b"{}", {}, tenant_ctx, force=True)
+    third = orchestrator.process_webhook("polar", "ghost", b"{}", {}, tenant_ctx)
+
+    assert again.status == "processed"
+    assert len(cms.applied) == 2
+    # the forced run marks the record processed again, so a later redelivery is still dropped
+    assert third.status == "duplicate"
+
+
 def test_orchestrator_processes_event_and_applies_entitlements() -> None:
     payment = StubPaymentAdapter(event=make_event())
     cms = StubCmsAdapter()

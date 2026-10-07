@@ -5,10 +5,12 @@ class InMemoryIdempotencyStore:
         self._processing_keys: set[str] = set()
         self._processed_keys: set[str] = set()
 
-    def start_processing(self, idempotency_key: str) -> bool:
-        if idempotency_key in self._processed_keys:
+    def start_processing(self, idempotency_key: str, force: bool = False) -> bool:
+        if force:
+            self._processed_keys.discard(idempotency_key)
+        elif idempotency_key in self._processed_keys:
             return False
-        if idempotency_key in self._processing_keys:
+        elif idempotency_key in self._processing_keys:
             return False
 
         self._processing_keys.add(idempotency_key)

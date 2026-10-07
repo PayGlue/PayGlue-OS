@@ -145,6 +145,7 @@ def test_event_replay_permission_matrix(
                 event_id,
                 ignore_timing,
                 tenant_slug if isinstance(tenant_slug, str) else None,
+                kwargs.get("force"),
             )
         )
 
@@ -162,7 +163,9 @@ def test_event_replay_permission_matrix(
         assert event.attempts == 0
         assert event.next_attempt_at is None
         assert event.last_error == ""
-        assert queued == [(event.id, True, "tenant-a")]
+        # force: the replay takes the idempotency record over, otherwise a
+        # processed event comes back as a duplicate and Ghost is never called
+        assert queued == [(event.id, True, "tenant-a", True)]
     else:
         assert event.status == WebhookInboundEvent.Status.FAILED
         assert queued == []

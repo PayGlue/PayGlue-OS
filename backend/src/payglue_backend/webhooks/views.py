@@ -1520,6 +1520,12 @@ class TenantEventReplayView(APIView):
     # Applying an entitlement is idempotent: the Ghost adapter looks the member
     # up by email and updates rather than duplicates, so a second run over an
     # already-granted member changes nothing.
+    #
+    # The run has to actually happen, though. A processed event has an
+    # idempotency record saying so, and without `force` the orchestrator
+    # answered "duplicate" and the worker wrote "processed" again while Ghost
+    # was never called. Reported from the field after a cancellation that had
+    # been processed before a fix and left the member comped.
     _REPLAYABLE_STATUSES = {
         WebhookInboundEvent.Status.FAILED,
         WebhookInboundEvent.Status.DEAD_LETTER,
@@ -1583,6 +1589,7 @@ class TenantEventReplayView(APIView):
                 ignore_timing=True,
                 tenant_slug=tenant_slug,
                 skip_verification=True,
+                force=True,
             )
         except Exception:
             event.status = WebhookInboundEvent.Status.FAILED

@@ -39,6 +39,7 @@ class WebhookOrchestrator:
         headers: Mapping[str, str],
         tenant_ctx: TenantContext,
         skip_verification: bool = False,
+        force: bool = False,
     ) -> OrchestrationResult:
         payment_adapter = self._adapter_registry.get_payment(payment_provider_key)
         cms_adapter = self._adapter_registry.get_cms(cms_provider_key)
@@ -55,7 +56,7 @@ class WebhookOrchestrator:
         idempotency_key = self._build_idempotency_key(
             tenant_ctx.tenant_slug, event.provider, event.provider_event_id
         )
-        if not self._idempotency_store.start_processing(idempotency_key):
+        if not self._idempotency_store.start_processing(idempotency_key, force=force):
             return OrchestrationResult(
                 status="duplicate", event_id=event.provider_event_id, applied_count=0
             )

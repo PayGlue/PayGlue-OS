@@ -23,6 +23,23 @@ def test_db_idempotency_start_then_processed_and_duplicate_denied() -> None:
 
 
 @pytest.mark.django_db
+def test_db_idempotency_force_takes_over_a_processed_record() -> None:
+    store = DbIdempotencyStore()
+    key = "tenant-a:polar:evt_force"
+    assert store.start_processing(key) is True
+    store.mark_processed(key)
+    assert store.start_processing(key) is False
+
+    assert store.start_processing(key, force=True) is True
+    record = WebhookEventRecord.objects.get(idempotency_key=key)
+    assert record.status == WebhookEventRecord.Status.PROCESSING
+    assert record.processed_at is None
+
+    store.mark_processed(key)
+    assert store.start_processing(key) is False
+
+
+@pytest.mark.django_db
 def test_db_idempotency_release_allows_retry() -> None:
     store = DbIdempotencyStore()
     key = "tenant-a:polar:evt_retry"

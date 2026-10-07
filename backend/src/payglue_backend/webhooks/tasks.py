@@ -81,17 +81,26 @@ def process_inbound_webhook_event(
     ignore_timing: bool = False,
     tenant_slug: str | None = None,
     skip_verification: bool = False,
+    force: bool = False,
 ) -> None:
     # tenant_slug is accepted and ignored. It picked a Postgres schema to run
     # inside back when django_tenants was wired up, which PG-273 removed. The
     # parameter stays because tasks queued before a deploy are executed after
     # it, and dropping it would make those fail with a TypeError.
     _process_inbound_webhook_event(
-        event_id, ignore_timing=ignore_timing, skip_verification=skip_verification
+        event_id,
+        ignore_timing=ignore_timing,
+        skip_verification=skip_verification,
+        force=force,
     )
 
 
-def _process_inbound_webhook_event(event_id: int, ignore_timing: bool = False, skip_verification: bool = False) -> None:
+def _process_inbound_webhook_event(
+    event_id: int,
+    ignore_timing: bool = False,
+    skip_verification: bool = False,
+    force: bool = False,
+) -> None:
     now = timezone.now()
     with transaction.atomic():
         try:
@@ -147,13 +156,17 @@ def _process_inbound_webhook_event(event_id: int, ignore_timing: bool = False, s
     # with a timestamp, hiding the error the first attempt actually hit.
     verify = not skip_verification and event.attempts == 1
     try:
-        orchestrator.process_webhook(
+        result = orchestrator.process_webhook(
             payment_provider_key=event.provider,
             cms_provider_key=wiring.get_tenant_cms_provider_key(event.tenant_slug),
             raw_body=bytes(event.payload_raw),
             headers=event.headers_snapshot,
             tenant_ctx=tenant_ctx,
             skip_verification=not verify,
+            # A replay from the Events page takes the idempotency record over;
+            # a retry of that replay must not, or a provider redelivery that
+            # arrives between the two would be applied twice.
+            force=force and event.attempts == 1,
         )
     except UnsupportedEventTypeError as exc:
         # Unsupported event types are silently skipped — not a failure, not retried.
@@ -237,6 +250,24 @@ def _process_inbound_webhook_event(event_id: int, ignore_timing: bool = False, s
             # Terminal: no retry is coming. The creator hears about it now,
             # not at the nightly run (PG-319). Never raises.
             delivery_alerts.record_delivery_failure(event, exc)
+        return
+
+    if getattr(result, "status", None) == "duplicate":
+        # The provider delivered an event we had already processed. Nothing
+        # was applied, and saying "processed" here made that run look exactly
+        # like the one that did the work. Skipped, with the reason, is what
+        # happened. The row stays replayable.
+        _update_if_current_processing(
+            event_id=event.id,
+            attempts=event.attempts,
+            status=WebhookInboundEvent.Status.SKIPPED,
+            last_error=f"duplicate delivery: event {result.event_id} was already processed",
+            processed_at=None,
+            failed_at=None,
+            next_attempt_at=None,
+            dead_lettered_at=None,
+            updated_at=timezone.now(),
+        )
         return
 
     success_now = timezone.now()
