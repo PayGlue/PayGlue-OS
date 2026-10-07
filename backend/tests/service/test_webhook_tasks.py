@@ -31,6 +31,7 @@ def test_process_inbound_event_marks_processed_on_success(monkeypatch) -> None:
             headers: dict[str, str],
             tenant_ctx: TenantContext,
             skip_verification: bool = False,
+            force: bool = False,
         ) -> OrchestrationResult:
             assert payment_provider_key == "polar"
             assert cms_provider_key == "ghost"
@@ -103,6 +104,70 @@ def test_a_retry_does_not_verify_the_signature_again(monkeypatch) -> None:
 
 
 @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+def test_a_duplicate_delivery_is_recorded_as_skipped_not_processed(monkeypatch) -> None:
+    class DuplicateOrchestrator:
+        def process_webhook(self, **kwargs) -> OrchestrationResult:
+            return OrchestrationResult(status="duplicate", event_id="evt_1", applied_count=0)
+
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.wiring.get_webhook_orchestrator",
+        lambda: DuplicateOrchestrator(),
+    )
+    event = WebhookInboundEvent.objects.create(
+        tenant_slug="tenant-a",
+        provider="polar",
+        status=WebhookInboundEvent.Status.RECEIVED,
+        payload_raw=b"{}",
+        headers_snapshot={},
+        max_attempts=3,
+        endpoint_path="/t/tenant-a/webhooks/polar/endpoint-token/",
+    )
+
+    process_inbound_webhook_event.delay(event.id)
+
+    event.refresh_from_db()
+    assert event.status == WebhookInboundEvent.Status.SKIPPED
+    assert "duplicate delivery" in event.last_error
+    assert event.processed_at is None
+
+
+@override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+def test_a_replay_forces_the_run_but_its_retry_does_not(monkeypatch) -> None:
+    """The replay takes over the idempotency record. If that run fails and is
+    retried, the retry must not force again: the record was released on the
+    failure, so it claims it normally, and a provider redelivery that slipped
+    in between is not applied a second time."""
+    seen: list[bool] = []
+
+    class FailsOnceOrchestrator:
+        def process_webhook(self, *, force: bool = False, **kwargs) -> OrchestrationResult:
+            seen.append(force)
+            if len(seen) == 1:
+                raise CmsApplyEntitlementError("ghost returned status 500")
+            return OrchestrationResult(status="processed", event_id="evt_1", applied_count=1)
+
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.wiring.get_webhook_orchestrator",
+        lambda: FailsOnceOrchestrator(),
+    )
+    event = WebhookInboundEvent.objects.create(
+        tenant_slug="tenant-a",
+        provider="polar",
+        status=WebhookInboundEvent.Status.RECEIVED,
+        payload_raw=b"{}",
+        headers_snapshot={},
+        max_attempts=3,
+        endpoint_path="/t/tenant-a/webhooks/polar/endpoint-token/",
+    )
+
+    process_inbound_webhook_event.delay(event.id, ignore_timing=True, skip_verification=True, force=True)
+
+    event.refresh_from_db()
+    assert event.status == WebhookInboundEvent.Status.PROCESSED
+    assert seen == [True, False]
+
+
+@override_settings(CELERY_TASK_ALWAYS_EAGER=True)
 def test_process_inbound_event_retries_then_dead_letters(monkeypatch) -> None:
     class FailingOrchestrator:
         def process_webhook(
@@ -113,6 +178,7 @@ def test_process_inbound_event_retries_then_dead_letters(monkeypatch) -> None:
             headers: dict[str, str],
             tenant_ctx: TenantContext,
             skip_verification: bool = False,
+            force: bool = False,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             raise CmsApplyEntitlementError("ghost unavailable")
@@ -152,6 +218,7 @@ def test_process_inbound_event_ignores_already_processing_events(monkeypatch) ->
             headers: dict[str, str],
             tenant_ctx: TenantContext,
             skip_verification: bool = False,
+            force: bool = False,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             raise AssertionError("orchestrator should not run for processing event")
@@ -191,6 +258,7 @@ def test_process_inbound_event_recovers_stale_processing_events(monkeypatch) -> 
             headers: dict[str, str],
             tenant_ctx: TenantContext,
             skip_verification: bool = False,
+            force: bool = False,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             return OrchestrationResult(
@@ -245,6 +313,7 @@ def test_process_inbound_event_does_not_override_status_changed_by_other_worker(
             headers: dict[str, str],
             tenant_ctx: TenantContext,
             skip_verification: bool = False,
+            force: bool = False,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             WebhookInboundEvent.objects.filter(id=event.id).update(
@@ -276,6 +345,7 @@ def test_process_inbound_event_fails_for_non_active_tenant(monkeypatch) -> None:
             headers: dict[str, str],
             tenant_ctx: TenantContext,
             skip_verification: bool = False,
+            force: bool = False,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             raise AssertionError("orchestrator should not run for suspended tenant")
@@ -316,6 +386,7 @@ def test_process_inbound_event_marks_queue_publish_failure_on_retry_enqueue_erro
             headers: dict[str, str],
             tenant_ctx: TenantContext,
             skip_verification: bool = False,
+            force: bool = False,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             raise CmsApplyEntitlementError("ghost unavailable")
@@ -366,6 +437,7 @@ def test_process_inbound_event_uses_tenant_selected_cms_provider(monkeypatch) ->
             headers: dict[str, str],
             tenant_ctx: TenantContext,
             skip_verification: bool = False,
+            force: bool = False,
         ) -> OrchestrationResult:
             del payment_provider_key, raw_body, headers, tenant_ctx
             seen_cms_provider.append(cms_provider_key)

@@ -13,7 +13,12 @@ class DbIdempotencyStore:
     def __init__(self, processing_timeout_seconds: int = 600) -> None:
         self._processing_timeout = timedelta(seconds=processing_timeout_seconds)
 
-    def start_processing(self, idempotency_key: str) -> bool:
+    def start_processing(self, idempotency_key: str, force: bool = False) -> bool:
+        """Claim the key for one run. Returns False when another run already
+        processed it or is still on it, which is how a duplicate delivery from
+        the provider is dropped. `force` is the replay from the Events page:
+        the operator asked for the event to run again, so a processed or
+        in-flight record is taken over instead of refused."""
         tenant_slug, provider, provider_event_id = self._parse_idempotency_key(
             idempotency_key
         )
@@ -31,6 +36,13 @@ class DbIdempotencyStore:
                 )
             )
             if created:
+                return True
+
+            if force:
+                record.status = WebhookEventRecord.Status.PROCESSING
+                record.released_at = None
+                record.processed_at = None
+                record.save(update_fields=["status", "released_at", "processed_at", "updated_at"])
                 return True
 
             if record.status == WebhookEventRecord.Status.PROCESSED:

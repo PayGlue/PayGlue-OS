@@ -352,7 +352,9 @@ class GhostCmsAdapter:
         `comped: false` is meant to cancel it, but Ghost's member edit only
         loads the labels relation, so its check for an existing complimentary
         subscription comes back empty and the subscription stays. Verified on
-        Ghost 6.68. The member then keeps the tier, keeps `status: comped`, and
+        Ghost 6.68 and reported upstream as TryGhost/Ghost#31501; once that is
+        fixed and the fix is the oldest Ghost we support, this method can go.
+        The member then keeps the tier, keeps `status: comped`, and
         the paywall keeps letting them in. So after the edit we read the member
         back and cancel every active complimentary subscription ourselves,
         through the same Admin API endpoint the Ghost admin uses. Ghost syncs
