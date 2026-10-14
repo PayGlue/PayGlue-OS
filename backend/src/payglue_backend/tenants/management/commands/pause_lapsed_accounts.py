@@ -40,10 +40,12 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         dry_run = options["dry_run"]
-        cutoff = timezone.now() - timedelta(days=BillingAccount.GRACE_PERIOD_DAYS)
+        # Calendar days, like the reminders (lapse.grace_day): the pause falls
+        # on the night after the final warning, never on the same one.
+        cutoff = timezone.localdate() - timedelta(days=BillingAccount.GRACE_PERIOD_DAYS)
         due_accounts = BillingAccount.objects.filter(
             cancellation_detected_at__isnull=False,
-            cancellation_detected_at__lte=cutoff,
+            cancellation_detected_at__date__lte=cutoff,
             needs_admin_review=False,
             lapsed_at__isnull=True,
         ).select_related("owner", "plan")
@@ -53,7 +55,7 @@ class Command(BaseCommand):
             return
 
         for account in due_accounts:
-            days_over = (timezone.now() - account.cancellation_detected_at).days - BillingAccount.GRACE_PERIOD_DAYS
+            days_over = lapse.grace_day(account.cancellation_detected_at) - BillingAccount.GRACE_PERIOD_DAYS
             self.stdout.write(f"{account.owner.email}: grace period expired {days_over}d ago, pausing workspaces")
             if dry_run:
                 continue

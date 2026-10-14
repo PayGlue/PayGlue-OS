@@ -337,6 +337,29 @@ def test_day29_sends_final_warning_not_day15_reminder(monkeypatch: pytest.Monkey
     assert triggers == {"cancellation_final_warning"}
 
 
+def test_final_warning_goes_out_the_night_before_the_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PG-301: an end detected at 00:04, a job that runs at 00:00 on day 29.
+    In elapsed hours that is 28 days and 23 hours, so the warning would wait
+    a night and arrive together with the pause. Counted in calendar days it
+    is day 29, and the warning goes out on its own night."""
+    from datetime import datetime, timezone as dt_timezone
+
+    _enable("cancellation_final_warning")
+    account = _billing_account(
+        "night@example.com",
+        last_known_subscription_status="canceled",
+        cancellation_detected_at=datetime(2026, 9, 8, 0, 4, 42, tzinfo=dt_timezone.utc),
+    )
+    _creem_says(monkeypatch, {"id": "sub_123", "status": "canceled", "cancel_at_period_end": False})
+    monkeypatch.setattr(
+        "django.utils.timezone.now", lambda: datetime(2026, 10, 7, 0, 0, 17, tzinfo=dt_timezone.utc)
+    )
+
+    call_command("send_lifecycle_emails")
+
+    assert LifecycleEmailLog.objects.filter(billing_account=account, trigger="cancellation_final_warning").count() == 1
+
+
 def test_reminder_repeats_for_a_second_lapse(monkeypatch: pytest.MonkeyPatch) -> None:
     """Once per phase, not once per account: a customer who lapsed last year
     and lapses again gets the day-15 reminder again."""
