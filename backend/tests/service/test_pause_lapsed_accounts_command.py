@@ -50,6 +50,47 @@ def _due(**kwargs) -> BillingAccount:
     return _billing_account(kwargs.pop("email", "due@example.com"), **kwargs)
 
 
+def test_pause_falls_on_day_30_whatever_minute_the_job_starts(monkeypatch) -> None:
+    """PG-301: detected at 00:04, the job runs at 00:00 on day 30. In elapsed
+    hours that is four minutes short of 30 days; in calendar days it is day
+    30, and the account is paused that night, one night after the final
+    warning."""
+    from datetime import datetime, timezone as dt_timezone
+
+    account = _billing_account(
+        "minute@example.com",
+        cancellation_detected_at=datetime(2026, 9, 8, 0, 4, 42, tzinfo=dt_timezone.utc),
+    )
+    tenant = _tenant(account, "minute-tenant")
+    monkeypatch.setattr(
+        "django.utils.timezone.now", lambda: datetime(2026, 10, 8, 0, 0, 17, tzinfo=dt_timezone.utc)
+    )
+
+    call_command("pause_lapsed_accounts")
+
+    account.refresh_from_db()
+    tenant.refresh_from_db()
+    assert account.lapsed_at is not None
+    assert tenant.status == Tenant.Status.PAUSED
+
+
+def test_day_29_is_not_paused_yet(monkeypatch) -> None:
+    from datetime import datetime, timezone as dt_timezone
+
+    account = _billing_account(
+        "early@example.com",
+        cancellation_detected_at=datetime(2026, 9, 8, 23, 50, tzinfo=dt_timezone.utc),
+    )
+    monkeypatch.setattr(
+        "django.utils.timezone.now", lambda: datetime(2026, 10, 7, 23, 59, tzinfo=dt_timezone.utc)
+    )
+
+    call_command("pause_lapsed_accounts")
+
+    account.refresh_from_db()
+    assert account.lapsed_at is None
+
+
 def test_dry_run_changes_nothing() -> None:
     account = _due()
     tenant = _tenant(account, "dry-tenant")

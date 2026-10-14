@@ -28,6 +28,20 @@ from django.utils import timezone
 
 from payglue_backend.tenants.models import BillingAccount, Tenant
 
+def grace_day(cancellation_detected_at, now=None) -> int:
+    """PG-301: which day of the grace period an account is on, counted in
+    calendar days, not in elapsed 24-hour blocks.
+
+    The nightly job both detects the end of a subscription and later acts on
+    it, and it does not start at the same second every night. Counted in
+    elapsed hours, an end detected at 00:04 is only 28 days and 23 hours old
+    when the job runs at 00:00 on day 29, so the final warning would wait a
+    night and go out seconds before the pause. Calendar days give every step
+    its own night, whatever minute the job starts."""
+    now = now or timezone.now()
+    return (timezone.localdate(now) - timezone.localdate(cancellation_detected_at)).days
+
+
 ALIVE_STATUSES = frozenset({"active", "trialing", "scheduled_cancel"})
 RETRYING_STATUSES = frozenset({"past_due"})
 ENDED_STATUSES = frozenset({"unpaid", "canceled", "cancelled", "paused", "expired", "inactive"})

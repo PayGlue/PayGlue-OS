@@ -245,7 +245,7 @@ class Command(BaseCommand):
         ).select_related("owner", "plan")
 
         for account in due_accounts:
-            days = (timezone.now() - account.cancellation_detected_at).days
+            days = lapse.grace_day(account.cancellation_detected_at)
             if days >= BillingAccount.GRACE_PERIOD_DAYS - 1:
                 self._send_reminder_once(account, Trigger.CANCELLATION_FINAL_WARNING, dry_run)
             elif days >= 15:
