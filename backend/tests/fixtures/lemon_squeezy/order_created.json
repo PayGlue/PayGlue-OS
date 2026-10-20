@@ -1,0 +1,115 @@
+{
+  "data": {
+    "attributes": {
+      "affiliate_id": null,
+      "created_at": "2026-10-20T20:56:47.000000Z",
+      "currency": "EUR",
+      "currency_rate": "1.12346044",
+      "customer_id": 10198907,
+      "discount_total": 0,
+      "discount_total_formatted": "\u20ac0.00",
+      "discount_total_usd": 0,
+      "first_order_item": {
+        "created_at": "2026-10-20T20:56:48.000000Z",
+        "id": 9733854,
+        "order_id": 9811494,
+        "price": 999,
+        "price_id": 3824448,
+        "product_id": 62660,
+        "product_name": "Membership",
+        "quantity": 1,
+        "test_mode": true,
+        "updated_at": "2026-10-20T20:56:48.000000Z",
+        "variant_id": 2274371,
+        "variant_name": "Yearly"
+      },
+      "identifier": "00000000-0000-0000-0000-000000000001",
+      "order_number": 223293,
+      "referral_amount": null,
+      "refunded": false,
+      "refunded_amount": 0,
+      "refunded_amount_formatted": "\u20ac0.00",
+      "refunded_amount_usd": 0,
+      "refunded_at": null,
+      "setup_fee": 0,
+      "setup_fee_formatted": "\u20ac0.00",
+      "setup_fee_usd": 0,
+      "status": "paid",
+      "status_formatted": "Paid",
+      "store_id": 22329,
+      "subtotal": 999,
+      "subtotal_formatted": "\u20ac9.99",
+      "subtotal_usd": 1122,
+      "tax": 0,
+      "tax_formatted": "\u20ac0.00",
+      "tax_inclusive": true,
+      "tax_name": "VAT",
+      "tax_rate": 0,
+      "tax_usd": 0,
+      "test_mode": true,
+      "total": 999,
+      "total_formatted": "\u20ac9.99",
+      "total_usd": 1122,
+      "updated_at": "2026-10-20T20:56:48.000000Z",
+      "urls": {
+        "receipt": "https://example.lemonsqueezy.com/redacted"
+      },
+      "user_email": "reader@example.com",
+      "user_name": "Test Reader"
+    },
+    "id": "9811494",
+    "links": {
+      "self": "https://api.lemonsqueezy.com/redacted"
+    },
+    "relationships": {
+      "affiliate": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      },
+      "customer": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      },
+      "discount-redemptions": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      },
+      "license-keys": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      },
+      "order-items": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      },
+      "store": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      },
+      "subscriptions": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      }
+    },
+    "type": "orders"
+  },
+  "meta": {
+    "event_name": "order_created",
+    "test_mode": true,
+    "webhook_id": "00000000-0000-0000-0000-000000000000"
+  }
+}
