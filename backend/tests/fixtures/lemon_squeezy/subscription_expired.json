@@ -1,0 +1,104 @@
+{
+  "data": {
+    "attributes": {
+      "billing_anchor": 20,
+      "cancelled": true,
+      "card_brand": "visa",
+      "card_last_four": "4242",
+      "created_at": "2026-10-20T20:56:44.000000Z",
+      "customer_id": 10198907,
+      "ends_at": "2026-10-20T21:10:38.000000Z",
+      "first_subscription_item": {
+        "created_at": "2026-10-20T20:56:49.000000Z",
+        "id": 10478540,
+        "is_usage_based": false,
+        "price_id": 3824448,
+        "quantity": 1,
+        "subscription_id": 2624151,
+        "updated_at": "2026-10-20T20:57:18.000000Z"
+      },
+      "order_id": 9811494,
+      "order_item_id": 9733854,
+      "pause": null,
+      "payment_processor": "stripe",
+      "product_id": 62660,
+      "product_name": "Membership",
+      "renews_at": "2027-10-20T20:56:43.000000Z",
+      "status": "expired",
+      "status_formatted": "Expired",
+      "store_id": 22329,
+      "test_mode": true,
+      "trial_ends_at": null,
+      "updated_at": "2026-10-20T21:10:38.000000Z",
+      "urls": {
+        "customer_portal": "https://example.lemonsqueezy.com/redacted",
+        "customer_portal_update_subscription": "https://example.lemonsqueezy.com/redacted",
+        "update_payment_method": "https://example.lemonsqueezy.com/redacted"
+      },
+      "user_email": "reader@example.com",
+      "user_name": "Test Reader",
+      "variant_id": 2274371,
+      "variant_name": "Yearly"
+    },
+    "id": "2624151",
+    "links": {
+      "self": "https://api.lemonsqueezy.com/redacted"
+    },
+    "relationships": {
+      "customer": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      },
+      "order": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      },
+      "order-item": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      },
+      "product": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      },
+      "store": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      },
+      "subscription-invoices": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      },
+      "subscription-items": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      },
+      "variant": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      }
+    },
+    "type": "subscriptions"
+  },
+  "meta": {
+    "event_name": "subscription_expired",
+    "test_mode": true,
+    "webhook_id": "00000000-0000-0000-0000-000000000000"
+  }
+}

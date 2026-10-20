@@ -1,0 +1,80 @@
+{
+  "data": {
+    "attributes": {
+      "affiliate_id": null,
+      "billing_reason": "initial",
+      "card_brand": "visa",
+      "card_last_four": "4242",
+      "created_at": "2026-10-20T20:27:37.000000Z",
+      "currency": "EUR",
+      "currency_rate": "1.12367505",
+      "customer_id": 10198724,
+      "discount_total": 0,
+      "discount_total_formatted": "\u20ac0.00",
+      "discount_total_usd": 0,
+      "referral_amount": null,
+      "refunded": false,
+      "refunded_amount": 0,
+      "refunded_amount_formatted": "\u20ac0.00",
+      "refunded_amount_usd": 0,
+      "refunded_at": null,
+      "status": "paid",
+      "status_formatted": "Paid",
+      "store_id": 22329,
+      "subscription_id": 2624085,
+      "subtotal": 999,
+      "subtotal_formatted": "\u20ac9.99",
+      "subtotal_usd": 1122,
+      "tax": 0,
+      "tax_formatted": "\u20ac0.00",
+      "tax_inclusive": true,
+      "tax_usd": 0,
+      "test_mode": true,
+      "total": 999,
+      "total_formatted": "\u20ac9.99",
+      "total_usd": 1122,
+      "updated_at": "2026-10-20T20:27:42.000000Z",
+      "urls": {
+        "invoice_url": "https://example.lemonsqueezy.com/redacted"
+      },
+      "user_email": "reader@example.com",
+      "user_name": "Test Reader"
+    },
+    "id": "8776603",
+    "links": {
+      "self": "https://api.lemonsqueezy.com/redacted"
+    },
+    "relationships": {
+      "affiliate": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      },
+      "customer": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      },
+      "store": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      },
+      "subscription": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/redacted",
+          "self": "https://api.lemonsqueezy.com/redacted"
+        }
+      }
+    },
+    "type": "subscription-invoices"
+  },
+  "meta": {
+    "event_name": "subscription_payment_success",
+    "test_mode": true,
+    "webhook_id": "00000000-0000-0000-0000-000000000000"
+  }
+}

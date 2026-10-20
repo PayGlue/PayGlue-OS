@@ -27,11 +27,19 @@ _EVENT_MAP = {
     "subscription_updated": "subscription.active",
     "subscription_resumed": "subscription.active",
     "subscription_unpaused": "subscription.active",
-    "subscription_payment_success": "order.paid",
     "subscription_cancelled": "subscription.canceled",
     "subscription_paused": "subscription.canceled",
     "subscription_expired": "subscription.revoked",
 }
+# subscription_payment_success is not in the map. Its data is a subscription
+# invoice, which names no variant, so it could never be matched to a rule and
+# failed as an invalid payload. The subscription events carry the state that
+# matters; a renewal arrives as subscription_updated with status active.
+
+# What a subscription_updated means depends on the status it reports
+# (PG-337). Lemon Squeezy sends it next to nearly every other
+# subscription event, including the cancellation and the expiry.
+_ACTIVE_STATUSES = frozenset({"active", "on_trial"})
 
 
 class LemonSqueezyPaymentAdapter:
@@ -163,6 +171,20 @@ class LemonSqueezyPaymentAdapter:
         customer_id_raw = attrs.get("customer_id")
         customer_id = str(customer_id_raw) if customer_id_raw is not None else None
 
+        if event_name != "order_created":
+            # PG-337: Lemon Squeezy sends no id of its own for a webhook, and
+            # data.id is the subscription. Used alone as the event id, it made
+            # every later event for the same subscription a duplicate of the
+            # first one, so a cancellation or an expiry was dropped and the
+            # reader kept access. The event name and the subscription's
+            # updated_at tell the events apart, and a redelivery of the same
+            # event still carries the same pair.
+            updated_at = attrs.get("updated_at")
+            event_id = f"{event_id}:{event_name}"
+            if isinstance(updated_at, str) and updated_at:
+                event_id = f"{event_id}:{updated_at}"
+            canonical_type = self._subscription_outcome(event_name, attrs)
+
         if event_name == "order_created":
             return self._parse_order(
                 attrs=attrs,
@@ -269,6 +291,61 @@ class LemonSqueezyPaymentAdapter:
             ),
             status=status,
         )
+
+    def _subscription_outcome(self, event_name: str, attrs: dict) -> str:
+        """The canonical event a subscription webhook stands for, or a skip.
+
+        A skip is raised as UnsupportedEventTypeError, because doing nothing is
+        the correct outcome, not an error to retry.
+        """
+        status = attrs.get("status")
+        ends_at = attrs.get("ends_at")
+        ends_at = ends_at if isinstance(ends_at, str) and ends_at else None
+
+        if event_name == "subscription_cancelled" or (
+            event_name == "subscription_updated" and status == "cancelled"
+        ):
+            # A cancellation runs to the end of the paid period. The reader
+            # paid through ends_at and keeps access until then, and Lemon
+            # Squeezy sends subscription_expired when it is over. Only a
+            # cancellation whose period has already run out ends access here.
+            if self._still_running(ends_at):
+                raise UnsupportedEventTypeError(
+                    "cancellation runs to the end of the paid period, "
+                    f"access runs until {ends_at}"
+                )
+            return "subscription.revoked"
+
+        if event_name == "subscription_paused":
+            # A pause in "free" mode keeps the reader's access while billing
+            # stops. Only a "void" pause takes it away.
+            pause = attrs.get("pause")
+            if isinstance(pause, dict) and pause.get("mode") == "free":
+                raise UnsupportedEventTypeError("paused with free access, access stays")
+            return "subscription.canceled"
+
+        if event_name == "subscription_updated":
+            if status in _ACTIVE_STATUSES:
+                return "subscription.active"
+            if status == "expired":
+                return "subscription.revoked"
+            # past_due and unpaid are payment retries, paused has its own
+            # event. None of them changes access by itself; an expiry follows
+            # if the retries fail.
+            raise UnsupportedEventTypeError(f"subscription_updated with status {status!r}")
+
+        return _EVENT_MAP[event_name]
+
+    def _still_running(self, ends_at: str | None) -> bool:
+        """True while the paid period has not run out. A missing or unreadable
+        date counts as running: keeping access until the expiry event is the
+        safe side, taking it early is not."""
+        if not ends_at:
+            return True
+        try:
+            return self._parse_iso8601(ends_at) > self._now()
+        except InvalidWebhookPayloadError:
+            return True
 
     def supports_event(self, event_type: str) -> bool:
         return event_type in self._supported_events
