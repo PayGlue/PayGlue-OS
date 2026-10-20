@@ -7,7 +7,7 @@ import ipaddress
 import json
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from urllib import error, request
@@ -117,6 +117,38 @@ def _filter_value(value: str) -> str:
 def _slugify(value: str) -> str:
     normalized = re.sub(r"[._\s]+", "-", value.lower().strip())
     return re.sub(r"[^a-z0-9-]", "", normalized).strip("-")
+
+
+ACTIVE_LABEL = "payglue-active"
+ENDED_LABEL = "payglue-ended"
+PRODUCT_PREFIX = "product:"
+
+
+def _label_names(member: Mapping[str, object] | None) -> list[str]:
+    """The names of the labels a member carries, in Ghost's order."""
+    raw = member.get("labels") if member else None
+    if not isinstance(raw, list):
+        return []
+    names: list[str] = []
+    for label in raw:
+        name = label.get("name") if isinstance(label, dict) else label
+        if isinstance(name, str) and name and name not in names:
+            names.append(name)
+    return names
+
+
+def _is_active_label(name: str) -> bool:
+    # payglue-active:<provider> is the shape from before PG-229. There is no
+    # backfill in customer publications, so it still counts.
+    return name == ACTIVE_LABEL or name.startswith(f"{ACTIVE_LABEL}:")
+
+
+def _is_status_label(name: str) -> bool:
+    return name == ENDED_LABEL or _is_active_label(name)
+
+
+def _as_labels(names: Sequence[str]) -> list[dict[str, str]]:
+    return [{"name": name} for name in dict.fromkeys(n for n in names if n)]
 
 
 class GhostCmsAdapter:
@@ -251,7 +283,43 @@ class GhostCmsAdapter:
         found = self._find_member(members_url, email, headers)
         member_id = str(found["id"]) if found and found.get("id") else None
         existing_note = str(found.get("note") or "") if found else ""
-        if not is_grant:
+
+        # PG-336: a member can hold more than one product, and Ghost knows only
+        # one kind of access per member (comped, or the payglue-active label).
+        # What tells the products apart is the product labels. While a member
+        # is active, their product labels are exactly the products that carry
+        # that access, so an ending for one product checks the others before it
+        # takes anything away.
+        #
+        # Ghost replaces a member's labels with the list an edit sends, so the
+        # write starts from what the member already carries. Sending only our
+        # own labels used to wipe the label of an earlier product, and any label
+        # the publisher had added by hand, on every purchase.
+        existing_labels = _label_names(found)
+        product_label = f"{PRODUCT_PREFIX}{_slugify(instruction.entitlement_key)}"
+        is_active = any(_is_active_label(name) for name in existing_labels)
+        held_products = (
+            [n for n in existing_labels if n.startswith(PRODUCT_PREFIX)] if is_active else []
+        )
+        other_products = [n for n in held_products if n != product_label]
+        own_labels = [label["name"] for label in labels]
+        member_update: dict[str, object] | None = None
+        keeps_other_access = False
+
+        if is_grant:
+            # On an ended member the product labels describe purchases that are
+            # over. They go, or a later ending would mistake them for access
+            # the member still has.
+            kept = [
+                n
+                for n in existing_labels
+                if not _is_status_label(n) and (is_active or not n.startswith(PRODUCT_PREFIX))
+            ]
+            labels = _as_labels(kept + own_labels)
+            if other_products:
+                # The earlier purchase still carries access, so its lines stay.
+                note = self._with_purchase_lines(existing_note, note)
+        else:
             if member_id is None:
                 # Creating a member here would invent a cancellation for someone
                 # who never bought anything. Reachable through the
@@ -259,10 +327,38 @@ class GhostCmsAdapter:
                 # on a cancellation.
                 logger.info("ghost revoke skipped, no member for email=%s", email)
                 return
-            # An ending adds a line, it does not replace the purchase note. What
-            # was bought and under which order stays readable, which is the
-            # whole point of looking at a cancelled member months later.
-            note = self._with_ended_line(existing_note or note, meta.get("_occurred_at"), event_id)
+            if other_products:
+                if product_label not in held_products:
+                    # Nothing of this product to take back, and another product
+                    # still carries the access. The revoke-everything path for
+                    # providers that do not name the tier lands here for every
+                    # product the member never bought.
+                    logger.info(
+                        "ghost revoke skipped, %s not held by member id=%s",
+                        product_label,
+                        member_id,
+                    )
+                    return
+                # Only this product ends. The member keeps comped, keeps the
+                # status label and keeps the Complimentary subscription,
+                # because the other products are still paid for.
+                keeps_other_access = True
+                labels = _as_labels([n for n in existing_labels if n != product_label])
+                note = self._with_line(
+                    existing_note or note,
+                    self._stamped_line(f"Ended {product_label}", meta.get("_occurred_at"), event_id)
+                    or f"Ended {product_label}",
+                )
+                member_update = {"labels": labels, "note": note}
+            else:
+                labels = _as_labels(
+                    [n for n in existing_labels if not _is_status_label(n)] + own_labels
+                )
+                # An ending adds a line, it does not replace the purchase note.
+                # What was bought and under which order stays readable, which
+                # is the whole point of looking at a cancelled member months
+                # later.
+                note = self._with_ended_line(existing_note or note, meta.get("_occurred_at"), event_id)
 
         try:
             if member_id is None:
@@ -325,7 +421,12 @@ class GhostCmsAdapter:
                     # The note travels with the update from PG-271 on. Without
                     # it an ending had nowhere to record its date, and a repeat
                     # purchase left the previous ending standing as a lie.
-                    json_body={"members": [{"comped": comped, "labels": labels, "note": note}]},
+                    json_body={
+                        "members": [
+                            member_update
+                            or {"comped": comped, "labels": labels, "note": note}
+                        ]
+                    },
                     headers=headers,
                 )
                 logger.info("ghost update member response status=%s", response.status_code)
@@ -339,7 +440,7 @@ class GhostCmsAdapter:
                 f"ghost returned status {response.status_code}"
             )
 
-        if not is_grant and stripe_connected and member_id is not None:
+        if not is_grant and not keeps_other_access and stripe_connected and member_id is not None:
             self._end_complimentary_access(members_url, member_id, headers)
 
     def _end_complimentary_access(
@@ -432,13 +533,41 @@ class GhostCmsAdapter:
             return ""
         return " | ".join(parts)
 
+    @staticmethod
+    def _fit_note(lines: list[str]) -> str:
+        """Ghost caps the note at 500 characters. The newest facts are at the
+        bottom, so the oldest lines give way first."""
+        kept = list(dict.fromkeys(line for line in lines if line))
+        while len(kept) > 1 and len("\n".join(kept)) > _NOTE_MAX_CHARS:
+            kept.pop(0)
+        return "\n".join(kept)[:_NOTE_MAX_CHARS]
+
+    @classmethod
+    def _with_line(cls, note: str, line: str) -> str:
+        """Add one line under the existing note."""
+        return cls._fit_note([*note.splitlines(), line])
+
+    @classmethod
+    def _with_purchase_lines(cls, existing: str, purchase: str) -> str:
+        """Add a second purchase under the first instead of replacing it, for
+        a member who already holds another product (PG-336). A line both notes
+        share, like the header, appears once."""
+        return cls._fit_note([*existing.splitlines(), *purchase.splitlines()])
+
     @classmethod
     def _with_ended_line(cls, note: str, occurred_at: object, event_id: str) -> str:
         """Add the end date under the purchase lines, replacing an earlier one
         rather than stacking."""
         ended = cls._stamped_line("Ended", occurred_at, event_id) or "Ended"
 
-        kept = [line for line in note.splitlines() if line and not line.startswith("Ended")]
+        # Only the member's own end line is replaced. "Ended product:..." lines
+        # record a single product ending while others carried on (PG-336) and
+        # stay as history.
+        kept = [
+            line
+            for line in note.splitlines()
+            if line and not (line == "Ended" or line.startswith(("Ended:", "Ended |")))
+        ]
         # Ghost caps the note at 500 characters. The end date is the newest fact,
         # so it displaces the oldest line instead of pushing the write over.
         while kept and len("\n".join([*kept, ended])) > _NOTE_MAX_CHARS:

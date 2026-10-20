@@ -334,6 +334,10 @@ class LifecycleEmailTemplate(models.Model):
         # nobody a right to object, so it is a different letter.
         SUBPROCESSOR_ADDED = "subprocessor_added", "subprocessor_added"
         SUBPROCESSOR_REMOVED = "subprocessor_removed", "subprocessor_removed"
+        # PG-335: the text for a notice that the Terms, the Privacy Policy or
+        # the DPA changed. Same mechanism as the sub-processor notices: never
+        # fired by an event, turned into a Broadcast draft from the admin.
+        TERMS_UPDATED = "terms_updated", "terms_updated"
         # Onboarding sequence. Unlike the triggers above these fire once per
         # account and never again, which the partial constraint on
         # LifecycleEmailLog enforces rather than trusting every caller to
@@ -351,7 +355,9 @@ class LifecycleEmailTemplate(models.Model):
             "$count and $since; the owner_transfer_* triggers expose "
             "$tenant, $url, $new_owner and $previous_owner; the subprocessor_* "
             "triggers expose $name, $purpose, $location, $website, "
-            "$effective_date and $url (the public sub-processor list). "
+            "$effective_date and $url (the public sub-processor list); "
+            "terms_updated exposes $documents, $changes, $effective_date, "
+            "$terms_url, $privacy_url and $dpa_url. "
             "Missing/unknown placeholders are left as-is, never crash the send."
         )
     )
