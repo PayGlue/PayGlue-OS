@@ -144,3 +144,14 @@ def test_get_tenant_cms_provider_key_falls_back_for_unsupported_config() -> None
     provider_key = wiring.get_tenant_cms_provider_key("tenant-a")
 
     assert provider_key == "ghost"
+
+
+def test_wiring_supports_dodo_payment_provider() -> None:
+    from payglue_backend.webhooks.adapters.dodo import DodoPaymentAdapter
+
+    assert "dodo" in wiring.get_supported_payment_provider_keys()
+    assert isinstance(wiring.get_payment_adapter("dodo"), DodoPaymentAdapter)
+
+    wiring._orchestrator = None
+    orchestrator = wiring.get_webhook_orchestrator()
+    assert isinstance(orchestrator._adapter_registry.get_payment("dodo"), DodoPaymentAdapter)

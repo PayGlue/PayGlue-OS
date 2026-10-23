@@ -125,14 +125,14 @@ export interface PricingTableData {
 }
 
 export interface IntegrationConfig {
-  provider_key: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'cms'
+  provider_key: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'cms'
   enabled: boolean
   provider_type: string
   metadata: Record<string, unknown>
 }
 
 export interface IntegrationCredentialWriteResult {
-  provider_key: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'cms'
+  provider_key: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'cms'
   provider_type: string
   credential_ref: {
     backend: string

@@ -11,9 +11,19 @@ from payglue_backend.core.models import TenantContext
 
 
 class FernetCipher:
-    def __init__(self, key: str | None = None) -> None:
+    """Encrypts with the current key and decrypts with any configured key.
+
+    CREDENTIAL_ENCRYPTION_KEY is the current key. During a key change the old
+    one goes into CREDENTIAL_ENCRYPTION_KEY_PREVIOUS, so stored values stay
+    readable until `rotate_credential_key` has re-encrypted them. After that
+    the previous key is removed again.
+    """
+
+    def __init__(
+        self, key: str | None = None, previous_keys: list[str] | None = None
+    ) -> None:
         try:
-            from cryptography.fernet import Fernet, InvalidToken
+            from cryptography.fernet import Fernet, InvalidToken, MultiFernet
         except ImportError as exc:  # pragma: no cover - depends on runtime install
             raise RuntimeError(
                 "cryptography package is required for encrypted credentials"
@@ -23,23 +33,52 @@ class FernetCipher:
         resolved_key = key or getattr(settings, "CREDENTIAL_ENCRYPTION_KEY", "")
         if not isinstance(resolved_key, str) or not resolved_key:
             raise ValueError("CREDENTIAL_ENCRYPTION_KEY must be configured")
+        if previous_keys is None:
+            previous_keys = getattr(settings, "CREDENTIAL_ENCRYPTION_KEY_PREVIOUS", [])
+
+        self._current = self._fernet(Fernet, resolved_key, "CREDENTIAL_ENCRYPTION_KEY")
+        previous = [
+            self._fernet(Fernet, k, "CREDENTIAL_ENCRYPTION_KEY_PREVIOUS")
+            for k in previous_keys
+            if k and k != resolved_key
+        ]
+        self._multi = MultiFernet([self._current, *previous])
+
+    @staticmethod
+    def _fernet(fernet_type: Any, key: str, name: str) -> Any:
         # Fernet requires exact base64 padding; add it if missing
-        padded_key = resolved_key + "=" * (-len(resolved_key) % 4)
+        padded_key = key + "=" * (-len(key) % 4)
         try:
-            self._fernet = Fernet(padded_key.encode("utf-8"))
+            return fernet_type(padded_key.encode("utf-8"))
         except Exception as exc:
-            raise ValueError("Invalid CREDENTIAL_ENCRYPTION_KEY") from exc
+            raise ValueError(f"Invalid {name}") from exc
 
     def encrypt(self, plaintext: str) -> str:
-        token = self._fernet.encrypt(plaintext.encode("utf-8"))
+        token = self._multi.encrypt(plaintext.encode("utf-8"))
         return token.decode("ascii")
 
     def decrypt(self, ciphertext: str) -> str:
         try:
-            decrypted = self._fernet.decrypt(ciphertext.encode("utf-8"))
+            decrypted = self._multi.decrypt(ciphertext.encode("utf-8"))
         except self._invalid_token_type as exc:
             raise ValueError("Invalid encrypted credential value") from exc
         return decrypted.decode("utf-8")
+
+    def is_current(self, ciphertext: str) -> bool:
+        """True when the value is already encrypted with the current key."""
+        try:
+            self._current.decrypt(ciphertext.encode("utf-8"))
+        except self._invalid_token_type:
+            return False
+        return True
+
+    def rotate(self, ciphertext: str) -> str:
+        """Re-encrypt a stored value with the current key."""
+        try:
+            token = self._multi.rotate(ciphertext.encode("utf-8"))
+        except self._invalid_token_type as exc:
+            raise ValueError("Invalid encrypted credential value") from exc
+        return token.decode("ascii")
 
 
 class EnvCredentialProvider:
@@ -140,6 +179,12 @@ class EnvCredentialProvider:
 
         return credentials
 
+    def delete_credentials(self, tenant_ctx: TenantContext, provider_key: str) -> bool:
+        tenant_config = self._config.get(tenant_ctx.tenant_slug)
+        if isinstance(tenant_config, dict):
+            return tenant_config.pop(provider_key, None) is not None
+        return False
+
 
 class DbCredentialProvider:
     def __init__(self, cipher: "FernetCipher | None" = None) -> None:
@@ -212,6 +257,15 @@ class DbCredentialProvider:
             raise self._missing(tenant_ctx.tenant_slug, provider_key)
 
         return {k: v for k, v in credentials.items() if isinstance(k, str) and isinstance(v, str)}
+
+    def delete_credentials(self, tenant_ctx: TenantContext, provider_key: str) -> bool:
+        from payglue_backend.webhooks.models import TenantProviderCredential
+
+        deleted, _ = TenantProviderCredential.objects.filter(
+            tenant_slug=tenant_ctx.tenant_slug,
+            provider_key=provider_key,
+        ).delete()
+        return deleted > 0
 
 
 class FirestoreCredentialProvider:
@@ -316,3 +370,10 @@ class FirestoreCredentialProvider:
         if not credentials:
             raise self._missing(tenant_ctx.tenant_slug, provider_key)
         return credentials
+
+    def delete_credentials(self, tenant_ctx: TenantContext, provider_key: str) -> bool:
+        doc_ref = self._doc_ref(tenant_ctx.tenant_slug, provider_key)
+        existed = bool(getattr(doc_ref.get(), "exists", False))
+        if existed:
+            doc_ref.delete()
+        return existed

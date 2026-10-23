@@ -401,6 +401,13 @@ FIRESTORE_CREDENTIALS_COLLECTION = os.environ.get(
     "FIRESTORE_CREDENTIALS_COLLECTION", "tenant_provider_credentials"
 )
 CREDENTIAL_ENCRYPTION_KEY = os.environ.get("CREDENTIAL_ENCRYPTION_KEY", "")
+# Only set while the key is being changed: the old key(s), comma separated,
+# used for reading until rotate_credential_key has re-encrypted everything.
+CREDENTIAL_ENCRYPTION_KEY_PREVIOUS = [
+    k.strip()
+    for k in os.environ.get("CREDENTIAL_ENCRYPTION_KEY_PREVIOUS", "").split(",")
+    if k.strip()
+]
 INTERNAL_API_SECRET = os.environ.get("INTERNAL_API_SECRET", "")
 DB_CREDENTIALS_ENABLED = os.environ.get("DB_CREDENTIALS_ENABLED", "1") == "1"
 WEBHOOK_MAX_BODY_BYTES = int(os.environ.get("WEBHOOK_MAX_BODY_BYTES", "65536"))

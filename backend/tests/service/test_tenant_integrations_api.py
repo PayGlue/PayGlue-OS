@@ -270,6 +270,10 @@ class _CapturingCredentialProvider:
             "masked_keys": sorted(credentials.keys()),
         }
 
+    def delete_credentials(self, tenant_ctx, provider_key: str) -> bool:
+        del tenant_ctx, provider_key
+        return False
+
 
 @pytest.mark.parametrize(
     ("role", "can_write"),
@@ -636,3 +640,92 @@ def test_integration_config_rejects_provider_type_mismatched_with_provider_key(
     )
 
     assert response.status_code == 400
+
+
+# -- Disconnect ----------------------------------------------------------------
+
+
+def _db_credentials(monkeypatch: pytest.MonkeyPatch):
+    from cryptography.fernet import Fernet
+
+    from payglue_backend.core.models import TenantContext
+    from payglue_backend.webhooks.credentials import DbCredentialProvider, FernetCipher
+
+    provider = DbCredentialProvider(cipher=FernetCipher(Fernet.generate_key().decode(), previous_keys=[]))
+    monkeypatch.setattr("payglue_backend.webhooks.wiring.get_credential_provider", lambda: provider)
+    provider.set_credentials(TenantContext(tenant_slug="tenant-a"), "polar", {"api_token": "polar_secret"})
+    IntegrationConfig.objects.create(
+        tenant_slug="tenant-a", provider_key="polar", enabled=True, provider_type="polar",
+        metadata={"credential_ref": {"backend": "db", "masked_keys": ["api_token"]}},
+    )
+
+
+def test_disconnect_deletes_credentials_and_connection_but_keeps_mappings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from payglue_backend.tenants.models import PublicAuditEvent
+    from payglue_backend.webhooks.models import ProductMapping, TenantProviderCredential
+
+    client = Client()
+    headers = _auth_headers(monkeypatch, TenantMembership.Role.OWNER)
+    _db_credentials(monkeypatch)
+    ProductMapping.objects.create(
+        tenant_slug="tenant-a", payment_provider="polar", event_type="order.paid",
+        external_product_id="prod_1", entitlement_key="tier:gold", action="grant",
+    )
+
+    response = client.delete("/t/tenant-a/api/v1/integrations/polar", **headers)
+
+    assert response.status_code == 204
+    assert not TenantProviderCredential.objects.filter(tenant_slug="tenant-a").exists()
+    assert not IntegrationConfig.objects.filter(tenant_slug="tenant-a", provider_key="polar").exists()
+    assert client.get("/t/tenant-a/api/v1/integrations/polar", **headers).status_code == 404
+    assert ProductMapping.objects.filter(tenant_slug="tenant-a", payment_provider="polar").count() == 1
+    audit = PublicAuditEvent.objects.get(event_type=PublicAuditEvent.EventType.INTEGRATION_DISCONNECTED)
+    assert audit.target_id == "polar"
+    assert audit.metadata["stored_keys_deleted"] is True
+    assert "polar_secret" not in str(audit.metadata)
+
+
+@pytest.mark.parametrize(
+    "role",
+    [TenantMembership.Role.BILLING_ADMIN, TenantMembership.Role.SUPPORT_READONLY],
+)
+def test_disconnect_is_owner_and_admin_only(monkeypatch: pytest.MonkeyPatch, role: str) -> None:
+    from payglue_backend.webhooks.models import TenantProviderCredential
+
+    client = Client()
+    headers = _auth_headers(monkeypatch, role)
+    _db_credentials(monkeypatch)
+
+    response = client.delete("/t/tenant-a/api/v1/integrations/polar", **headers)
+
+    assert response.status_code == 403
+    assert TenantProviderCredential.objects.filter(tenant_slug="tenant-a").exists()
+    assert IntegrationConfig.objects.filter(tenant_slug="tenant-a", provider_key="polar").exists()
+
+
+def test_disconnect_refuses_ghost(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = Client()
+    headers = _auth_headers(monkeypatch, TenantMembership.Role.OWNER)
+    IntegrationConfig.objects.create(
+        tenant_slug="tenant-a", provider_key="cms", enabled=True, provider_type="ghost", metadata={},
+    )
+
+    response = client.delete("/t/tenant-a/api/v1/integrations/cms", **headers)
+
+    assert response.status_code == 400
+    assert IntegrationConfig.objects.filter(tenant_slug="tenant-a", provider_key="cms").exists()
+
+
+def test_disconnect_without_a_connection_is_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = Client()
+    headers = _auth_headers(monkeypatch, TenantMembership.Role.OWNER)
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.wiring.get_credential_provider",
+        lambda: _CapturingCredentialProvider(),
+    )
+
+    response = client.delete("/t/tenant-a/api/v1/integrations/polar", **headers)
+
+    assert response.status_code == 404

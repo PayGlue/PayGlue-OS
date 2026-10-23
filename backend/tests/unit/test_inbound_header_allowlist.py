@@ -22,11 +22,13 @@ ADAPTERS = (
 )
 
 # `key.lower() == "creem-signature"`, `h.get("paypal-cert-url")`,
-# `_SIGNATURE_HEADER = "x-patreon-signature"`, `_EVENT_HEADER = "x-patreon-event"`
+# `_SIGNATURE_HEADER = "x-patreon-signature"`, `_EVENT_HEADER = "x-patreon-event"`,
+# `_require_header(headers, "webhook-signature")`, `_header(headers, "webhook-id")`
 _PATTERNS = [
     re.compile(r'key\.lower\(\)\s*==\s*"([a-z0-9-]+)"'),
     re.compile(r'\bh\.get\("([a-z0-9-]+)"\)'),
     re.compile(r'_(?:SIGNATURE|EVENT)_HEADER\s*=\s*"([A-Za-z0-9-]+)"'),
+    re.compile(r'\b_(?:require_)?header\(\s*headers,\s*"([a-z0-9-]+)"\)'),
 ]
 
 
@@ -53,6 +55,7 @@ def test_the_scan_finds_the_headers_it_is_meant_to_find() -> None:
     assert "creem-signature" in found["creem"]
     assert "x-patreon-event" in found["patreon"]
     assert "paypal-transmission-sig" in found["paypal"]
+    assert {"webhook-id", "webhook-timestamp", "webhook-signature"} <= found["dodo"]
 
 
 def test_every_header_an_adapter_reads_survives_the_queue() -> None:

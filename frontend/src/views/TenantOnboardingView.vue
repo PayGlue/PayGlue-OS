@@ -261,6 +261,12 @@ const providers = [
     status: 'available' as const,
   },
   {
+    key: 'dodo',
+    name: 'Dodo Payments',
+    description: 'Merchant of record for one-time payments and subscriptions, VAT handled.',
+    status: 'available' as const,
+  },
+  {
     key: 'stripe',
     name: 'Stripe',
     description: 'The gold standard for online payments. Full control, maximum flexibility.',
@@ -496,6 +502,7 @@ const skipProvider = () => router.push(`/t/${slug.value}/dashboard`)
                     <path d="M5.5 8.5h2.3l4.2 4.5 4.2-4.5H18.5v7h-2.2v-4.6l-4 4.3-4-4.3v4.6H5.5V8.5Z" fill="white"/>
                   </svg>
                   <img v-else-if="provider.key === 'creem'" src="https://www.creem.io/icon.png" alt="Creem" class="h-5 w-5" />
+                  <img v-else-if="provider.key === 'dodo'" src="https://cdn.simpleicons.org/dodopayments/111827" alt="Dodo Payments" class="h-5 w-5" />
                   <img v-else :src="`https://cdn.simpleicons.org/${provider.key}/111827`" :alt="provider.name" class="h-5 w-5" />
                 </span>
                 <div class="min-w-0 flex-1">

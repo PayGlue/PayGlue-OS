@@ -38,6 +38,7 @@ const PAYMENT_PROVIDERS = [
   'kofi',
   'creem',
   'patreon',
+  'dodo',
 ] as const
 
 const props = defineProps<{

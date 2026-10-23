@@ -544,6 +544,7 @@ _CONNECTION_PATHS = {
     "kofi": "kofi",
     "creem": "creem",
     "patreon": "patreon",
+    "dodo": "dodo",
 }
 
 

@@ -1,0 +1,73 @@
+{
+  "business_id": "bus_test_business",
+  "data": {
+    "billing": {
+      "city": "Teststadt",
+      "country": "DE",
+      "state": "Berlin",
+      "street": "Teststrasse 1",
+      "zipcode": "10115"
+    },
+    "brand_id": "bus_test_business",
+    "business_id": "bus_test_business",
+    "card_exp_month": "redacted",
+    "card_exp_year": "redacted",
+    "card_holder_name": null,
+    "card_issuing_country": "redacted",
+    "card_last_four": "redacted",
+    "card_network": "visa",
+    "card_type": "credit",
+    "charge_type": null,
+    "checkout_session_id": "cks_0NqMEEjvhWfGZSHXU8w1u",
+    "created_at": "2026-10-23T11:01:24.476390Z",
+    "currency": "EUR",
+    "custom_field_responses": null,
+    "customer": {
+      "customer_id": "cus_0NqMEKGPhEkkvg4P89LNg",
+      "email": "reader@example.com",
+      "metadata": {},
+      "name": "Test Reader",
+      "phone_number": null
+    },
+    "digital_products_delivered": false,
+    "discount_id": null,
+    "discounts": null,
+    "disputes": [],
+    "error_code": null,
+    "error_message": null,
+    "includes_usage": false,
+    "invoice_id": "inv_0NqMEKGQRoU2QIe8QORSI",
+    "invoice_url": "https://test.dodopayments.com/invoices/payments/pay_0NqMEKGQRoU2QIdvzu6R5",
+    "is_multi_subscription": false,
+    "is_update_payment_method": false,
+    "metadata": {},
+    "payload_type": "Payment",
+    "payment_id": "pay_0NqMEKGQRoU2QIdvzu6R5",
+    "payment_link": "https://test.checkout.dodopayments.com/GHdx1VQO",
+    "payment_method": "card",
+    "payment_method_id": "pm_redacted",
+    "payment_method_type": "credit",
+    "payment_provider": "dodo",
+    "product_cart": [
+      {
+        "product_id": "pdt_0NqM882QqFo8KUelC1y7u",
+        "quantity": 1
+      }
+    ],
+    "refund_status": null,
+    "refunds": [],
+    "retry_attempt": 0,
+    "service_periods": [],
+    "settlement_amount": 531,
+    "settlement_currency": "EUR",
+    "settlement_tax": 85,
+    "status": "succeeded",
+    "subscription_id": null,
+    "subscription_ids": [],
+    "tax": 85,
+    "total_amount": 531,
+    "updated_at": null
+  },
+  "timestamp": "2026-10-23T11:01:39.061458Z",
+  "type": "payment.succeeded"
+}
