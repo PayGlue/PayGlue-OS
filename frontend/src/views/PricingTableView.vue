@@ -21,6 +21,7 @@ import {
   getGumroadProducts,
   getPaddleProducts,
   getCreemProducts,
+  getDodoProducts,
   getPatreonProducts,
   listMappings,
 } from '../lib/api'
@@ -51,7 +52,7 @@ interface LocalTier {
   selectedProductIdYearly: string
   cta_url_yearly: string
   existingMappingIdYearly: number | null
-  selectedProvider: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon'
+  selectedProvider: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo'
   mappingEventType: 'order.paid' | 'subscription.active'
   mappingGhostSubscribed: boolean
   mappingEmailType: 'signin' | 'signup' | 'subscribe' | ''
@@ -171,16 +172,19 @@ const paddleProductsLoading = ref(false)
 const paddleProductsError = ref<string | null>(null)
 
 const creemProducts = ref<Product[]>([])
+const dodoProducts = ref<Product[]>([])
 const creemProductsLoading = ref(false)
+const dodoProductsLoading = ref(false)
 const creemProductsError = ref<string | null>(null)
+const dodoProductsError = ref<string | null>(null)
 
 const patreonProducts = ref<Product[]>([])
 const patreonProductsLoading = ref(false)
 const patreonProductsError = ref<string | null>(null)
 
-const allProducts = computed(() => [...polarProducts.value, ...lsProducts.value, ...paypalProducts.value, ...gumroadProducts.value, ...paddleProducts.value, ...creemProducts.value, ...patreonProducts.value])
+const allProducts = computed(() => [...polarProducts.value, ...lsProducts.value, ...paypalProducts.value, ...gumroadProducts.value, ...paddleProducts.value, ...creemProducts.value, ...patreonProducts.value, ...dodoProducts.value])
 
-type ProviderKey = 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon'
+type ProviderKey = 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo'
 
 function productsForProvider(provider: ProviderKey): Product[] {
   if (provider === 'polar') return polarProducts.value
@@ -188,6 +192,7 @@ function productsForProvider(provider: ProviderKey): Product[] {
   if (provider === 'gumroad') return gumroadProducts.value
   if (provider === 'paddle') return paddleProducts.value
   if (provider === 'creem') return creemProducts.value
+  if (provider === 'dodo') return dodoProducts.value
   if (provider === 'patreon') return patreonProducts.value
   return lsProducts.value
 }
@@ -198,6 +203,7 @@ function productsLoadingForProvider(provider: ProviderKey): boolean {
   if (provider === 'gumroad') return gumroadProductsLoading.value
   if (provider === 'paddle') return paddleProductsLoading.value
   if (provider === 'creem') return creemProductsLoading.value
+  if (provider === 'dodo') return dodoProductsLoading.value
   if (provider === 'patreon') return patreonProductsLoading.value
   return lsProductsLoading.value
 }
@@ -208,6 +214,7 @@ function productsErrorForProvider(provider: ProviderKey): string | null {
   if (provider === 'gumroad') return gumroadProductsError.value
   if (provider === 'paddle') return paddleProductsError.value
   if (provider === 'creem') return creemProductsError.value
+  if (provider === 'dodo') return dodoProductsError.value
   if (provider === 'patreon') return patreonProductsError.value
   return lsProductsError.value
 }
@@ -339,6 +346,22 @@ async function loadCreemProducts() {
   }
 }
 
+async function loadDodoProducts() {
+  if (!session.activeTenantSlug || !session.idToken) return
+  dodoProductsLoading.value = true
+  dodoProductsError.value = null
+  try {
+    const result = await getDodoProducts(session.activeTenantSlug, session.idToken)
+    dodoProducts.value = result.products ?? []
+    if (!result.has_token) dodoProductsError.value = 'No Dodo Payments credentials configured. Connect Dodo Payments first.'
+    else if (result.error) dodoProductsError.value = result.error
+  } catch {
+    dodoProductsError.value = 'Could not load Dodo Payments products.'
+  } finally {
+    dodoProductsLoading.value = false
+  }
+}
+
 async function loadMappings() {
   if (!session.activeTenantSlug || !session.idToken) return
   try {
@@ -437,7 +460,7 @@ function startEdit(table: PricingTableData) {
   formAccentColor.value = table.accent_color || '#4f46e5'
   formCurrency.value = (table.currency as 'EUR' | 'USD' | 'GBP' | 'CHF') || 'EUR'
   formToggleEnabled.value = table.show_toggle !== false
-  const KNOWN_PROVIDERS = ['polar', 'lemonsqueezy', 'paypal', 'gumroad', 'paddle', 'kofi', 'creem', 'patreon'] as const
+  const KNOWN_PROVIDERS = ['polar', 'lemonsqueezy', 'paypal', 'gumroad', 'paddle', 'kofi', 'creem', 'patreon', 'dodo'] as const
   formTiers.value = table.tiers.map(t => {
     // Tiers saved since PR (product_provider/product_id) restore directly --
     // older tiers fall back to the legacy guess (cta_url matched against live
@@ -758,6 +781,7 @@ onMounted(async () => {
   loadGumroadProducts()
   loadPaddleProducts()
   loadCreemProducts()
+  loadDodoProducts()
   loadPatreonProducts()
   loadMappings()
 })

@@ -37,6 +37,7 @@ from payglue_backend.tenants.views import (
     CreemCheckoutSessionView,
     CreemInvoicesView,
     CreemProductsView,
+    DodoProductsView,
     PatreonProductsView,
     CreemSubscriptionView,
     GumroadProductsView,
@@ -247,6 +248,11 @@ urlpatterns = [
         r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/creem-products/?$",
         CreemProductsView.as_view(),
         name="tenant-billing-creem-products",
+    ),
+    re_path(
+        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/dodo-products/?$",
+        DodoProductsView.as_view(),
+        name="tenant-billing-dodo-products",
     ),
     re_path(
         r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/patreon-products/?$",

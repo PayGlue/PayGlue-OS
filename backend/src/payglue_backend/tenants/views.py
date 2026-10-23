@@ -2376,6 +2376,62 @@ class CreemProductsView(_PolarBaseMixin, APIView):
         return Response({"products": products, "has_token": True})
 
 
+class DodoProductsView(_PolarBaseMixin, APIView):
+    """Returns the tenant's Dodo Payments products using their stored api_key.
+
+    The key decides the environment (test or live), see
+    webhooks/adapters/dodo.py. Each product gets Dodo's static checkout
+    link, `checkout.dodopayments.com/buy/<product_id>`, with the `test.`
+    subdomain for test-mode keys.
+    """
+
+    def get(self, request: Request, tenant_slug: str) -> Response:
+        try:
+            self._require_tenant_context(request, tenant_slug)
+        except Tenant.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        from payglue_backend.webhooks.wiring import get_credential_provider
+        from payglue_backend.core.errors import MissingCredentialsError
+        from payglue_backend.webhooks.adapters.dodo import dodo_get, dodo_key_mode, TEST_BASE, LIVE_BASE
+        import urllib.error
+
+        try:
+            creds = get_credential_provider().get_credentials(
+                TenantContext(tenant_slug=tenant_slug), "dodo"
+            )
+        except MissingCredentialsError:
+            return Response({"products": [], "has_token": False})
+
+        api_key = creds.get("api_key", "")
+        if not api_key:
+            return Response({"products": [], "has_token": False})
+
+        try:
+            mode = dodo_key_mode(api_key)
+            data = dodo_get("/products?page_size=100", api_key, TEST_BASE if mode == "test" else LIVE_BASE)
+        except urllib.error.HTTPError as exc:
+            logger.warning("dodo: products fetch failed: HTTP %s", exc.code)
+            return Response({"products": [], "has_token": True, "error": f"Dodo API error: HTTP {exc.code}."})
+        except Exception as exc:
+            logger.warning("dodo: products fetch failed: %s", exc)
+            return Response({"products": [], "has_token": True, "error": "Dodo API call failed. Check your API key."})
+
+        checkout = "https://test.checkout.dodopayments.com" if mode == "test" else "https://checkout.dodopayments.com"
+        items = data if isinstance(data, list) else (data.get("items") or [])
+        products = [
+            {
+                "id": item.get("product_id", ""),
+                "name": item.get("name") or item.get("product_id", ""),
+                "checkout_url": f"{checkout}/buy/{item.get('product_id', '')}?quantity=1",
+            }
+            for item in items
+            if isinstance(item, dict) and item.get("product_id")
+        ]
+        products.sort(key=lambda p: p["name"])
+        return Response({"products": products, "has_token": True})
+
+
 class PatreonProductsView(_PolarBaseMixin, APIView):
     """PG-123: returns the tenant's Patreon tiers (as "products" for the
     shared mapping picker) using their stored Creator's Access Token.

@@ -13,6 +13,7 @@ from payglue_backend.core.interfaces import (
 from payglue_backend.core.orchestrator import WebhookOrchestrator
 from payglue_backend.core.registry import AdapterRegistry
 from payglue_backend.webhooks.adapters.creem import CreemPaymentAdapter
+from payglue_backend.webhooks.adapters.dodo import DodoPaymentAdapter
 from payglue_backend.webhooks.adapters.ghost import (
     GhostCmsAdapter,
     UrllibHttpApiClient,
@@ -32,7 +33,7 @@ from payglue_backend.webhooks.models import IntegrationConfig
 from payglue_backend.webhooks.resolver import DbProductMappingResolver
 
 _DEFAULT_CMS_PROVIDER_KEY = "ghost"
-_SUPPORTED_PAYMENT_PROVIDER_KEYS = {"polar", "lemonsqueezy", "paypal", "gumroad", "paddle", "kofi", "creem", "patreon"}
+_SUPPORTED_PAYMENT_PROVIDER_KEYS = {"polar", "lemonsqueezy", "paypal", "gumroad", "paddle", "kofi", "creem", "patreon", "dodo"}
 _SUPPORTED_CMS_PROVIDER_KEYS = {_DEFAULT_CMS_PROVIDER_KEY}
 _orchestrator: WebhookOrchestrator | None = None
 _credential_provider: CredentialProvider | None = None
@@ -87,6 +88,9 @@ def get_webhook_orchestrator() -> WebhookOrchestrator:
     )
     registry.register_payment(
         "patreon", PatreonPaymentAdapter(credential_provider=credential_provider)
+    )
+    registry.register_payment(
+        "dodo", DodoPaymentAdapter(credential_provider=credential_provider)
     )
     registry.register_cms(
         _DEFAULT_CMS_PROVIDER_KEY,
@@ -165,6 +169,11 @@ def get_payment_adapter(provider_key: str) -> PaymentAdapter:
         )
     if provider_key == "patreon":
         return PatreonPaymentAdapter(
+            credential_provider=get_credential_provider(),
+            provider_key=provider_key,
+        )
+    if provider_key == "dodo":
+        return DodoPaymentAdapter(
             credential_provider=get_credential_provider(),
             provider_key=provider_key,
         )

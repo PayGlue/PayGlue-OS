@@ -275,6 +275,13 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresTenantMatch: true },
     },
     {
+      path: '/t/:tenantSlug/connection/dodo',
+      name: 'connection-dodo',
+      component: ConnectionDetailView,
+      props: { provider: 'dodo' },
+      meta: { requiresAuth: true, requiresTenantMatch: true },
+    },
+    {
       path: '/t/:tenantSlug/connection/patreon',
       name: 'connection-patreon',
       component: ConnectionDetailView,

@@ -20,6 +20,7 @@ import {
   getGumroadProducts,
   getPaddleProducts,
   getCreemProducts,
+  getDodoProducts,
   getPatreonProducts,
   listMappings,
   type BuyButtonData,
@@ -38,7 +39,7 @@ const BUTTON_ENTITLEMENT_KEY = 'button'
 
 interface Product { id: string; name: string; checkout_url?: string }
 
-const selectedProvider = ref<'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon'>('polar')
+const selectedProvider = ref<'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo'>('polar')
 const isManualProduct = computed(() => selectedProvider.value === 'kofi')
 
 const polarProducts = ref<Product[]>([])
@@ -63,8 +64,11 @@ const paddleProductsLoading = ref(false)
 const paddleProductsError = ref<string | null>(null)
 
 const creemProducts = ref<Product[]>([])
+const dodoProducts = ref<Product[]>([])
 const creemProductsLoading = ref(false)
+const dodoProductsLoading = ref(false)
 const creemProductsError = ref<string | null>(null)
+const dodoProductsError = ref<string | null>(null)
 
 const patreonProducts = ref<Product[]>([])
 const patreonProductsLoading = ref(false)
@@ -76,6 +80,7 @@ const activeProducts = computed(() => {
   if (selectedProvider.value === 'gumroad') return gumroadProducts.value
   if (selectedProvider.value === 'paddle') return paddleProducts.value
   if (selectedProvider.value === 'creem') return creemProducts.value
+  if (selectedProvider.value === 'dodo') return dodoProducts.value
   if (selectedProvider.value === 'patreon') return patreonProducts.value
   return lsProducts.value
 })
@@ -85,6 +90,7 @@ const productsLoading = computed(() => {
   if (selectedProvider.value === 'gumroad') return gumroadProductsLoading.value
   if (selectedProvider.value === 'paddle') return paddleProductsLoading.value
   if (selectedProvider.value === 'creem') return creemProductsLoading.value
+  if (selectedProvider.value === 'dodo') return dodoProductsLoading.value
   if (selectedProvider.value === 'patreon') return patreonProductsLoading.value
   return lsProductsLoading.value
 })
@@ -94,6 +100,7 @@ const productsError = computed(() => {
   if (selectedProvider.value === 'gumroad') return gumroadProductsError.value
   if (selectedProvider.value === 'paddle') return paddleProductsError.value
   if (selectedProvider.value === 'creem') return creemProductsError.value
+  if (selectedProvider.value === 'dodo') return dodoProductsError.value
   if (selectedProvider.value === 'patreon') return patreonProductsError.value
   return lsProductsError.value
 })
@@ -241,6 +248,22 @@ async function loadCreemProducts() {
   }
 }
 
+async function loadDodoProducts() {
+  if (!session.activeTenantSlug || !session.idToken) return
+  dodoProductsLoading.value = true
+  dodoProductsError.value = null
+  try {
+    const result = await getDodoProducts(session.activeTenantSlug, session.idToken)
+    dodoProducts.value = result.products ?? []
+    if (!result.has_token) dodoProductsError.value = 'No Dodo Payments credentials configured. Connect Dodo Payments first.'
+    else if (result.error) dodoProductsError.value = result.error
+  } catch {
+    dodoProductsError.value = 'Could not load Dodo Payments products.'
+  } finally {
+    dodoProductsLoading.value = false
+  }
+}
+
 async function loadPatreonProducts() {
   if (!session.activeTenantSlug || !session.idToken) return
   patreonProductsLoading.value = true
@@ -367,7 +390,7 @@ function startEdit(btn: BuyButtonData) {
   // fall back to the legacy guesswork below (target_url matched against
   // live product lists, mapping-name lookup for Ko-fi), which races the
   // async product loads and is why "Link to a product" kept showing as off.
-  const PROVIDERS = ['polar', 'lemonsqueezy', 'paypal', 'gumroad', 'paddle', 'kofi', 'creem', 'patreon'] as const
+  const PROVIDERS = ['polar', 'lemonsqueezy', 'paypal', 'gumroad', 'paddle', 'kofi', 'creem', 'patreon', 'dodo'] as const
   const persisted = btn.product_id && (PROVIDERS as readonly string[]).includes(btn.product_provider)
   const matchingPolar = polarProducts.value.find(p => p.checkout_url && p.checkout_url === btn.target_url)
   const matchingLs = lsProducts.value.find(p => p.checkout_url && p.checkout_url === btn.target_url)
@@ -506,8 +529,8 @@ const copyEmbedCode = async () => {
 
 watch(selectedProductId, (id) => { if (id) syncMappingState(id) })
 
-onMounted(() => { loadButtons(); loadPolarProducts(); loadLsProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadPatreonProducts(); loadMappings() })
-watch(() => session.activeTenantSlug, () => { loadButtons(); loadPolarProducts(); loadLsProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadPatreonProducts(); loadMappings() })
+onMounted(() => { loadButtons(); loadPolarProducts(); loadLsProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadDodoProducts(); loadPatreonProducts(); loadMappings() })
+watch(() => session.activeTenantSlug, () => { loadButtons(); loadPolarProducts(); loadLsProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadDodoProducts(); loadPatreonProducts(); loadMappings() })
 
 // Patreon only grants on an active pledge (subscription.active); there is no
 // one-off "order.paid" for a membership. Default the event type accordingly

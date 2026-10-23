@@ -16,6 +16,7 @@ import {
   getGumroadProducts,
   getPaddleProducts,
   getCreemProducts,
+  getDodoProducts,
   getPatreonProducts,
   listPaywallConfigs,
   createPaywallConfig,
@@ -34,7 +35,7 @@ const { isInstalled: headerScriptInstalled } = useHeaderScriptStatus()
 
 interface Product { id: string; name: string; checkout_url?: string }
 
-const selectedProvider = ref<'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon'>('polar')
+const selectedProvider = ref<'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo'>('polar')
 const isManualProduct = computed(() => selectedProvider.value === 'kofi')
 
 const polarProducts = ref<Product[]>([])
@@ -59,8 +60,11 @@ const paddleProductsLoading = ref(false)
 const paddleProductsError = ref<string | null>(null)
 
 const creemProducts = ref<Product[]>([])
+const dodoProducts = ref<Product[]>([])
 const creemProductsLoading = ref(false)
+const dodoProductsLoading = ref(false)
 const creemProductsError = ref<string | null>(null)
+const dodoProductsError = ref<string | null>(null)
 
 const patreonProducts = ref<Product[]>([])
 const patreonProductsLoading = ref(false)
@@ -72,6 +76,7 @@ const activeProducts = computed(() => {
   if (selectedProvider.value === 'gumroad') return gumroadProducts.value
   if (selectedProvider.value === 'paddle') return paddleProducts.value
   if (selectedProvider.value === 'creem') return creemProducts.value
+  if (selectedProvider.value === 'dodo') return dodoProducts.value
   if (selectedProvider.value === 'patreon') return patreonProducts.value
   return lsProducts.value
 })
@@ -81,6 +86,7 @@ const productsLoading = computed(() => {
   if (selectedProvider.value === 'gumroad') return gumroadProductsLoading.value
   if (selectedProvider.value === 'paddle') return paddleProductsLoading.value
   if (selectedProvider.value === 'creem') return creemProductsLoading.value
+  if (selectedProvider.value === 'dodo') return dodoProductsLoading.value
   if (selectedProvider.value === 'patreon') return patreonProductsLoading.value
   return lsProductsLoading.value
 })
@@ -90,6 +96,7 @@ const productsError = computed(() => {
   if (selectedProvider.value === 'gumroad') return gumroadProductsError.value
   if (selectedProvider.value === 'paddle') return paddleProductsError.value
   if (selectedProvider.value === 'creem') return creemProductsError.value
+  if (selectedProvider.value === 'dodo') return dodoProductsError.value
   if (selectedProvider.value === 'patreon') return patreonProductsError.value
   return lsProductsError.value
 })
@@ -218,6 +225,7 @@ function startEdit(cfg: PaywallConfigData) {
     const mappedProvider = mappings.value.find(m => m.external_product_id === cfg.product_id)?.payment_provider
     if (mappedProvider === 'kofi') selectedProvider.value = 'kofi'
     else if (mappedProvider === 'creem') selectedProvider.value = 'creem'
+    else if (mappedProvider === 'dodo') selectedProvider.value = 'dodo'
     else if (mappedProvider === 'patreon') selectedProvider.value = 'patreon'
     else if (lsProducts.value.some(p => p.id === cfg.product_id)) selectedProvider.value = 'lemonsqueezy'
     else if (paypalProducts.value.some(p => p.id === cfg.product_id)) selectedProvider.value = 'paypal'
@@ -426,6 +434,24 @@ async function loadCreemProducts() {
   }
 }
 
+async function loadDodoProducts() {
+  const slug = session.activeTenantSlug
+  const token = session.idToken
+  if (!slug || !token) return
+  dodoProductsLoading.value = true
+  dodoProductsError.value = null
+  try {
+    const result = await getDodoProducts(slug, token)
+    dodoProducts.value = result.products ?? []
+    if (!result.has_token) dodoProductsError.value = 'No Dodo Payments credentials configured. Connect Dodo Payments first.'
+    else if (result.error) dodoProductsError.value = result.error
+  } catch {
+    dodoProductsError.value = 'Could not load Dodo Payments products.'
+  } finally {
+    dodoProductsLoading.value = false
+  }
+}
+
 async function loadPatreonProducts() {
   const slug = session.activeTenantSlug
   const token = session.idToken
@@ -459,8 +485,8 @@ async function loadPricingTables() {
 
 watch(selectedProductId, (id) => { if (id && ctaMode.value === 'product') syncMappingState(id) })
 
-onMounted(() => { loadConfigs(); loadPolarProducts(); loadLsProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadPatreonProducts(); loadPricingTables(); loadMappings() })
-watch(() => session.activeTenantSlug, () => { loadConfigs(); loadPolarProducts(); loadLsProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadPatreonProducts(); loadPricingTables(); loadMappings() })
+onMounted(() => { loadConfigs(); loadPolarProducts(); loadLsProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadDodoProducts(); loadPatreonProducts(); loadPricingTables(); loadMappings() })
+watch(() => session.activeTenantSlug, () => { loadConfigs(); loadPolarProducts(); loadLsProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadDodoProducts(); loadPatreonProducts(); loadPricingTables(); loadMappings() })
 watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = 'subscription.active' })
 
 const checkoutUrlForProduct = (id: string) => {

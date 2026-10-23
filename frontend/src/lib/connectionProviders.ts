@@ -20,6 +20,7 @@ export type ProviderKey =
   | 'kofi'
   | 'creem'
   | 'patreon'
+  | 'dodo'
 
 export interface CredField {
   /** Credential key POSTed to setIntegrationCredentials -- do not change. */
@@ -70,7 +71,7 @@ export interface ConnectionProvider {
   steps: SetupStep[]
 }
 
-const WEBHOOK_HINT = 'Already had a webhook URL configured before? No need to update it, the old URL keeps working.'
+const WEBHOOK_HINT = 'The key at the end identifies your workspace. Paste the URL only into your provider\'s webhook settings.'
 
 export const CONNECTION_PROVIDERS: Record<ProviderKey, ConnectionProvider> = {
   polar: {
@@ -242,6 +243,24 @@ export const CONNECTION_PROVIDERS: Record<ProviderKey, ConnectionProvider> = {
     ],
   },
 
+  dodo: {
+    key: 'dodo',
+    name: PROVIDER_BRAND.dodo.name,
+    blurb: 'Connect Dodo Payments webhooks to automatically sync member access on payment and subscription events.',
+    docsUrl: 'https://docs.payglue.io/providers/dodo',
+    notConnectedMsg: 'Not connected. API Key and Webhook Secret are required',
+    fields: [
+      { key: 'api_key', label: 'API Key', placeholder: 'Your Dodo Payments API key', hint: 'Found under Developer → API Keys in your Dodo Payments dashboard.' },
+      { key: 'webhook_secret', label: 'Webhook Secret', placeholder: 'whsec_...', hint: 'Used to verify that incoming webhooks really come from Dodo Payments.' },
+    ],
+    steps: [
+      { title: 'Create an API key', bodyHtml: 'In Dodo Payments, go to <strong>Developer → API Keys</strong> and create a new key.' },
+      { title: 'Add a webhook endpoint', bodyHtml: 'Go to <strong>Developer → Webhooks</strong>, click <strong>Add endpoint</strong>, paste the Webhook URL above, and select <strong>payment.succeeded</strong>, <strong>subscription.active</strong>, <strong>subscription.renewed</strong>, <strong>subscription.cancelled</strong> and <strong>subscription.expired</strong>.' },
+      { title: 'Copy the signing secret', bodyHtml: 'Open the endpoint and copy the <strong>signing secret</strong> from its Overview tab into the field on the left.' },
+      { title: 'Save in PayGlue', bodyHtml: 'Enter the API Key and Webhook Secret into the fields on the left, then click <strong>Save credentials</strong>. Test-mode keys work automatically, no extra toggle needed.' },
+    ],
+  },
+
   patreon: {
     key: 'patreon',
     name: PROVIDER_BRAND.patreon.name,
@@ -273,6 +292,7 @@ export const PROVIDER_ORDER: ProviderKey[] = [
   'patreon',
   'kofi',
   'paddle',
+  'dodo',
 ]
 
 export const isConnectionProvider = (key: string): key is ProviderKey =>

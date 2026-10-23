@@ -10,9 +10,11 @@ import { PageHeader, UiCard, UiButton, FormField, ProviderLogo } from '../compon
 import { webhookUrl as buildWebhookUrl } from '../lib/publicUrls'
 import {
   ApiHttpError,
+  disconnectIntegration,
   getIntegrationConfig,
   getLemonSqueezyStores,
   getPolarProducts,
+  listMappings,
   runIntegrationHealthCheck,
   setIntegrationCredentials,
   updateIntegrationConfig,
@@ -167,6 +169,7 @@ const save = async () => {
   saving.value = true
   errorMessage.value = null
   errorMessagePlan.value = null
+  disconnectedMessage.value = null
   webhookRegistrationMessage.value = null
   try {
     const required = meta.value.requireOnFirstSave
@@ -255,6 +258,49 @@ const runHealthCheck = async () => {
   }
 }
 
+// Disconnect: deletes the stored credentials and the connection, so the page
+// is empty again. Asks first and says what stays: mappings and embeds are kept
+// for a later reconnect, members already in Ghost keep their access.
+const confirmingDisconnect = ref(false)
+const disconnecting = ref(false)
+const disconnectedMessage = ref<string | null>(null)
+const affectedMappings = ref<number | null>(null)
+
+const hasConnection = computed(() => config.enabled || meta.value.fields.some((f) => stored[f.key]))
+
+const askDisconnect = async () => {
+  affectedMappings.value = null
+  confirmingDisconnect.value = true
+  try {
+    const { tenantSlug, idToken } = context()
+    const mappings = await listMappings(tenantSlug, idToken)
+    affectedMappings.value = mappings.filter((m) => m.payment_provider === meta.value.key).length
+  } catch { /* the count is informative only */ }
+}
+
+const disconnect = async () => {
+  if (!canWrite.value) return
+  disconnecting.value = true
+  errorMessage.value = null
+  try {
+    const { tenantSlug, idToken } = context()
+    await disconnectIntegration(tenantSlug, idToken, meta.value.key)
+    Object.assign(config, { provider_key: props.provider, enabled: false, provider_type: props.provider, metadata: {} })
+    resetFieldState()
+    latestHealth.value = undefined
+    webhookRegistrationMessage.value = null
+    stores.value = []
+    selectedStoreId.value = ''
+    confirmingDisconnect.value = false
+    disconnectedMessage.value = `${meta.value.name} is disconnected and the saved keys are deleted. Remove the webhook and the API key in your ${meta.value.name} dashboard as well.`
+  } catch (e) {
+    confirmingDisconnect.value = false
+    errorMessage.value = e instanceof Error ? e.message : 'Unable to disconnect.'
+  } finally {
+    disconnecting.value = false
+  }
+}
+
 const startEditing = (key: string) => {
   editing[key] = true
   form[key] = ''
@@ -283,6 +329,8 @@ watch(() => props.provider, () => {
   latestHealth.value = undefined
   errorMessage.value = null
   webhookRegistrationMessage.value = null
+  disconnectedMessage.value = null
+  confirmingDisconnect.value = false
   stores.value = []
   selectedStoreId.value = ''
   hasPendingRename.value = false
@@ -390,6 +438,8 @@ watch(() => props.provider, () => {
               <span v-else class="font-medium text-rose-600 dark:text-rose-400">{{ meta.notConnectedMsg }}</span>
             </div>
 
+            <p v-if="disconnectedMessage" class="text-xs text-slate-600 dark:text-slate-300">{{ disconnectedMessage }}</p>
+
             <p v-if="webhookRegistrationMessage" class="text-xs" :class="webhookRegistrationOk ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'">{{ webhookRegistrationMessage }}</p>
 
             <!-- Actions -->
@@ -402,6 +452,9 @@ watch(() => props.provider, () => {
               </UiButton>
               <UiButton v-if="config.enabled" variant="accent" :to="`/t/${session.activeTenantSlug}/mappings`">
                 Test this connection →
+              </UiButton>
+              <UiButton v-if="canWrite && hasConnection" variant="danger" class="sm:ml-auto" @click="askDisconnect">
+                Disconnect
               </UiButton>
             </div>
 
@@ -439,6 +492,41 @@ watch(() => props.provider, () => {
             <a :href="meta.docsUrl" target="_blank" rel="noopener" class="inline-block pt-1 text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400">Full setup guide →</a>
           </div>
         </UiCard>
+      </div>
+    </div>
+
+    <!-- Disconnect confirmation. Deleting the keys cannot be undone, so it
+         says what goes, what stays, and what is left to do at the provider. -->
+    <div
+      v-if="confirmingDisconnect"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+      @click.self="confirmingDisconnect = false"
+    >
+      <div class="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+        <h2 class="text-base font-semibold text-slate-900 dark:text-slate-100">Disconnect {{ meta.name }}?</h2>
+
+        <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-700 dark:bg-slate-800/50">
+          <p class="font-medium text-slate-800 dark:text-slate-100">What happens</p>
+          <ul class="mt-2 list-inside list-disc space-y-1 text-slate-600 dark:text-slate-300">
+            <li>The saved keys for {{ meta.name }} are deleted from PayGlue. This cannot be undone.</li>
+            <li>Webhooks from {{ meta.name }} are rejected until you connect again.</li>
+            <li>Members already in Ghost keep their access.</li>
+            <li v-if="affectedMappings">
+              {{ affectedMappings }} product {{ affectedMappings === 1 ? 'mapping stays' : 'mappings stay' }}, together with your buy buttons and pricing tables. They work again once you reconnect.
+            </li>
+          </ul>
+        </div>
+
+        <p class="mt-4 text-sm text-slate-600 dark:text-slate-300">
+          Afterwards, remove the webhook and the API key in your {{ meta.name }} dashboard as well.
+        </p>
+
+        <div class="mt-6 flex justify-end gap-3">
+          <UiButton variant="ghost" size="sm" @click="confirmingDisconnect = false">Cancel</UiButton>
+          <UiButton variant="danger" size="sm" :disabled="disconnecting" @click="disconnect">
+            {{ disconnecting ? 'Disconnecting...' : 'Disconnect' }}
+          </UiButton>
+        </div>
       </div>
     </div>
   </AppShell>

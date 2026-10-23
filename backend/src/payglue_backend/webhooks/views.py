@@ -115,6 +115,7 @@ class WebhookIngestView(APIView):
         "polar": "type",
         "paypal": "event_type",
         "paddle": "event_type",
+        "dodo": "type",
     }
 
     @classmethod
@@ -349,6 +350,52 @@ class TenantIntegrationConfigView(APIView):
             },
         )
         return Response(IntegrationConfigSerializer(integration).data)
+
+    def delete(self, request: Request, tenant_slug: str, provider_key: str) -> Response:
+        """Disconnect a payment provider: the stored credentials and the
+        connection itself are deleted, so the page starts empty again and the
+        plan slot is free. Product mappings and embeds stay, they only need the
+        provider connected again to work."""
+        self._require_tenant_context(request, tenant_slug)
+        if provider_key == "cms":
+            return Response(
+                {"detail": "Ghost cannot be disconnected here."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if provider_key not in _integration_provider_key_allowlist():
+            return Response(
+                {"detail": "Unsupported provider key."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        integration = IntegrationConfig.objects.filter(
+            tenant_slug=tenant_slug,
+            provider_key=provider_key,
+        ).first()
+        provider_type = integration.provider_type if integration is not None else provider_key
+        credentials_deleted = wiring.get_credential_provider().delete_credentials(
+            TenantContext(tenant_slug=tenant_slug), provider_type
+        )
+        if integration is None and not credentials_deleted:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if integration is not None:
+            integration.delete()
+
+        tenant = Tenant.objects.filter(slug=tenant_slug).only("id").first()
+        if tenant is not None:
+            write_public_audit_event(
+                tenant=tenant,
+                actor_membership=resolve_tenant_membership(request),
+                event_type=PublicAuditEvent.EventType.INTEGRATION_DISCONNECTED,
+                target_type="integration",
+                target_id=provider_key,
+                metadata={
+                    "provider_key": provider_key,
+                    "provider_type": provider_type,
+                    "stored_keys_deleted": credentials_deleted,
+                },
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class TenantProductMappingView(APIView):

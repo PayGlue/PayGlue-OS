@@ -503,7 +503,7 @@ export const ownershipTransferAction = async (
 export const getIntegrationConfig = async (
   tenantSlug: string,
   idToken: string,
-  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'cms',
+  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'cms',
 ): Promise<IntegrationConfig> => {
   try {
     const { data } = await api.get<IntegrationConfig>(
@@ -523,7 +523,7 @@ export const getIntegrationConfig = async (
 export const updateIntegrationConfig = async (
   tenantSlug: string,
   idToken: string,
-  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'cms',
+  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'cms',
   payload: Pick<IntegrationConfig, 'enabled' | 'provider_type' | 'metadata'>,
 ): Promise<IntegrationConfig> => {
   try {
@@ -542,10 +542,28 @@ export const updateIntegrationConfig = async (
   }
 }
 
+/** Disconnects a payment provider: deletes its stored credentials and the
+ *  connection itself. Product mappings and embeds stay. */
+export const disconnectIntegration = async (
+  tenantSlug: string,
+  idToken: string,
+  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo',
+): Promise<void> => {
+  try {
+    await api.delete(tenantPath(tenantSlug, `integrations/${providerKey}`), {
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+      },
+    })
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
 export const setIntegrationCredentials = async (
   tenantSlug: string,
   idToken: string,
-  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'cms',
+  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'cms',
   credentials: Record<string, string>,
 ): Promise<IntegrationCredentialWriteResult> => {
   try {
@@ -567,7 +585,7 @@ export const setIntegrationCredentials = async (
 export const runIntegrationHealthCheck = async (
   tenantSlug: string,
   idToken: string,
-  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'cms',
+  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'cms',
 ): Promise<IntegrationHealthStatus> => {
   try {
     const { data } = await api.get<IntegrationHealthStatus>(
@@ -970,6 +988,21 @@ export const getPaddleProducts = async (
   try {
     const { data } = await api.get<{ products: { id: string; name: string; checkout_url?: string }[]; has_token: boolean; error?: string }>(
       tenantPath(tenantSlug, 'billing/paddle-products'),
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+export const getDodoProducts = async (
+  tenantSlug: string,
+  idToken: string,
+): Promise<{ products: { id: string; name: string; checkout_url?: string }[]; has_token: boolean; error?: string }> => {
+  try {
+    const { data } = await api.get<{ products: { id: string; name: string; checkout_url?: string }[]; has_token: boolean; error?: string }>(
+      tenantPath(tenantSlug, 'billing/dodo-products'),
       { headers: { Authorization: `Bearer ${idToken}` } },
     )
     return data

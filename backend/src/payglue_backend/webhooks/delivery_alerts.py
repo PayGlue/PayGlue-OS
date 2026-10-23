@@ -75,6 +75,7 @@ PROVIDER_NAMES = {
     "kofi": "Ko-fi",
     "creem": "Creem",
     "patreon": "Patreon",
+    "dodo": "Dodo Payments",
 }
 
 

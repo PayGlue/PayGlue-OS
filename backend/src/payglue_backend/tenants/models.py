@@ -649,6 +649,10 @@ class PublicAuditEvent(models.Model):
             "integration.credentials_written",
             "integration.credentials_written",
         )
+        INTEGRATION_DISCONNECTED = (
+            "integration.disconnected",
+            "integration.disconnected",
+        )
         EVENT_REPLAY_REQUESTED = "event.replay_requested", "event.replay_requested"
         TEST_EVENT_SENT = "connection.test_event_sent", "connection.test_event_sent"
         SERVICE_PIN_GENERATED = "service_pin.generated", "service_pin.generated"

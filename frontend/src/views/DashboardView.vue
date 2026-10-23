@@ -44,7 +44,7 @@ const loadDashboard = async () => {
   try {
     const { tenantSlug, token } = context()
 
-    const paymentProviderKeys = ['polar', 'lemonsqueezy', 'paypal', 'gumroad', 'paddle', 'kofi', 'creem', 'patreon'] as const
+    const paymentProviderKeys = ['polar', 'lemonsqueezy', 'paypal', 'gumroad', 'paddle', 'kofi', 'creem', 'patreon', 'dodo'] as const
 
     const [eventsResult, auditResult, mappingResult, teamResult, cmsResult, ...paymentResults] =
       await Promise.allSettled([
@@ -125,6 +125,7 @@ const providerLabels: Record<string, string> = {
   kofi: 'Ko-fi',
   creem: 'Creem',
   patreon: 'Patreon',
+  dodo: 'Dodo Payments',
   stripe: 'Stripe',
 }
 

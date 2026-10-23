@@ -63,3 +63,9 @@ class CredentialProvider(Protocol):
         tenant_ctx: TenantContext,
         provider_key: str,
     ) -> Mapping[str, str]: ...
+
+    def delete_credentials(
+        self,
+        tenant_ctx: TenantContext,
+        provider_key: str,
+    ) -> bool: ...
