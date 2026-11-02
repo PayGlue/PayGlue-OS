@@ -160,6 +160,7 @@ export interface WebhookEvent {
   attempts: number
   next_attempt_at: string | null
   last_error: string
+  verification_failed?: boolean
   endpoint_path: string
   endpoint_metadata: Record<string, unknown>
   payload_snapshot: Record<string, unknown>
@@ -172,6 +173,7 @@ export interface WebhookEvent {
 export interface ReplayWebhookEventResult {
   status: 'accepted'
   tracking_id: number
+  reverify?: boolean
 }
 
 export interface AuditEvent {
@@ -222,4 +224,6 @@ export interface ChangelogBellEntry {
   title: string
   body: string
   publishedAt: string
+  /** The full entry on the helpdesk portal, when the changelog lives there. */
+  url?: string
 }

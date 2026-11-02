@@ -29,6 +29,13 @@ name of what gets granted, it reaches Ghost as `product:<key>`, and it is writte
 once when the rule is created and never touched again. Existing keys like `pro`
 and `founding_member` therefore survive, and so do the labels already on members.
 
+A key has to name the product, not the widget. The buy button and the paywall
+editors used to send `button` and `paywall` for every product, so two products
+sold through two buttons both reached Ghost as `product:button`. An ending for
+one of them then found no other product on the member and took all access away,
+although the second product was still paid for (PG-369). Those two words are
+therefore treated like no key at all, and a new rule gets `product-<id>`.
+
 ## What is deliberately not done here
 
 Deleting. Removing a buy button from your site does not un-sell the product: a
@@ -62,6 +69,18 @@ class GrantSpec:
         return bool(self.provider.strip() and self.product_id.strip())
 
 
+# What the buy button and paywall editors sent before PG-369. They name the
+# widget, not the product, so they cannot tell two products apart.
+_WIDGET_KEYS = frozenset({"button", "paywall"})
+
+
+def _entitlement_key(spec: GrantSpec) -> str:
+    key = spec.entitlement_key.strip()
+    if not key or key in _WIDGET_KEYS:
+        return _default_entitlement_key(spec)
+    return key
+
+
 def _default_entitlement_key(spec: GrantSpec) -> str:
     """Mirrors what the pricing table editor used to write on its own."""
     return f"product-{spec.product_id.strip()}"
@@ -91,7 +110,7 @@ def sync_grant(tenant_slug: str, spec: GrantSpec) -> ProductMapping | None:
     on_create = {
         **on_update,
         "quantity": 1,
-        "entitlement_key": spec.entitlement_key.strip() or _default_entitlement_key(spec),
+        "entitlement_key": _entitlement_key(spec),
     }
 
     mapping, _ = ProductMapping.objects.update_or_create(

@@ -42,6 +42,9 @@ class WebhookInboundEvent(models.Model):
     max_attempts = models.PositiveIntegerField(default=5)
     next_attempt_at = models.DateTimeField(null=True, blank=True)
     last_error = models.TextField(blank=True, default="")
+    # The delivery could not be verified, so nothing proves it came from the
+    # provider. A retry or a replay has to check it again.
+    verification_failed = models.BooleanField(default=False)
     payload_raw = models.BinaryField()
     payload_snapshot = models.JSONField(null=True, blank=True)
     headers_snapshot = models.JSONField(default=dict)
@@ -285,6 +288,11 @@ class ProductMapping(models.Model):
     event_type = models.CharField(max_length=128)
     external_product_id = models.CharField(max_length=128)
     entitlement_key = models.CharField(max_length=128)
+    # PG-369: what the key was before migration 0026 renamed it to name the
+    # product. Members who bought before carry it as their product label, so an
+    # ending treats that label as this product's as well. Empty for every rule
+    # that was not renamed.
+    legacy_entitlement_key = models.CharField(max_length=128, blank=True, default="")
     action = models.CharField(max_length=32, choices=Action.choices)
     quantity = models.PositiveIntegerField(default=1)
     is_active = models.BooleanField(default=True)

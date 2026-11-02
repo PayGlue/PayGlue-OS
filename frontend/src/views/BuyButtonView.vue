@@ -25,7 +25,7 @@ import {
   listMappings,
   type BuyButtonData,
 } from '../lib/api'
-import { ruleForProduct } from '../lib/mappingKeys'
+import { entitlementKeyForProduct, ruleForProduct } from '../lib/mappingKeys'
 import { embedScript } from '../lib/publicUrls'
 import type { ProductMapping } from '../types/api'
 
@@ -35,7 +35,6 @@ const session = useSessionStore()
 // stays fixed. It still belongs in the lookup: a paywall pointing at the same
 // product owns a different mapping, and matching on the product alone made the
 // two overwrite each other.
-const BUTTON_ENTITLEMENT_KEY = 'button'
 
 interface Product { id: string; name: string; checkout_url?: string }
 
@@ -453,7 +452,7 @@ async function save() {
     // product ended up with several rules that disagreed with each other.
     grant: {
       event_type: mappingEventType.value,
-      entitlement_key: BUTTON_ENTITLEMENT_KEY,
+      entitlement_key: entitlementKeyForProduct(selectedProductId.value),
       metadata: {
         ghost_subscribed: mappingGhostSubscribed.value,
         ghost_email_types: mappingEmailType.value ? [mappingEmailType.value] : [],
@@ -627,9 +626,9 @@ watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = '
                 </select>
               </template>
               <p v-if="polarSandbox && selectedProvider === 'polar'" class="text-xs text-amber-600 dark:text-amber-400">Sandbox mode, using test products</p>
-              <p v-if="selectedProvider === 'paypal'" class="text-xs text-slate-400 dark:text-slate-500">PayPal subscription plans do not have a direct checkout URL. Enter your PayPal checkout link manually in the URL field below after selecting a plan.</p>
+              <p v-if="selectedProvider === 'paypal'" class="text-xs text-slate-400 dark:text-slate-500">PayPal plans use their subscribe link. Buyers log in to PayPal to confirm the subscription.</p>
               <p v-else-if="selectedProvider === 'paddle'" class="text-xs text-slate-400 dark:text-slate-500">Paddle checkout is driven client-side and has no direct checkout link. Enter your Paddle checkout link manually in the URL field below after selecting a product.</p>
-              <p v-else-if="selectedProvider === 'patreon'" class="text-xs text-slate-400 dark:text-slate-500">Patreon has no per-tier checkout link. Patrons join through your Patreon page, so turn off "Link to a product" and paste your Patreon join URL in the field below. Access is still granted automatically by the tier mapping when someone pledges.</p>
+              <p v-else-if="selectedProvider === 'patreon'" class="text-xs text-slate-400 dark:text-slate-500">Patreon has no per-tier checkout link. Keep the tier selected so a pledge grants access, and paste your Patreon join URL in the Link URL field below.</p>
               <p v-else-if="!isManualProduct && selectedProductId && !checkoutUrlForProduct(selectedProductId)" class="text-xs text-red-600">
                 No checkout link available for this product.
                 <template v-if="selectedProvider === 'polar'"> Check your Polar token scopes (needs <code>checkout_links:write</code>).</template>
@@ -711,7 +710,8 @@ watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = '
           <div>
             <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">
               Link URL
-              <span v-if="useProduct && selectedProductId && !isManualProduct" class="ml-1 text-indigo-500">(auto-filled from product)</span>
+              <span v-if="useProduct && selectedProvider === 'patreon'" class="ml-1 text-slate-400 dark:text-slate-500">(paste your Patreon join URL)</span>
+              <span v-else-if="useProduct && selectedProductId && !isManualProduct" class="ml-1 text-indigo-500">(auto-filled from product)</span>
               <span v-else-if="useProduct && isManualProduct" class="ml-1 text-slate-400 dark:text-slate-500">(paste your Ko-fi page URL)</span>
               <span v-else-if="!useProduct" class="ml-1 text-slate-400 dark:text-slate-500">(custom link)</span>
             </label>

@@ -297,11 +297,21 @@ class GhostCmsAdapter:
         # the publisher had added by hand, on every purchase.
         existing_labels = _label_names(found)
         product_label = f"{PRODUCT_PREFIX}{_slugify(instruction.entitlement_key)}"
+        # PG-369: a rule renamed from `button` or `paywall` still finds members
+        # who bought before under the old label. That label was shared by every
+        # product sold through a button, so it counts as this product's own and
+        # never as proof that another product is still paid for. A member who
+        # only carries the old label therefore ends like before the fix; the
+        # first renewal gives them the exact label.
+        legacy_key = str(meta.get("_legacy_entitlement_key") or "")
+        own_product_labels = {product_label}
+        if legacy_key:
+            own_product_labels.add(f"{PRODUCT_PREFIX}{_slugify(legacy_key)}")
         is_active = any(_is_active_label(name) for name in existing_labels)
         held_products = (
             [n for n in existing_labels if n.startswith(PRODUCT_PREFIX)] if is_active else []
         )
-        other_products = [n for n in held_products if n != product_label]
+        other_products = [n for n in held_products if n not in own_product_labels]
         own_labels = [label["name"] for label in labels]
         member_update: dict[str, object] | None = None
         keeps_other_access = False
@@ -328,7 +338,7 @@ class GhostCmsAdapter:
                 logger.info("ghost revoke skipped, no member for email=%s", email)
                 return
             if other_products:
-                if product_label not in held_products:
+                if not own_product_labels.intersection(held_products):
                     # Nothing of this product to take back, and another product
                     # still carries the access. The revoke-everything path for
                     # providers that do not name the tier lands here for every
@@ -343,7 +353,7 @@ class GhostCmsAdapter:
                 # status label and keeps the Complimentary subscription,
                 # because the other products are still paid for.
                 keeps_other_access = True
-                labels = _as_labels([n for n in existing_labels if n != product_label])
+                labels = _as_labels([n for n in existing_labels if n not in own_product_labels])
                 note = self._with_line(
                     existing_note or note,
                     self._stamped_line(f"Ended {product_label}", meta.get("_occurred_at"), event_id)

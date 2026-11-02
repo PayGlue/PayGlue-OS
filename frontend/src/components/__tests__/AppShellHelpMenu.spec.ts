@@ -9,8 +9,14 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createPinia, setActivePinia } from 'pinia'
+import { vi } from 'vitest'
 import AppShell from '../AppShell.vue'
 import { useSessionStore } from '../../stores/session'
+
+vi.mock('../../lib/hub', () => ({
+  hubUrl: 'https://hub.example.test',
+  statusHref: 'https://hub.example.test/status',
+}))
 
 const mountShell = async () => {
   const router = createRouter({
@@ -60,7 +66,7 @@ describe('AppShell help menu', () => {
     expect(support.getAttribute('href')).toContain('/t/tenant-a/support')
 
     const status = screen.getAllByRole('link', { name: /System Status/ })[0]
-    expect(status.getAttribute('href')).toBe('https://status.payglue.io')
+    expect(status.getAttribute('href')).toBe('https://hub.example.test/status')
 
     const docs = screen.getAllByRole('link', { name: /Documentation/ })[0]
     expect(docs.getAttribute('href')).toBe('https://docs.payglue.io')

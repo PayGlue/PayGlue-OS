@@ -2196,11 +2196,18 @@ class PayPalProductsView(_PolarBaseMixin, APIView):
             logger.warning("paypal: plans fetch failed: %s", exc)
             return Response({"products": [], "has_token": True, "error": "PayPal API call failed."})
 
+        # PayPal has no hosted checkout per plan, but every plan has a fixed
+        # subscribe link: the one its dashboard offers as "Share link". It used
+        # to be left empty here with the docs asking for it to be pasted by
+        # hand, and a paywall saved without it showed no button at all.
+        subscribe_base = (
+            "https://www.sandbox.paypal.com" if sandbox else "https://www.paypal.com"
+        ) + "/webapps/billing/plans/subscribe?plan_id="
         products = []
         for plan in plans_data.get("plans", []):
             plan_id = plan.get("id", "")
             name = plan.get("name", plan_id)
-            products.append({"id": plan_id, "name": name, "checkout_url": ""})
+            products.append({"id": plan_id, "name": name, "checkout_url": subscribe_base + plan_id if plan_id else ""})
 
         products.sort(key=lambda p: p["name"])
         return Response({"products": products, "has_token": True})
@@ -2562,7 +2569,7 @@ class SupportRequestView(APIView):
             )
         # Checked at the door, because everything downstream trusts it. One
         # stray comma took out the confirmation, our own internal notice (the
-        # address rides along in Reply-To) and the tracker's email link, all
+        # address rides along in Reply-To) and the reply route on the ticket, all
         # from a request that looked accepted. Better to say so while the
         # customer still has the form open.
         try:

@@ -3,7 +3,11 @@ from datetime import timedelta
 from django.test import override_settings
 from django.utils import timezone
 
-from payglue_backend.core.errors import CmsApplyEntitlementError
+from payglue_backend.core.errors import (
+    CmsApplyEntitlementError,
+    InvalidWebhookSignatureError,
+    MissingCredentialsError,
+)
 from payglue_backend.core.models import TenantContext
 from payglue_backend.core.orchestrator import OrchestrationResult
 from payglue_backend.tenants.models import Tenant
@@ -104,6 +108,83 @@ def test_a_retry_does_not_verify_the_signature_again(monkeypatch) -> None:
 
 
 @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+def _stub_process(monkeypatch, outcome) -> list[bool]:
+    seen: list[bool] = []
+
+    class _Orchestrator:
+        def process_webhook(self, **kwargs):
+            seen.append(kwargs["skip_verification"])
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.wiring.get_webhook_orchestrator", lambda: _Orchestrator()
+    )
+    return seen
+
+
+def _received(**fields) -> WebhookInboundEvent:
+    return WebhookInboundEvent.objects.create(
+        tenant_slug="tenant-a",
+        provider="polar",
+        status=WebhookInboundEvent.Status.RECEIVED,
+        payload_raw=b"{}",
+        headers_snapshot={},
+        endpoint_path="/t/tenant-a/webhooks/polar/[redacted]/",
+        **fields,
+    )
+
+
+def test_a_rejected_signature_is_recorded_on_the_event(monkeypatch) -> None:
+    event = _received()
+    _stub_process(monkeypatch, InvalidWebhookSignatureError("signature mismatch"))
+
+    process_inbound_webhook_event(event.id, ignore_timing=True)
+
+    event.refresh_from_db()
+    assert event.status == WebhookInboundEvent.Status.FAILED
+    assert event.verification_failed is True
+
+
+def test_a_ghost_failure_does_not_count_as_unverified(monkeypatch) -> None:
+    event = _received(max_attempts=1)
+    _stub_process(monkeypatch, CmsApplyEntitlementError("ghost down"))
+
+    process_inbound_webhook_event(event.id, ignore_timing=True)
+
+    event.refresh_from_db()
+    assert event.verification_failed is False
+
+
+@override_settings(CELERY_TASK_ALWAYS_EAGER=False)
+def test_a_missing_secret_keeps_the_retry_verifying(monkeypatch) -> None:
+    """The first attempt never reached the check, so the retry may not skip it."""
+    event = _received()
+    missing = MissingCredentialsError("tenant-a", "polar", ("webhook_secret",))
+    seen = _stub_process(monkeypatch, missing)
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.tasks.process_inbound_webhook_event.apply_async",
+        lambda **kwargs: None,
+    )
+
+    process_inbound_webhook_event(event.id, ignore_timing=True)
+    process_inbound_webhook_event(event.id, ignore_timing=True)
+
+    assert seen == [False, False]
+
+
+def test_a_passed_check_clears_the_mark(monkeypatch) -> None:
+    event = _received(verification_failed=True)
+    _stub_process(monkeypatch, OrchestrationResult(status="processed", event_id="evt-1", applied_count=1))
+
+    process_inbound_webhook_event(event.id, ignore_timing=True)
+
+    event.refresh_from_db()
+    assert event.status == WebhookInboundEvent.Status.PROCESSED
+    assert event.verification_failed is False
+
+
 def test_a_duplicate_delivery_is_recorded_as_skipped_not_processed(monkeypatch) -> None:
     class DuplicateOrchestrator:
         def process_webhook(self, **kwargs) -> OrchestrationResult:

@@ -195,9 +195,9 @@ class ServicePinSerializer(serializers.ModelSerializer):
 class SupportRequestSerializer(serializers.ModelSerializer):
     """What the customer is allowed to see about their own request.
 
-    Note what is absent: the tracker issue id, and any issue content. Internal
-    comments live on that issue, so exposing it is exactly the mistake this
-    design exists to avoid. Reference plus status is the whole contract.
+    Note what is absent: the helpdesk ticket id, and any ticket content.
+    Internal notes live on that ticket, so exposing it is exactly the mistake
+    this design exists to avoid. Reference plus status is the whole contract.
     """
 
     reference = serializers.CharField(read_only=True)

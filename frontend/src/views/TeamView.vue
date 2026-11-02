@@ -68,8 +68,8 @@ const ROLE_LABELS: Record<string, string> = {
 const roleLabel = (role: string): string => ROLE_LABELS[role] ?? role
 
 const ROLE_DESCRIPTIONS: { role: string; description: string }[] = [
-  { role: 'Owner', description: 'Full access, including billing and deleting the publication. The only role that can grant or remove Owner.' },
-  { role: 'Admin', description: 'Manages buy buttons, paywalls, pricing tables, connections, and team members. Cannot access billing or grant Owner.' },
+  { role: 'Owner', description: 'Full access, including billing and deleting the publication. The only role that can confirm an ownership transfer.' },
+  { role: 'Admin', description: 'Manages buy buttons, paywalls, pricing tables, connections, and team members. Can view billing but not change it.' },
   { role: 'Billing Admin', description: 'Manages billing and plan changes. Read-only everywhere else.' },
   { role: 'Support (read-only)', description: 'Can view everything but cannot make any changes.' },
 ]
@@ -320,7 +320,7 @@ onMounted(() => {
     :open="showTransferStepUp"
     purpose="owner_transfer"
     title="Confirm the ownership transfer"
-    description="The new owner takes over billing and full access to this workspace. You become Billing Admin."
+    description="The new owner takes over billing and full access to this publication. You become Billing Admin."
     confirm-label="Transfer ownership"
     @confirmed="(t) => actOnTransfer('confirm', t)"
     @close="showTransferStepUp = false"

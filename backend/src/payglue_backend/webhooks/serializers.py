@@ -90,6 +90,7 @@ class WebhookInboundEventSerializer(serializers.ModelSerializer):
             "max_attempts",
             "next_attempt_at",
             "last_error",
+            "verification_failed",
             "payload_snapshot",
             "headers_snapshot",
             "endpoint_path",

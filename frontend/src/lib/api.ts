@@ -130,6 +130,20 @@ export const generateMfaBackupCodes = async (idToken: string): Promise<{ codes: 
   }
 }
 
+// Signed identity for the support widget. Null when this installation has no
+// widget secret (404), so the widget simply stays anonymous.
+export const getSupportWidgetToken = async (idToken: string, name: string): Promise<string | null> => {
+  try {
+    const { data } = await api.get<{ token: string }>('/api/v1/support/widget-token', {
+      headers: { Authorization: `Bearer ${idToken}` },
+      params: name ? { name } : undefined,
+    })
+    return data.token
+  } catch {
+    return null
+  }
+}
+
 export const getMfaBackupCodesStatus = async (idToken: string): Promise<{ remaining: number }> => {
   try {
     const { data } = await api.get<{ remaining: number }>('/api/v1/auth/mfa/backup-codes', {

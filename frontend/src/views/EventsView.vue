@@ -381,6 +381,11 @@ onMounted(async () => {
             <li>If the product is mapped, the member is created or updated in Ghost.</li>
             <li>If the member already has this access, nothing changes.</li>
           </ul>
+          <p v-if="confirmingReplay.verification_failed" class="mt-3 font-medium text-amber-700 dark:text-amber-400">
+            This event failed its signature check, so the check runs again and the
+            event only goes through if it passes. If it fails again, fix the webhook
+            secret and have your provider resend the event.
+          </p>
           <p class="mt-3 text-slate-600 dark:text-slate-300">
             No payment is taken and nothing is charged again. Replay only re-runs what
             your provider already sent us.

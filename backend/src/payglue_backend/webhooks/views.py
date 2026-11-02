@@ -773,6 +773,74 @@ def _paywall_script_state(html: str, tenant_slug: str) -> tuple[bool, str | None
     return False, None
 
 
+class _UnsafeSiteURL(ValueError):
+    """The site URL, or a redirect it leads to, is not a public http(s) host."""
+
+
+_MAX_SITE_REDIRECTS = 5
+
+
+def _root_of(url: str) -> str:
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}/"
+
+
+def _public_root_url(url: str) -> str:
+    """The root URL of *url*, if it is http(s) on a host we may fetch.
+
+    Checked for the configured site URL and again for every redirect target,
+    so a redirect cannot lead the check onto a private address.
+    """
+    import ipaddress
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise _UnsafeSiteURL("Ghost site URL must use http or https.")
+    hostname = (parsed.hostname or "").lower()
+    try:
+        addr = ipaddress.ip_address(hostname)
+    except ValueError:
+        if hostname in ("", "localhost", "localhost.localdomain") or hostname.endswith((".internal", ".local")):
+            raise _UnsafeSiteURL("Ghost site URL must point to a public host.") from None
+    else:
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            raise _UnsafeSiteURL("Ghost site URL resolves to a private address.")
+    return _root_of(url)
+
+
+def _fetch_site_root(site_url: str) -> tuple[str, str]:
+    """Fetch the home page of the Ghost site and return (final root URL, HTML).
+
+    The stored URL is the one the Ghost Admin API answers on. On Ghost(Pro)
+    with a custom domain that is the ghost.io address, which redirects to the
+    custom domain where the theme and its code injection are served. Redirects
+    are therefore followed, but one hop at a time and each target checked
+    before it is fetched.
+    """
+    import urllib.error
+    import urllib.request
+    from urllib.parse import urljoin
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    opener = urllib.request.build_opener(_NoRedirect)
+    url = _public_root_url(site_url)
+    for _ in range(_MAX_SITE_REDIRECTS + 1):
+        req = urllib.request.Request(url, headers={"User-Agent": "PayGlue-ScriptCheck/1.0"})
+        try:
+            with opener.open(req, timeout=8) as resp:
+                return url, resp.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as e:
+            location = e.headers.get("Location") if e.headers else None
+            if e.code in (301, 302, 303, 307, 308) and location:
+                url = _public_root_url(urljoin(url, location))
+                continue
+            raise
+    raise ValueError(f"more than {_MAX_SITE_REDIRECTS} redirects")
+
+
 class CheckHeaderScriptView(APIView):
     """Check whether the paywall.js header script is present on the tenant's Ghost site."""
     authentication_classes = [SupabaseBearerAuthentication]
@@ -792,35 +860,12 @@ class CheckHeaderScriptView(APIView):
         if not site_url:
             return Response({"installed": False, "error": "Ghost site URL not found. Re-save your Ghost credentials.", "url": None})
 
-        # Normalise to root URL and guard against SSRF to internal/private hosts
-        import ipaddress
-        parsed = urlparse(site_url)
-        if parsed.scheme not in ("http", "https"):
-            return Response({"installed": False, "error": "Ghost site URL must use http or https.", "url": None})
-        hostname = parsed.hostname or ""
         try:
-            addr = ipaddress.ip_address(hostname)
-            if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-                return Response({"installed": False, "error": "Ghost site URL resolves to a private address.", "url": None})
-        except ValueError:
-            # hostname is a domain name — block obvious local targets
-            if hostname.lower() in ("localhost", "localhost.localdomain") or hostname.lower().endswith(".internal") or hostname.lower().endswith(".local"):
-                return Response({"installed": False, "error": "Ghost site URL must point to a public host.", "url": None})
-        root_url = f"{parsed.scheme}://{parsed.netloc}/"
-
-        import urllib.request
-
-        class _NoRedirect(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, req, fp, code, msg, headers, newurl):
-                return None
-
-        try:
-            opener = urllib.request.build_opener(_NoRedirect)
-            req = urllib.request.Request(root_url, headers={"User-Agent": "PayGlue-ScriptCheck/1.0"})
-            with opener.open(req, timeout=8) as resp:
-                html = resp.read().decode("utf-8", errors="replace")
+            root_url, html = _fetch_site_root(site_url)
+        except _UnsafeSiteURL as e:
+            return Response({"installed": False, "error": str(e), "url": None})
         except Exception as e:
-            return Response({"installed": False, "error": f"Could not reach {root_url}: {e}", "url": root_url})
+            return Response({"installed": False, "error": f"Could not reach {_root_of(site_url)}: {e}", "url": _root_of(site_url)})
 
         installed, detail = _paywall_script_state(html, tenant_slug)
         return Response({"installed": installed, "url": root_url, "error": detail})
@@ -1573,6 +1618,12 @@ class TenantEventReplayView(APIView):
     # answered "duplicate" and the worker wrote "processed" again while Ghost
     # was never called. Reported from the field after a cancellation that had
     # been processed before a fix and left the member comped.
+    #
+    # Skipping the signature check is right for an event that passed it: the
+    # check compares against the clock for providers that sign with a
+    # timestamp, and would fail by now. An event that did not pass it has to
+    # go through it, or a click here would apply a forged delivery. For those
+    # providers the check then fails as stale, and the provider has to resend.
     _REPLAYABLE_STATUSES = {
         WebhookInboundEvent.Status.FAILED,
         WebhookInboundEvent.Status.DEAD_LETTER,
@@ -1608,6 +1659,7 @@ class TenantEventReplayView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+            reverify = event.verification_failed
             event.status = WebhookInboundEvent.Status.RECEIVED
             event.attempts = 0
             event.next_attempt_at = None
@@ -1635,7 +1687,7 @@ class TenantEventReplayView(APIView):
                 event.id,
                 ignore_timing=True,
                 tenant_slug=tenant_slug,
-                skip_verification=True,
+                skip_verification=not reverify,
                 force=True,
             )
         except Exception:
@@ -1659,7 +1711,7 @@ class TenantEventReplayView(APIView):
                 metadata={"event_id": event.id, "provider": event.provider},
             )
         return Response(
-            {"status": "accepted", "tracking_id": event.id},
+            {"status": "accepted", "tracking_id": event.id, "reverify": reverify},
             status=status.HTTP_202_ACCEPTED,
         )
 

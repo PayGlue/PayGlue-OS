@@ -26,7 +26,7 @@ import {
   listMappings,
   type PaywallConfigData,
 } from '../lib/api'
-import { ruleForProduct } from '../lib/mappingKeys'
+import { entitlementKeyForProduct, ruleForProduct } from '../lib/mappingKeys'
 import type { ProductMapping } from '../types/api'
 import { useHeaderScriptStatus } from '../composables/useHeaderScriptStatus'
 
@@ -151,7 +151,6 @@ function buildSnippet(cfg: { product_id?: string; headline: string; body: string
 // fixed. It still belongs in the lookup: a buy button pointing at the same
 // product owns a different mapping, and matching on the product alone made the
 // two overwrite each other.
-const PAYWALL_ENTITLEMENT_KEY = 'paywall'
 
 function syncMappingState(productId: string) {
   const m = ruleForProduct(mappings.value, selectedProvider.value, productId)
@@ -233,7 +232,9 @@ function startEdit(cfg: PaywallConfigData) {
     else if (paddleProducts.value.some(p => p.id === cfg.product_id)) selectedProvider.value = 'paddle'
     else selectedProvider.value = 'polar'
     syncMappingState(cfg.product_id)
-    nextTick(() => { buttonUrl.value = cfg.button_url })
+    // A config saved without a link (PayPal plans used to come without one)
+    // gets the product's link filled in, so saving it once repairs the button.
+    nextTick(() => { buttonUrl.value = cfg.button_url || (isManualProduct.value ? '' : checkoutUrlForProduct(cfg.product_id)) })
   } else {
     ctaMode.value = 'custom'
     nextTick(() => { buttonUrl.value = cfg.button_url })
@@ -257,7 +258,7 @@ async function saveConfig() {
     // rule for it in the same transaction as the paywall (PG-254).
     grant: {
       event_type: mappingEventType.value,
-      entitlement_key: PAYWALL_ENTITLEMENT_KEY,
+      entitlement_key: entitlementKeyForProduct(selectedProductId.value),
       metadata: {
         ghost_subscribed: mappingGhostSubscribed.value,
         ghost_email_types: mappingEmailType.value ? [mappingEmailType.value] : [],
@@ -727,6 +728,9 @@ const step2Config = computed(() => {
             </label>
             <input v-model="buttonUrl" type="url" :placeholder="isManualProduct ? 'https://ko-fi.com/yourname' : ctaMode === 'product' ? 'Select a product above' : 'https://example.com/checkout'"
               class="w-full rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none" />
+            <p v-if="!buttonUrl.trim() && (ctaMode === 'custom' || selectedProductId)" class="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
+              Without a button URL the paywall shows no button, and readers have no way to buy.
+            </p>
             <p v-if="polarSandbox" class="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
               Polar sandbox connected. Sandbox checkout links only open when logged into Polar. This is a Polar sandbox limitation, not a PayGlue issue. Production checkout links work publicly without login.
             </p>

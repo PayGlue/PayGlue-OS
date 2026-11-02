@@ -1337,7 +1337,7 @@ onMounted(async () => {
         <div class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 space-y-3">
           <div>
             <p class="text-sm font-semibold text-slate-900 dark:text-slate-100">Option A: Inline embed</p>
-            <p class="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Renders the pricing table directly inside a Ghost HTML card. Width is limited by Ghost's content column.</p>
+            <p class="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Renders the pricing table directly inside a Ghost HTML card. It spans the full width of the page.</p>
           </div>
           <div class="flex items-center justify-between">
             <p class="text-xs text-slate-500 dark:text-slate-400">Paste into a Ghost HTML card</p>
