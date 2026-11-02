@@ -295,3 +295,72 @@ def test_a_toggled_tier_with_a_yearly_product_gets_a_rule_for_both_products(owne
     tier = response.json()["tiers"][0]
     assert tier["product_id_yearly"] == "prod_yearly"
     assert tier["cta_url_yearly"] == "https://buy.example/yearly"
+
+
+def test_two_buttons_on_two_products_get_two_product_labels(owner) -> None:
+    """The buy button editor sent `button` for every product, so two products
+    reached Ghost as the same `product:button` label, and an ending for one took
+    the access of both (PG-369). A key that names the widget is ignored."""
+    client = Client()
+    _post(client, "buttons", _button_payload(entitlement_key="button"), owner)
+    other = {**_button_payload(entitlement_key="button"), "name": "Go Team", "product_id": "prod_other"}
+    _post(client, "buttons", other, owner)
+
+    keys = dict(ProductMapping.objects.values_list("external_product_id", "entitlement_key"))
+    assert keys == {PRODUCT: f"product-{PRODUCT}", "prod_other": "product-prod_other"}
+
+
+def test_a_paywall_key_that_names_the_widget_is_replaced_by_the_product(owner) -> None:
+    response = _post(
+        Client(),
+        "paywalls",
+        {
+            "name": "Members",
+            "product_provider": "polar",
+            "product_id": PRODUCT,
+            "grant": {"entitlement_key": "paywall"},
+        },
+        owner,
+    )
+
+    assert response.status_code == 201
+    assert ProductMapping.objects.get().entitlement_key == f"product-{PRODUCT}"
+
+
+def test_migration_renames_only_keys_that_several_rules_share() -> None:
+    """PG-369, migration 0026. A tenant with one `paywall` rule keeps it: the
+    label still names exactly one product."""
+    import importlib
+
+    from django.apps import apps
+
+    migration = importlib.import_module(
+        "payglue_backend.webhooks.migrations.0026_pg369_product_named_keys"
+    )
+
+    def rule(tenant: str, key: str, product: str, active: bool = True) -> ProductMapping:
+        return ProductMapping.objects.create(
+            tenant_slug=tenant,
+            payment_provider="polar",
+            event_type="order.paid",
+            external_product_id=product,
+            entitlement_key=key,
+            action="grant",
+            is_active=active,
+        )
+
+    a = rule("shared", "button", "prod_a")
+    b = rule("shared", "button", "prod_b")
+    old = rule("shared", "button", "prod_old", active=False)
+    single = rule("single", "paywall", "prod_s")
+    named = rule("shared", "pro", "prod_pro")
+
+    migration.rename_shared_keys(apps, None)
+
+    for row in (a, b, old, single, named):
+        row.refresh_from_db()
+    assert (a.entitlement_key, a.legacy_entitlement_key) == ("product-prod_a", "button")
+    assert (b.entitlement_key, b.legacy_entitlement_key) == ("product-prod_b", "button")
+    assert (old.entitlement_key, old.legacy_entitlement_key) == ("product-prod_old", "button")
+    assert (single.entitlement_key, single.legacy_entitlement_key) == ("paywall", "")
+    assert (named.entitlement_key, named.legacy_entitlement_key) == ("pro", "")

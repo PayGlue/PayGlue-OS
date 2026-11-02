@@ -171,6 +171,47 @@ def test_event_replay_permission_matrix(
         assert queued == []
 
 
+def _failed_event(**fields: object) -> WebhookInboundEvent:
+    return WebhookInboundEvent.objects.create(
+        tenant_slug="tenant-a",
+        provider="polar",
+        status=WebhookInboundEvent.Status.FAILED,
+        payload_raw=b"{}",
+        headers_snapshot={},
+        endpoint_path="/t/tenant-a/webhooks/polar/[redacted]/",
+        endpoint_token_hash="hash",
+        **fields,
+    )
+
+
+def test_replay_checks_an_unverified_event_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = Client()
+    headers = _auth_headers(
+        monkeypatch,
+        tenant_slug="tenant-a",
+        role=TenantMembership.Role.OWNER,
+        uid_suffix="replay-verify",
+    )
+    passed = _failed_event(last_error="upstream timeout")
+    rejected = _failed_event(last_error="signature mismatch", verification_failed=True)
+    skipped: dict[int, object] = {}
+
+    def _capture_delay(event_id: int, **kwargs: object) -> None:
+        skipped[event_id] = kwargs.get("skip_verification")
+
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.views.process_inbound_webhook_event.delay",
+        _capture_delay,
+    )
+
+    first = client.post(f"/t/tenant-a/api/v1/events/{passed.id}/replay", **headers)
+    second = client.post(f"/t/tenant-a/api/v1/events/{rejected.id}/replay", **headers)
+
+    assert first.json()["reverify"] is False
+    assert second.json()["reverify"] is True
+    assert skipped == {passed.id: True, rejected.id: False}
+
+
 def test_event_replay_rejects_invalid_state_and_missing_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

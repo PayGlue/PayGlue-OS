@@ -50,6 +50,13 @@ def _is_retryable_error(error: Exception) -> bool:
     return True
 
 
+def _failed_verification(error: Exception, event: WebhookInboundEvent) -> bool:
+    """The delivery was rejected, or its secret was missing so no check ran."""
+    if isinstance(error, InvalidWebhookSignatureError):
+        return True
+    return isinstance(error, MissingCredentialsError) and error.provider_key == event.provider
+
+
 def _exponential_backoff_seconds(attempt_number: int) -> int:
     base_seconds = 5
     max_seconds = 300
@@ -153,8 +160,10 @@ def _process_inbound_webhook_event(
     # reaches a second attempt has passed it. Checking again would compare a
     # timestamped signature against the clock after the backoff, and from the
     # second retry on that comparison fails for every provider that signs
-    # with a timestamp, hiding the error the first attempt actually hit.
-    verify = not skip_verification and event.attempts == 1
+    # with a timestamp, hiding the error the first attempt actually hit. The
+    # exception is a first attempt that could not check at all because the
+    # secret was missing: that one has passed nothing yet.
+    verify = not skip_verification and (event.attempts == 1 or event.verification_failed)
     try:
         result = orchestrator.process_webhook(
             payment_provider_key=event.provider,
@@ -175,6 +184,7 @@ def _process_inbound_webhook_event(
             attempts=event.attempts,
             status=WebhookInboundEvent.Status.SKIPPED,
             last_error=str(exc),
+            verification_failed=False,
             failed_at=None,
             next_attempt_at=None,
             dead_lettered_at=None,
@@ -185,6 +195,7 @@ def _process_inbound_webhook_event(
         error_now = timezone.now()
         retryable = _is_retryable_error(exc)
         last_error = str(exc)
+        unverified = _failed_verification(exc, event)
         if retryable and event.attempts < event.max_attempts:
             backoff_seconds = _exponential_backoff_seconds(event.attempts)
             updated = _update_if_current_processing(
@@ -192,6 +203,7 @@ def _process_inbound_webhook_event(
                 attempts=event.attempts,
                 status=WebhookInboundEvent.Status.FAILED,
                 last_error=last_error,
+                verification_failed=unverified,
                 failed_at=error_now,
                 next_attempt_at=error_now + timedelta(seconds=backoff_seconds),
                 dead_lettered_at=None,
@@ -241,6 +253,7 @@ def _process_inbound_webhook_event(
             attempts=event.attempts,
             status=status,
             last_error=last_error,
+            verification_failed=unverified,
             failed_at=error_now,
             next_attempt_at=None,
             dead_lettered_at=dead_lettered_at,
@@ -262,6 +275,7 @@ def _process_inbound_webhook_event(
             attempts=event.attempts,
             status=WebhookInboundEvent.Status.SKIPPED,
             last_error=f"duplicate delivery: event {result.event_id} was already processed",
+            verification_failed=False,
             processed_at=None,
             failed_at=None,
             next_attempt_at=None,
@@ -278,6 +292,7 @@ def _process_inbound_webhook_event(
         processed_at=success_now,
         next_attempt_at=None,
         last_error="",
+        verification_failed=False,
         failed_at=None,
         dead_lettered_at=None,
         updated_at=success_now,

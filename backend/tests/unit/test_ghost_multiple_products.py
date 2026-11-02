@@ -97,15 +97,18 @@ class FakeGhost:
         )
 
 
-def _apply(ghost: FakeGhost, key: str, action: str, day: str = "2026-10-20") -> None:
+def _apply(ghost: FakeGhost, key: str, action: str, day: str = "2026-10-20", legacy: str = "") -> None:
     adapter = GhostCmsAdapter(http_client=ghost, credential_provider=_Credentials())
+    metadata = {"_provider": "creem", "_product_id": key, "_event_id": f"evt_{key}_{action}", "_occurred_at": day}
+    if legacy:
+        metadata["_legacy_entitlement_key"] = legacy
     adapter.apply_entitlement(
         CanonicalCustomer(email="reader@example.com"),
         EntitlementInstruction(
             entitlement_key=key,
             action=action,
             quantity=1,
-            metadata={"_provider": "creem", "_product_id": key, "_event_id": f"evt_{key}_{action}", "_occurred_at": day},
+            metadata=metadata,
         ),
         TenantContext(tenant_slug="tenant-a"),
     )
@@ -240,3 +243,45 @@ def test_without_stripe_the_label_carries_the_access_the_same_way() -> None:
 
     assert "payglue-active" not in ghost.labels
     assert "payglue-ended" in ghost.labels
+
+
+# PG-369: rules renamed from `button` or `paywall` to `product-<id>`. Members who
+# bought before carry the shared old label.
+
+
+def test_a_renamed_rule_takes_its_old_label_and_keeps_another_paid_product() -> None:
+    ghost = FakeGhost()
+    _apply(ghost, "button", "grant")  # bought before the rename
+    _apply(ghost, "product-c", "grant")  # bought after it
+
+    _apply(ghost, "product-a", "revoke", day="2026-11-20", legacy="button")
+
+    assert ghost.member["comped"] is True
+    assert "payglue-active" in ghost.labels
+    assert "product:button" not in ghost.labels
+    assert "product:product-c" in ghost.labels
+
+
+def test_the_old_shared_label_is_no_proof_of_another_product() -> None:
+    """Two products sold through buttons both wrote `product:button`. Which of
+    them the member holds cannot be told, so the ending behaves like before the
+    fix rather than leaving access open after the last product ends."""
+    ghost = FakeGhost()
+    _apply(ghost, "button", "grant")
+
+    _apply(ghost, "product-a", "revoke", day="2026-11-20", legacy="button")
+
+    assert ghost.member["comped"] is False
+    assert "payglue-ended" in ghost.labels
+
+
+def test_an_ending_for_a_renamed_rule_the_member_never_bought_changes_nothing() -> None:
+    ghost = FakeGhost()
+    _apply(ghost, "product-c", "grant")
+    _apply(ghost, "product-d", "grant")
+    labels_before = list(ghost.labels)
+
+    _apply(ghost, "product-a", "revoke", day="2026-11-20", legacy="button")
+
+    assert ghost.labels == labels_before
+    assert ghost.member["comped"] is True

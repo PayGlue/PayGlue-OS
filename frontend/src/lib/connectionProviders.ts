@@ -71,7 +71,7 @@ export interface ConnectionProvider {
   steps: SetupStep[]
 }
 
-const WEBHOOK_HINT = 'The key at the end identifies your workspace. Paste the URL only into your provider\'s webhook settings.'
+const WEBHOOK_HINT = 'The key at the end identifies your publication. Paste the URL only into your provider\'s webhook settings.'
 
 export const CONNECTION_PROVIDERS: Record<ProviderKey, ConnectionProvider> = {
   polar: {
@@ -159,7 +159,7 @@ export const CONNECTION_PROVIDERS: Record<ProviderKey, ConnectionProvider> = {
       {
         title: 'Add a webhook',
         bodyHtml: 'Scroll down to <strong>Webhooks</strong> inside your app and click <strong>Add Webhook</strong>. Paste the Webhook URL from the left. Enable these events:',
-        events: ['BILLING.SUBSCRIPTION.ACTIVATED', 'BILLING.SUBSCRIPTION.CANCELLED', 'BILLING.SUBSCRIPTION.EXPIRED', 'BILLING.SUBSCRIPTION.SUSPENDED', 'BILLING.SUBSCRIPTION.UPDATED', 'PAYMENT.CAPTURE.COMPLETED'],
+        events: ['BILLING.SUBSCRIPTION.ACTIVATED', 'BILLING.SUBSCRIPTION.CANCELLED', 'BILLING.SUBSCRIPTION.EXPIRED', 'BILLING.SUBSCRIPTION.SUSPENDED', 'BILLING.SUBSCRIPTION.UPDATED'],
       },
       { title: 'Copy the Webhook ID', bodyHtml: 'After saving the webhook, PayPal shows a <strong>Webhook ID</strong>. Copy it and paste it into the field on the left.' },
       { title: 'Save in PayGlue', bodyHtml: 'Enter Client ID, Client Secret, and Webhook ID into the fields on the left, then click <strong>Save credentials</strong>.' },
@@ -275,7 +275,7 @@ export const CONNECTION_PROVIDERS: Record<ProviderKey, ConnectionProvider> = {
       { title: 'Register a client', bodyHtml: 'In the <strong>Patreon developer portal</strong> (patreon.com/portal), create a client for your campaign. Copy the <strong>Creator\'s Access Token</strong> it gives you.' },
       { title: 'Register a webhook', bodyHtml: "In the portal's <strong>Webhooks</strong> section, paste the Webhook URL above and enable the <strong>members:pledge:create</strong>, <strong>members:pledge:update</strong>, and <strong>members:pledge:delete</strong> triggers." },
       { title: 'Copy the webhook secret', bodyHtml: 'Patreon shows a <strong>secret</strong> next to your webhook. Paste it, and the Access Token, into the fields on the left, then click <strong>Save credentials</strong>.' },
-      { title: 'Map your tiers', bodyHtml: 'On the <strong>Product mapping</strong> page, pick each Patreon tier and choose which Ghost access it grants. A cancelled pledge automatically revokes all Patreon-granted access.' },
+      { title: 'Map your tiers', bodyHtml: 'In a <strong>Buy Button</strong>, <strong>Paywall</strong> or <strong>Pricing Table</strong>, choose Patreon and pick the tier. For a button, paste your Patreon join URL as the link. A cancelled pledge automatically revokes all Patreon-granted access.' },
     ],
   },
 }

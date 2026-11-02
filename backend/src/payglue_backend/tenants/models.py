@@ -1013,26 +1013,24 @@ class NewsletterRouting(models.Model):
 
 
 class SupportRequest(models.Model):
-    """A support request raised from the dashboard, mirrored into the tracker.
+    """A support request raised from the dashboard, mirrored into the helpdesk.
 
-    We have no helpdesk, only an inbox and an issue tracker. Every request
-    opens an issue in the support project and keeps the identifier
-    (PGSUP-12 and so on) so both sides can name the same thing.
+    Every request becomes a ticket in the helpdesk and keeps its reference so
+    both sides can name the same thing. Without a helpdesk the request is
+    confirmed and forwarded by email and keeps our own reference.
 
     Deliberately one-way: we push the request in and read the status back out.
-    Replies still happen by email. Issue *content* is never exposed to the
-    customer, because internal comments live on the same issue.
+    Replies happen in the helpdesk by email. Ticket *content* is never exposed
+    to the customer here, because internal notes live on the same ticket.
     """
 
     STATUS_OPEN = "open"
     STATUS_IN_PROGRESS = "in_progress"
     STATUS_DONE = "done"
     STATUS_CANCELLED = "cancelled"
-    # The words the customer reads. Deliberately the same ones we use in the
-    # tracker, so a conversation about a ticket does not need a translation
-    # step in anybody's head. The keys stay internal and stay stable: the
-    # mapping from tracker state to key runs on the state *group*, so renaming
-    # a column changes neither.
+    # The words the customer reads. The keys stay internal and stay stable:
+    # the helpdesk's stages are mapped onto them in helpdesk.py, so renaming a
+    # stage there changes neither.
     STATUS_CHOICES = [
         (STATUS_OPEN, "Pending"),
         (STATUS_IN_PROGRESS, "Active"),
@@ -1053,15 +1051,15 @@ class SupportRequest(models.Model):
     name = models.CharField(max_length=200, blank=True)
     topic = models.CharField(max_length=40, blank=True)
     # What the customer calls their own request. Blank on everything filed
-    # before this field existed, and the issue title falls back to the opening
+    # before this field existed, and the ticket title falls back to the opening
     # line of the message for those.
     subject = models.CharField(max_length=120, blank=True)
     message = models.TextField()
 
-    # Blank when the tracker was unreachable. The request is still stored and
-    # the customer still gets a reply, they just have no reference number.
-    # Named for the job rather than the product: this is the second tracker
-    # behind these two columns.
+    # The helpdesk ticket id and reference. Blank when the helpdesk was off or
+    # unreachable: the request is still stored and the customer still gets a
+    # reply, just with our own reference. Older rows hold ids from the issue
+    # tracker used before the helpdesk; the column names date from then.
     tracker_issue_id = models.CharField(max_length=64, blank=True)
     tracker_identifier = models.CharField(max_length=32, blank=True, db_index=True)
 
@@ -1082,7 +1080,7 @@ class SupportRequest(models.Model):
     @property
     def reference(self) -> str:
         """What the customer is told to quote. Falls back to our own id so a
-        tracker outage still leaves something to search for."""
+        helpdesk outage still leaves something to search for."""
         return self.tracker_identifier or f"PG-REQ-{self.pk}"
 
 

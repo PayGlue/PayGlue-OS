@@ -2,6 +2,7 @@
 // Licensed under the Business Source License 1.1, see LICENSE.md
 
 <script setup lang="ts">
+import { statusHref } from '../lib/hub'
 import { computed, onMounted, ref } from 'vue'
 import AppShell from '../components/AppShell.vue'
 import {
@@ -423,8 +424,8 @@ const formatDate = (iso: string) => {
                   <a href="https://payglue.io/roadmap" target="_blank" rel="noopener" class="text-indigo-600 hover:underline dark:text-indigo-400">Roadmap</a>
                   <span class="text-slate-500 dark:text-slate-400"> before asking for a feature</span>
                 </li>
-                <li>
-                  <a href="https://status.payglue.io" target="_blank" rel="noopener" class="text-indigo-600 hover:underline dark:text-indigo-400">System status</a>
+                <li v-if="statusHref">
+                  <a :href="statusHref" target="_blank" rel="noopener" class="text-indigo-600 hover:underline dark:text-indigo-400">System status</a>
                   <span class="text-slate-500 dark:text-slate-400"> if it broke all at once</span>
                 </li>
               </ul>

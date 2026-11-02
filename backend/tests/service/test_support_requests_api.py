@@ -7,13 +7,12 @@ skips everything the view does: reading the posted address, checking it, and
 deciding what the customer is told. That gap let a malformed address through
 to production, where one trailing comma took out the confirmation email, our
 own internal notification (the address rides along in Reply-To) and the
-tracker's email link, from a form that had already said "Message sent".
+issue tracker's email link we had then, from a form that had already said "Message sent".
 
 Anything reachable only through a request needs at least one test that makes
 the request.
 """
 from dataclasses import dataclass
-from unittest import mock
 
 import pytest
 from django.test import Client
@@ -72,16 +71,12 @@ def _post(headers: dict[str, str], **payload):
         "topic": "bug",
     }
     body.update(payload)
-    with mock.patch(
-        "payglue_backend.tenants.support.tracker.create_support_issue",
-        return_value=("iss_1", "PGSUP-1"),
-    ), mock.patch("payglue_backend.tenants.support.tracker.link_requester_email"):
-        return Client().post(
-            "/t/acme/api/v1/support/requests",
-            data=body,
-            content_type="application/json",
-            **headers,
-        )
+    return Client().post(
+        "/t/acme/api/v1/support/requests",
+        data=body,
+        content_type="application/json",
+        **headers,
+    )
 
 
 def test_a_valid_request_is_accepted(headers) -> None:

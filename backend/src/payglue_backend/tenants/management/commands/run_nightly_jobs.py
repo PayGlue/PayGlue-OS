@@ -50,7 +50,7 @@ class Command(BaseCommand):
         for name, takes_dry_run in JOBS:
             if name not in installed:
                 # A self-hosted installation ships without some of these
-                # (the support status sync talks to our own tracker). Not
+                # (the support status sync talks to our own helpdesk). Not
                 # having a job is not a failure of the night.
                 self.stdout.write(f"== {name}: not installed, skipped")
                 continue

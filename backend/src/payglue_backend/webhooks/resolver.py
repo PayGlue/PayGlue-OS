@@ -113,6 +113,8 @@ class DbProductMappingResolver(MappingResolver):
             meta["_product_id"] = mapping.external_product_id
             meta["_occurred_at"] = event.occurred_at.date().isoformat()
             meta["_is_test"] = bool(getattr(event, "is_test", False))
+            if mapping.legacy_entitlement_key:
+                meta["_legacy_entitlement_key"] = mapping.legacy_entitlement_key
             instructions.append(
                 EntitlementInstruction(
                     entitlement_key=mapping.entitlement_key,
@@ -145,6 +147,8 @@ class DbProductMappingResolver(MappingResolver):
                 meta["_event_id"] = event.provider_event_id
                 meta["_product_id"] = mapping.external_product_id
                 meta["_occurred_at"] = event.occurred_at.date().isoformat()
+                if mapping.legacy_entitlement_key:
+                    meta["_legacy_entitlement_key"] = mapping.legacy_entitlement_key
                 instructions.append(
                     EntitlementInstruction(
                         entitlement_key=mapping.entitlement_key,
@@ -180,6 +184,8 @@ class DbProductMappingResolver(MappingResolver):
             meta["_provider"] = event.provider
             meta["_event_id"] = event.provider_event_id
             meta["_occurred_at"] = event.occurred_at.date().isoformat()
+            if mapping.legacy_entitlement_key:
+                meta["_legacy_entitlement_key"] = mapping.legacy_entitlement_key
             instructions.append(
                 EntitlementInstruction(
                     entitlement_key=mapping.entitlement_key,

@@ -497,3 +497,34 @@ def test_resolver_carries_the_test_flag_into_the_instruction() -> None:
     instructions = DbProductMappingResolver().resolve(event, TenantContext(tenant_slug="tenant-a"))
 
     assert instructions[0].metadata["_is_test"] is True
+
+
+def test_a_renamed_rule_hands_its_old_key_to_the_cms() -> None:
+    """PG-369: the Ghost adapter needs the old shared key to recognise members
+    who bought under `product:button`."""
+    ProductMapping.objects.create(
+        tenant_slug="tenant-a",
+        payment_provider="polar",
+        event_type="order.paid",
+        external_product_id="prod_basic",
+        entitlement_key="product-prod_basic",
+        legacy_entitlement_key="button",
+        action="grant",
+        is_active=True,
+    )
+
+    instructions = DbProductMappingResolver().resolve(
+        _event(
+            (
+                CanonicalLineItem(
+                    external_product_id="prod_basic",
+                    quantity=1,
+                    amount_minor=1000,
+                    currency="USD",
+                ),
+            )
+        ),
+        TenantContext(tenant_slug="tenant-a"),
+    )
+
+    assert instructions[0].metadata["_legacy_entitlement_key"] == "button"

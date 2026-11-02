@@ -7,9 +7,11 @@ import { useRoute, useRouter } from 'vue-router'
 import PayGlueLogo from './PayGlueLogo.vue'
 import CommandPalette, { type PaletteItem } from './CommandPalette.vue'
 import GracePeriodBanner from './GracePeriodBanner.vue'
+import SupportWidget from './SupportWidget.vue'
 import { useSessionStore } from '../stores/session'
 import { usePageResetStore } from '../stores/pageReset'
 import { checkHeaderScript, getChangelogForBell, getGhostStripeStatus, getIntegrationConfig } from '../lib/api'
+import { hubUrl, statusHref } from '../lib/hub'
 import type { ChangelogBellEntry } from '../types/api'
 import { useHeaderScriptStatus } from '../composables/useHeaderScriptStatus'
 import { useTheme } from '../composables/useTheme'
@@ -40,6 +42,14 @@ const themeLabel = computed(() =>
 // is synced to PayGlue-OS, so the old array put "the blog moved to payglue.io"
 // in front of people running their own copy.
 const bellEntries = ref<ChangelogBellEntry[]>([])
+// The changelog and roadmap live on the helpdesk portal when one is
+// configured; without it they stay on our own pages.
+const changelogHref = hubUrl ? `${hubUrl}/changelog` : '/changelog/'
+const roadmapHref = hubUrl ? `${hubUrl}/roadmap` : '/roadmap/'
+const linkTarget = hubUrl ? '_blank' : undefined
+function bellHref(entry: ChangelogBellEntry): string {
+  return entry.url || `/changelog/#${entry.anchor}`
+}
 
 // Per browser, not per account. This is a preference about a dot, not a record
 // about a person, and storing it server-side would mean a new personal data
@@ -660,7 +670,8 @@ watch(
               <a
                 v-for="(n, i) in bellEntries"
                 :key="i"
-                :href="`/changelog/#${n.anchor}`"
+                :href="bellHref(n)"
+                :target="n.url ? '_blank' : undefined"
                 class="block px-4 py-3 transition-colors hover:bg-slate-700/50"
                 @click="notificationsOpen = false"
               >
@@ -670,8 +681,8 @@ watch(
               </a>
               <p v-if="!bellEntries.length" class="px-4 py-3 text-xs text-slate-500">You're all caught up.</p>
               <div class="flex items-center gap-4 border-t border-slate-700 px-4 py-2.5">
-                <a href="/changelog/" class="text-xs font-semibold text-indigo-400 hover:text-indigo-300" @click="notificationsOpen = false">Changelog →</a>
-                <a href="/roadmap/" class="text-xs font-semibold text-indigo-400 hover:text-indigo-300" @click="notificationsOpen = false">Roadmap →</a>
+                <a :href="changelogHref" :target="linkTarget" class="text-xs font-semibold text-indigo-400 hover:text-indigo-300" @click="notificationsOpen = false">Changelog →</a>
+                <a :href="roadmapHref" :target="linkTarget" class="text-xs font-semibold text-indigo-400 hover:text-indigo-300" @click="notificationsOpen = false">Roadmap →</a>
               </div>
             </div>
             <button
@@ -705,7 +716,8 @@ watch(
                 Support
               </RouterLink>
               <a
-                href="https://status.payglue.io"
+                v-if="statusHref"
+                :href="statusHref"
                 target="_blank"
                 rel="noopener"
                 class="flex items-center gap-3 px-4 py-2.5 text-xs font-medium text-slate-200 transition-colors hover:bg-slate-700"
@@ -1006,7 +1018,8 @@ watch(
               Support
             </RouterLink>
             <a
-              href="https://status.payglue.io"
+              v-if="statusHref"
+              :href="statusHref"
               target="_blank"
               rel="noopener"
               class="flex items-center gap-3 py-2 text-xs font-medium text-slate-200"
@@ -1035,7 +1048,8 @@ watch(
             <a
               v-for="(n, i) in bellEntries"
               :key="i"
-              :href="`/changelog/#${n.anchor}`"
+              :href="bellHref(n)"
+                :target="n.url ? '_blank' : undefined"
               class="mt-2 block"
               @click="notificationsOpen = false; mobileSidebarOpen = false"
             >
@@ -1045,8 +1059,8 @@ watch(
             </a>
             <p v-if="!bellEntries.length" class="mt-1 text-xs text-slate-500">You're all caught up.</p>
             <div class="mt-2.5 flex items-center gap-4">
-              <a href="/changelog/" class="text-xs font-semibold text-indigo-400" @click="notificationsOpen = false; mobileSidebarOpen = false">Changelog →</a>
-              <a href="/roadmap/" class="text-xs font-semibold text-indigo-400" @click="notificationsOpen = false; mobileSidebarOpen = false">Roadmap →</a>
+              <a :href="changelogHref" :target="linkTarget" class="text-xs font-semibold text-indigo-400" @click="notificationsOpen = false; mobileSidebarOpen = false">Changelog →</a>
+              <a :href="roadmapHref" :target="linkTarget" class="text-xs font-semibold text-indigo-400" @click="notificationsOpen = false; mobileSidebarOpen = false">Roadmap →</a>
             </div>
           </div>
 
@@ -1121,5 +1135,6 @@ watch(
     </div>
 
     <CommandPalette v-model:open="paletteOpen" :items="allNavItems" />
+    <SupportWidget />
   </div>
 </template>
