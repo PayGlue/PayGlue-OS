@@ -15,6 +15,7 @@ import {
   getLemonSqueezyStores,
   getPolarProducts,
   listMappings,
+  registerIntegrationWebhooks,
   runIntegrationHealthCheck,
   setIntegrationCredentials,
   updateIntegrationConfig,
@@ -159,10 +160,26 @@ const dismissRenameWarning = () => {
 
 const showSaveButton = computed(() => {
   if (!config.enabled) return true
+  // Saving again registers the webhooks again, so it stays useful when
+  // every field is already stored.
+  if (meta.value.registersWebhooks) return true
   if (meta.value.fields.some((f) => editing[f.key] || (form[f.key] ?? '').trim())) return true
   if (meta.value.hasStore && selectedStoreId.value) return true
   return false
 })
+
+// Gumroad (and any provider that registers webhooks server-side) reports
+// the registration outcome -- surface it.
+const showWebhookRegistration = (reg: IntegrationCredentialWriteResult['webhook_registration']) => {
+  if (!reg || !(reg.registered?.length || reg.failed?.length)) return
+  if (reg.failed?.length) {
+    webhookRegistrationOk.value = false
+    webhookRegistrationMessage.value = `Some webhook events could not be registered: ${reg.failed.join(', ')}.`
+  } else {
+    webhookRegistrationOk.value = true
+    webhookRegistrationMessage.value = 'Webhook events registered automatically.'
+  }
+}
 
 const save = async () => {
   if (!canWrite.value) return
@@ -207,21 +224,13 @@ const save = async () => {
         if (field.detect === 'credential_ref') stored[field.key] = maskedKeys.includes(field.key)
         else if (field.detect === 'polar_token' && (form[field.key] ?? '').trim()) stored[field.key] = true
       }
-      // Gumroad (and any provider that registers webhooks server-side) reports
-      // the registration outcome -- surface it.
-      const reg = result.webhook_registration
-      if (reg && (reg.registered?.length || reg.failed?.length)) {
-        if (reg.failed?.length) {
-          webhookRegistrationOk.value = false
-          webhookRegistrationMessage.value = `Some webhook events could not be registered: ${reg.failed.join(', ')}.`
-        } else {
-          webhookRegistrationOk.value = true
-          webhookRegistrationMessage.value = 'Webhook events registered automatically.'
-        }
-      }
+      showWebhookRegistration(result.webhook_registration)
       if (meta.value.hasStore && ((form['api_key'] ?? '').trim() || (stored['api_key'] && !stores.value.length))) {
         await loadStores()
       }
+    } else if (meta.value.registersWebhooks && config.enabled) {
+      const result = await registerIntegrationWebhooks(tenantSlug, idToken, 'gumroad')
+      showWebhookRegistration(result.webhook_registration)
     }
 
     config.enabled = true
@@ -380,7 +389,7 @@ watch(() => props.provider, () => {
         <UiCard class="lg:col-span-2">
           <div class="space-y-4">
             <!-- Webhook URL -->
-            <FormField label="Webhook URL" :hint="WEBHOOK_URL_HINT">
+            <FormField label="Webhook URL" :hint="meta.webhookUrlHint ?? WEBHOOK_URL_HINT">
               <div v-if="webhookUrl" class="flex gap-2">
                 <input :value="webhookUrl" readonly class="pg-input pg-mono" />
                 <CopyButton :text="webhookUrl" />
@@ -444,18 +453,22 @@ watch(() => props.provider, () => {
 
             <!-- Actions -->
             <div class="flex flex-wrap gap-2 pt-1">
-              <UiButton v-if="showSaveButton" variant="primary" :disabled="!canWrite || saving" @click="save">
-                {{ saving ? 'Saving...' : saved ? 'Saved!' : 'Save credentials' }}
-              </UiButton>
               <UiButton variant="default" :disabled="!canWrite || healthChecking" @click="runHealthCheck">
                 {{ healthChecking ? 'Checking...' : 'Run health check' }}
               </UiButton>
               <UiButton v-if="config.enabled" variant="accent" :to="`/t/${session.activeTenantSlug}/mappings`">
                 Test this connection →
               </UiButton>
-              <UiButton v-if="canWrite && hasConnection" variant="danger" class="sm:ml-auto" @click="askDisconnect">
-                Disconnect
-              </UiButton>
+              <!-- Save sits rightmost and Disconnect next to it, so a quick
+                   click at the end of the row saves rather than disconnects. -->
+              <div class="flex gap-2 sm:ml-auto">
+                <UiButton v-if="canWrite && hasConnection" variant="danger" @click="askDisconnect">
+                  Disconnect
+                </UiButton>
+                <UiButton v-if="showSaveButton" variant="primary" :disabled="!canWrite || saving" @click="save">
+                  {{ saving ? 'Saving...' : saved ? 'Saved!' : 'Save credentials' }}
+                </UiButton>
+              </div>
             </div>
 
             <div

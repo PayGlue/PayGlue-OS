@@ -1,7 +1,7 @@
 # Copyright (c) 2026 PayGlue by André Nünninghoff
 # Licensed under the Business Source License 1.1, see LICENSE.md
 from datetime import UTC, datetime
-from urllib.parse import parse_qsl, urlencode
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse
 import hashlib
 import hmac
 import json
@@ -106,11 +106,37 @@ class GumroadPaymentAdapter:
     # into a settings page on the provider's own site. A real PayGlue user
     # will never call Gumroad's resource_subscriptions API by hand, so we
     # call it for them, server-side, the moment they save an access token.
-    # Re-registering on every save is safe: Gumroad's own API is what we're
-    # calling (not something we can dedupe client-side), and any resulting
-    # duplicate deliveries are already deduped by the orchestrator's
-    # idempotency store keyed on provider_event_id.
+    # Gumroad creates a subscription with PUT. Every save first removes the
+    # subscriptions this installation registered for the tenant under an
+    # older address (for example one without the key), so they do not keep
+    # failing next to the current one, and skips a resource that already
+    # points at the current address.
     _WEBHOOK_RESOURCE_NAMES = ("sale", "cancellation", "subscription_ended")
+    _API_BASE = "https://api.gumroad.com/v2"
+
+    def _call(self, method: str, path: str, params: dict[str, str]) -> dict:
+        query = urlencode(params)
+        if method in ("GET", "DELETE"):
+            req = urllib.request.Request(f"{self._API_BASE}{path}?{query}", method=method)
+        else:
+            req = urllib.request.Request(
+                f"{self._API_BASE}{path}", data=query.encode("utf-8"), method=method
+            )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read())
+
+    @staticmethod
+    def _is_own_address(post_url: str, webhook_url: str) -> bool:
+        """Same path and tenant as the address we register now. The host is
+        left out on purpose: an installation that registered under another
+        origin of itself (an internal host before PUBLIC_API_BASE_URL was
+        set) has to be able to clean that up."""
+        current = urlparse(webhook_url)
+        candidate = urlparse(post_url or "")
+        return (
+            candidate.path.rstrip("/") == current.path.rstrip("/")
+            and parse_qs(candidate.query).get("tenant") == parse_qs(current.query).get("tenant")
+        )
 
     def register_webhook_subscriptions(
         self, tenant_ctx: TenantContext, webhook_url: str
@@ -129,21 +155,37 @@ class GumroadPaymentAdapter:
         registered: list[str] = []
         failed: list[str] = []
         for resource_name in self._WEBHOOK_RESOURCE_NAMES:
-            body = urlencode(
-                {
-                    "access_token": access_token,
-                    "resource_name": resource_name,
-                    "post_url": webhook_url,
-                }
-            ).encode("utf-8")
-            req = urllib.request.Request(
-                "https://api.gumroad.com/v2/resource_subscriptions",
-                data=body,
-                method="POST",
-            )
             try:
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    data = json.loads(resp.read())
+                existing = self._call(
+                    "GET",
+                    "/resource_subscriptions",
+                    {"access_token": access_token, "resource_name": resource_name},
+                ).get("resource_subscriptions") or []
+                already_current = False
+                for subscription in existing:
+                    post_url = subscription.get("post_url", "")
+                    if not self._is_own_address(post_url, webhook_url):
+                        continue
+                    if post_url == webhook_url and not already_current:
+                        already_current = True
+                        continue
+                    self._call(
+                        "DELETE",
+                        f"/resource_subscriptions/{subscription['id']}",
+                        {"access_token": access_token},
+                    )
+                if already_current:
+                    registered.append(resource_name)
+                    continue
+                data = self._call(
+                    "PUT",
+                    "/resource_subscriptions",
+                    {
+                        "access_token": access_token,
+                        "resource_name": resource_name,
+                        "post_url": webhook_url,
+                    },
+                )
                 if data.get("success"):
                     registered.append(resource_name)
                 else:

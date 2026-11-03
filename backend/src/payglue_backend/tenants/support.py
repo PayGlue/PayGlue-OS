@@ -16,7 +16,12 @@ from django.conf import settings
 from django.utils import timezone
 
 from payglue_backend.authn.lifecycle_emails import _send_branded
-from payglue_backend.tenants import helpdesk
+# The helpdesk client is an add-on of the hosted product and is not part of
+# every build. Without it, support works by email alone.
+try:
+    from payglue_backend.tenants import helpdesk
+except ImportError:  # pragma: no cover - depends on the build
+    helpdesk = None
 from payglue_backend.tenants.models import SupportRequest, TenantMembership, Tenant
 
 logger = logging.getLogger(__name__)
@@ -105,7 +110,7 @@ def create_support_request(
     # and the helpdesk confirms, answers and reports status to the customer.
     # Without one, or when it cannot be reached, the request is confirmed and
     # forwarded by email, so it is never left without an answer route.
-    if helpdesk.is_configured():
+    if helpdesk is not None and helpdesk.is_configured():
         filed = helpdesk.create_support_ticket(
             title=headline,
             message=message,
@@ -193,6 +198,8 @@ def sync_statuses(requests: list[SupportRequest]) -> list[SupportRequest]:
     Requests filed before the helpdesk carry an id from the issue tracker we
     used then. That tracker is gone, so they keep the status they had.
     """
+    if helpdesk is None:
+        return requests
     pending = [
         r
         for r in requests

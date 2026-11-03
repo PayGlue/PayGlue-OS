@@ -68,6 +68,10 @@ export interface ConnectionProvider {
   hasStore?: boolean
   /** Polar: publication-rename webhook warning banner. */
   renameBanner?: boolean
+  /** PayGlue registers the webhook with the provider itself (Gumroad). */
+  registersWebhooks?: boolean
+  /** Replaces the generic hint under the webhook URL. */
+  webhookUrlHint?: string
   steps: SetupStep[]
 }
 
@@ -172,6 +176,8 @@ export const CONNECTION_PROVIDERS: Record<ProviderKey, ConnectionProvider> = {
     blurb: 'Connect Gumroad webhooks to automatically sync member access on sale and subscription events.',
     docsUrl: 'https://docs.payglue.io/setup/gumroad',
     notConnectedMsg: 'Not connected. Application Secret and Access Token are required',
+    registersWebhooks: true,
+    webhookUrlHint: 'PayGlue registers this URL with Gumroad every time you click Save. You do not need to paste it into Gumroad.',
     fields: [
       { key: 'application_id', label: 'Application ID', placeholder: 'Your Gumroad Application ID' },
       { key: 'application_secret', label: 'Application Secret', placeholder: 'Your Gumroad Application Secret', hint: 'Also used to verify that incoming webhooks really come from Gumroad.' },
