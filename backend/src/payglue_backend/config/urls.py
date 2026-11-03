@@ -25,14 +25,12 @@ from payglue_backend.authn.local_views import (
     LocalPasswordResetRequestView,
     LocalTokenView,
 )
-from payglue_backend.http.changelog import ChangelogView
 from payglue_backend.http.health import (
     CacheHealthView,
     DatabaseHealthView,
     OverallHealthView,
     WorkerHealthView,
 )
-from payglue_backend.http.support_widget import SupportWidgetTokenView
 from payglue_backend.tenants.views import (
     BillingProfileView,
     CreemCancelSubscriptionView,
@@ -107,14 +105,6 @@ urlpatterns = [
         name="auth-mfa-backup-codes-verify",
     ),
     path("api/v1/auth/account", DeleteAccountView.as_view(), name="auth-account-delete"),
-    path(
-        "api/v1/support/widget-token",
-        SupportWidgetTokenView.as_view(),
-        name="support-widget-token",
-    ),
-    # Unauthenticated: read-only, nothing user-specific, and empty until a
-    # helpdesk is configured.
-    path("api/v1/changelog", ChangelogView.as_view(), name="changelog"),
     path("api/v1/auth/step-up/request", StepUpRequestView.as_view(), name="auth-step-up-request"),
     path("api/v1/auth/step-up/verify", StepUpVerifyView.as_view(), name="auth-step-up-verify"),
     # Accounts on this server. All six answer 404 unless LOCAL_AUTH_ENABLED,
