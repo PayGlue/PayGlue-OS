@@ -12,12 +12,12 @@ given trigger just means nothing gets sent, no exception, no retry needed.
 """
 import html as _html
 import logging
-import re
 from string import Template
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 
+from payglue_backend.authn import mail_markup
 from payglue_backend.tenants.models import BillingAccount, LifecycleEmailLog, LifecycleEmailTemplate
 from payglue_backend.core.public_urls import app_url
 
@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
 # configured. Empty means the shell renders without a logo rather than with a
 # broken image pointing at somebody else's server (PG-238).
 _EMAIL_LOGO_PATH = "email-icon.png"
-_URL_RE = re.compile(r"https?://[^\s<]+")
 
 _EMAIL_SHELL = """\
 <!DOCTYPE html>
@@ -68,24 +67,13 @@ _EMAIL_SHELL = """\
 
 
 def _render_branded_email(subject: str, body: str) -> str:
-    """Render a plain-text email body into the branded HTML shell. Blank-line
-    separated paragraphs become <p>, single newlines <br>, and bare URLs become
-    links -- so an admin only ever types plain text but the email looks designed."""
-    blocks = []
-    for para in body.strip().split("\n\n"):
-        escaped = _html.escape(para.strip())
-        escaped = _URL_RE.sub(
-            lambda m: f'<a href="{m.group(0)}" style="color:#818cf8;text-decoration:none;">{m.group(0)}</a>',
-            escaped,
-        )
-        escaped = escaped.replace("\n", "<br />")
-        blocks.append(
-            f'<p style="margin:0 0 16px;font-size:15px;color:#cbd5e1;line-height:1.7;">{escaped}</p>'
-        )
+    """Render a mail body into the branded HTML shell. The body is plain text
+    with a few marks for headings, lists, bold and links (see mail_markup), so
+    an admin types text and the email still looks designed."""
     return _EMAIL_SHELL.format(
         subject=_html.escape(subject),
         logo=app_url(_EMAIL_LOGO_PATH),
-        content="".join(blocks),
+        content=mail_markup.to_html(body),
     )
 
 
@@ -117,7 +105,7 @@ def _send_branded(
         return
     message = EmailMultiAlternatives(
         subject,
-        body,
+        mail_markup.to_text(body),
         from_email or settings.DEFAULT_FROM_EMAIL,
         recipients,
         reply_to=reply_to or None,

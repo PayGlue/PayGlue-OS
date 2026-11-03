@@ -5,7 +5,7 @@ import hmac
 import json
 import re
 import secrets
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -484,6 +484,34 @@ class TenantProductMappingView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+def _register_gumroad_webhooks(request: Request, tenant_slug: str, provider) -> dict[str, object]:
+    """Gumroad has no dashboard page to paste a webhook URL into, so PayGlue
+    registers it for the user instead of requiring an API call a real end
+    user would never make."""
+    from payglue_backend.webhooks.adapters.gumroad import GumroadPaymentAdapter
+
+    try:
+        adapter = GumroadPaymentAdapter(credential_provider=provider)
+        # Gumroad calls this from its own servers, so it has to be the
+        # public origin of this installation, not the request host,
+        # which is the internal one behind a proxy (PG-238).
+        api_base = settings.PUBLIC_API_BASE_URL or request.build_absolute_uri("/").rstrip("/")
+        # Gumroad does not sign its pings, so the key in the URL is the
+        # only proof a delivery came from the address we gave Gumroad.
+        # Without it the endpoint would fall back to the shared token,
+        # or refuse the delivery where that is switched off.
+        query = urlencode(
+            {"tenant": tenant_slug, "key": wiring.get_tenant_webhook_secret(tenant_slug) or ""}
+        )
+        return adapter.register_webhook_subscriptions(
+            TenantContext(tenant_slug=tenant_slug),
+            f"{api_base}/webhooks/gumroad?{query}",
+        )
+    except Exception as exc:
+        logger.warning("gumroad: webhook auto-registration failed: %s", exc)
+        return {"registered": [], "failed": ["sale", "cancellation", "subscription_ended"]}
+
+
 class TenantIntegrationCredentialsView(APIView):
     authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
@@ -492,6 +520,34 @@ class TenantIntegrationCredentialsView(APIView):
 
     def _require_tenant_context(self, request: Request, tenant_slug: str) -> None:
         pass
+
+    def post(self, request: Request, tenant_slug: str, provider_key: str) -> Response:
+        """Registers the provider's webhooks again with the stored credentials,
+        for a Save on a connection whose fields are all stored already."""
+        integration = IntegrationConfig.objects.filter(
+            tenant_slug=tenant_slug,
+            provider_key=provider_key,
+        ).first()
+        if integration is None:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        if integration.provider_type != "gumroad":
+            return Response(
+                {"detail": "This provider has no webhooks to register."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        provider = wiring.get_credential_provider()
+        try:
+            stored = provider.get_credentials(TenantContext(tenant_slug=tenant_slug), integration.provider_type)
+        except Exception:
+            stored = {}
+        if not stored.get("access_token"):
+            return Response(
+                {"detail": "Save an access token first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(
+            {"webhook_registration": _register_gumroad_webhooks(request, tenant_slug, provider)}
+        )
 
     def put(self, request: Request, tenant_slug: str, provider_key: str) -> Response:
         self._require_tenant_context(request, tenant_slug)
@@ -561,24 +617,7 @@ class TenantIntegrationCredentialsView(APIView):
 
         webhook_registration: dict[str, object] | None = None
         if integration.provider_type == "gumroad" and "access_token" in merged:
-            # Gumroad has no dashboard page to paste a webhook URL into --
-            # register it for the user automatically instead of requiring an
-            # API call a real end user would never make.
-            from payglue_backend.webhooks.adapters.gumroad import GumroadPaymentAdapter
-
-            try:
-                adapter = GumroadPaymentAdapter(credential_provider=provider)
-                # Gumroad calls this from its own servers, so it has to be the
-                # public origin of this installation, not the request host,
-                # which is the internal one behind a proxy (PG-238).
-                api_base = settings.PUBLIC_API_BASE_URL or request.build_absolute_uri("/").rstrip("/")
-                webhook_registration = adapter.register_webhook_subscriptions(
-                    tenant_ctx,
-                    f"{api_base}/webhooks/gumroad?tenant={tenant_slug}",
-                )
-            except Exception as exc:
-                logger.warning("gumroad: webhook auto-registration failed: %s", exc)
-                webhook_registration = {"registered": [], "failed": ["sale", "cancellation", "subscription_ended"]}
+            webhook_registration = _register_gumroad_webhooks(request, tenant_slug, provider)
 
         response_body = {
             "provider_key": provider_key,

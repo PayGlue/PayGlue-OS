@@ -287,21 +287,6 @@ SYSTEM_NOTICE_FROM_EMAIL = (
 # means the notices are skipped.
 INTERNAL_ADMIN_EMAIL = os.environ.get("INTERNAL_ADMIN_EMAIL", "")
 
-# Widget secret of the FeedbackOS instance behind the dashboard support widget.
-# It signs the identity token from /api/v1/support/widget-token; empty turns
-# that endpoint off and the widget stays anonymous.
-SUPPORT_WIDGET_SECRET = os.environ.get("SUPPORT_WIDGET_SECRET", "")
-
-# The FeedbackOS helpdesk support requests become tickets in. A team-role API
-# key. Either empty turns the helpdesk off, and support requests are confirmed
-# and forwarded by email instead.
-FEEDBACKOS_URL = os.environ.get("FEEDBACKOS_URL", "")
-FEEDBACKOS_API_KEY = os.environ.get("FEEDBACKOS_API_KEY", "")
-FEEDBACKOS_DEFAULT_ASSIGNEE = os.environ.get("FEEDBACKOS_DEFAULT_ASSIGNEE", "")
-FEEDBACKOS_DEFAULT_PRIORITY = os.environ.get("FEEDBACKOS_DEFAULT_PRIORITY", "")
-# Label that puts a helpdesk changelog entry into the dashboard bell.
-FEEDBACKOS_BELL_LABEL = os.environ.get("FEEDBACKOS_BELL_LABEL", "App")
-
 # PG-194 (GDPR): webhook event logs (which hold end-customer PII in the raw
 # provider payload) and public audit events are auto-purged after this many
 # days by the purge_expired_logs command. The dashboard's Events page shows a

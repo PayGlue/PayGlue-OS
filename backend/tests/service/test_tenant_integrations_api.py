@@ -729,3 +729,82 @@ def test_disconnect_without_a_connection_is_not_found(monkeypatch: pytest.Monkey
     response = client.delete("/t/tenant-a/api/v1/integrations/polar", **headers)
 
     assert response.status_code == 404
+
+
+def test_gumroad_webhooks_are_registered_with_the_tenant_key(
+    monkeypatch: pytest.MonkeyPatch, settings
+) -> None:
+    """Gumroad does not sign its pings, so the key in the URL is all that ties
+    a delivery to the address PayGlue registered."""
+    from urllib.parse import parse_qs, urlparse
+
+    settings.PUBLIC_API_BASE_URL = "https://api.example.com"
+    client = Client()
+    headers = _auth_headers(monkeypatch, TenantMembership.Role.OWNER)
+    IntegrationConfig.objects.create(
+        tenant_slug="tenant-a", provider_key="gumroad", enabled=True, provider_type="gumroad"
+    )
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.wiring.get_credential_provider",
+        lambda: _CapturingCredentialProvider(),
+    )
+    registered: list[str] = []
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.adapters.gumroad.GumroadPaymentAdapter.register_webhook_subscriptions",
+        lambda self, tenant_ctx, url: registered.append(url) or {"registered": ["sale"], "failed": []},
+    )
+
+    response = client.put(
+        "/t/tenant-a/api/v1/integrations/gumroad/credentials",
+        data={"credentials": {"access_token": "token", "application_secret": "secret"}},
+        content_type="application/json",
+        **headers,
+    )
+
+    assert response.status_code == 200
+    url = urlparse(registered[0])
+    assert url.path == "/webhooks/gumroad"
+    query = parse_qs(url.query)
+    assert query["tenant"] == ["tenant-a"]
+    assert query["key"] == [Tenant.objects.get(slug="tenant-a").webhook_secret]
+
+
+class _StoredTokenProvider(_CapturingCredentialProvider):
+    def get_credentials(self, tenant_ctx, provider_key):
+        del tenant_ctx, provider_key
+        return {"access_token": "token", "application_secret": "secret"}
+
+
+def test_gumroad_webhooks_can_be_registered_again_without_new_credentials(
+    monkeypatch: pytest.MonkeyPatch, settings
+) -> None:
+    settings.PUBLIC_API_BASE_URL = "https://api.example.com"
+    client = Client()
+    headers = _auth_headers(monkeypatch, TenantMembership.Role.OWNER)
+    IntegrationConfig.objects.create(
+        tenant_slug="tenant-a", provider_key="gumroad", enabled=True, provider_type="gumroad"
+    )
+    monkeypatch.setattr("payglue_backend.webhooks.wiring.get_credential_provider", lambda: _StoredTokenProvider())
+    registered: list[str] = []
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.adapters.gumroad.GumroadPaymentAdapter.register_webhook_subscriptions",
+        lambda self, tenant_ctx, url: registered.append(url) or {"registered": ["sale"], "failed": []},
+    )
+
+    response = client.post("/t/tenant-a/api/v1/integrations/gumroad/credentials", **headers)
+
+    assert response.status_code == 200
+    assert response.json() == {"webhook_registration": {"registered": ["sale"], "failed": []}}
+    assert registered[0].startswith("https://api.example.com/webhooks/gumroad?tenant=tenant-a&key=")
+
+
+def test_webhook_registration_is_refused_for_other_providers(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = Client()
+    owner = _auth_headers(monkeypatch, TenantMembership.Role.OWNER)
+    IntegrationConfig.objects.create(
+        tenant_slug="tenant-a", provider_key="polar", enabled=True, provider_type="polar"
+    )
+
+    response = client.post("/t/tenant-a/api/v1/integrations/polar/credentials", **owner)
+
+    assert response.status_code == 400
