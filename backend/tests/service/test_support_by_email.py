@@ -1,11 +1,10 @@
 # Copyright (c) 2026 PayGlue by André Nünninghoff
 # Licensed under the Business Source License 1.1, see LICENSE.md
-"""Support requests on an installation without a helpdesk.
+"""Support requests handled by email.
 
-This is the path every self-hosted install takes: the request is stored, the
-customer gets a confirmation and the address in INTERNAL_ADMIN_EMAIL gets a
-copy. A support request is somebody asking for help, so a broken mailer must
-not take the request down with it.
+The default path: the request is stored, the customer gets a confirmation and
+the address in INTERNAL_ADMIN_EMAIL gets a copy. A support request is somebody
+asking for help, so a broken mailer must not take the request down with it.
 """
 from unittest import mock
 
@@ -22,9 +21,14 @@ def tenant() -> Tenant:
     return Tenant.objects.create(schema_name="acme", slug="acme")
 
 
+# override_settings rather than assigning to `settings`, so the test does not
+# read like a dependency on a setting every installation defines.
 @pytest.fixture
-def no_helpdesk(monkeypatch):
-    monkeypatch.setattr(support, "helpdesk", None)
+def by_email():
+    from django.test import override_settings
+
+    with override_settings(SUPPORT_FORWARDER=""):
+        yield
 
 
 def _create(tenant: Tenant, **overrides) -> SupportRequest:
@@ -51,9 +55,8 @@ def _pin(tenant: Tenant, *, code="PGS-12345", hours=24):
     )
 
 
-def test_without_a_helpdesk_nothing_is_attempted(tenant: Tenant, no_helpdesk) -> None:
-    """A self-hosted install with no helpdesk is a normal install, not a
-    broken one. Support has to keep working without it."""
+def test_by_email_nothing_else_is_attempted(tenant: Tenant, by_email) -> None:
+    """Email is a complete way to handle support, not a degraded one."""
     with mock.patch("urllib.request.urlopen") as urlopen:
         request = _create(tenant)
 
@@ -62,7 +65,7 @@ def test_without_a_helpdesk_nothing_is_attempted(tenant: Tenant, no_helpdesk) ->
 
 
 def test_the_customer_and_we_both_get_an_email(
-    tenant: Tenant, no_helpdesk, settings
+    tenant: Tenant, by_email, settings
 ) -> None:
     from django.core import mail
 
@@ -80,7 +83,7 @@ def test_the_customer_and_we_both_get_an_email(
 
 
 def test_without_an_admin_address_only_the_customer_is_written_to(
-    tenant: Tenant, no_helpdesk, settings
+    tenant: Tenant, by_email, settings
 ) -> None:
     """An installation that configures no admin address gets no admin notice,
     and nothing else changes. The customer still gets their confirmation, and
@@ -96,7 +99,7 @@ def test_without_an_admin_address_only_the_customer_is_written_to(
 
 
 def test_our_own_notification_replies_to_the_customer(
-    tenant: Tenant, no_helpdesk, settings
+    tenant: Tenant, by_email, settings
 ) -> None:
     """Our alert goes from team@ to team@, so without a Reply-To, hitting Reply
     in a mail client answers ourselves instead of the person who wrote in."""
@@ -110,7 +113,7 @@ def test_our_own_notification_replies_to_the_customer(
 
 
 def test_a_nameless_request_still_gets_a_usable_reply_to(
-    tenant: Tenant, no_helpdesk, settings
+    tenant: Tenant, by_email, settings
 ) -> None:
     from django.core import mail
 
@@ -121,14 +124,14 @@ def test_a_nameless_request_still_gets_a_usable_reply_to(
     assert ours.reply_to == ["reader@example.com"]
 
 
-def test_a_failing_mailer_does_not_lose_the_request(tenant: Tenant, no_helpdesk) -> None:
+def test_a_failing_mailer_does_not_lose_the_request(tenant: Tenant, by_email) -> None:
     with mock.patch.object(support, "_send_branded", side_effect=RuntimeError("resend down")):
         request = _create(tenant)
 
     assert SupportRequest.objects.filter(pk=request.pk).exists()
 
 
-def test_the_confirmation_goes_where_the_customer_asked(tenant: Tenant, no_helpdesk) -> None:
+def test_the_confirmation_goes_where_the_customer_asked(tenant: Tenant, by_email) -> None:
     """The address in the form used to be overruled by the signed-in one, so
     changing it did nothing at all."""
     from django.core import mail
@@ -140,7 +143,7 @@ def test_the_confirmation_goes_where_the_customer_asked(tenant: Tenant, no_helpd
 
 
 
-def test_the_pin_never_reaches_the_customer(tenant: Tenant, no_helpdesk, settings) -> None:
+def test_the_pin_never_reaches_the_customer(tenant: Tenant, by_email, settings) -> None:
     """A consent code has no business sitting in a mailbox longer than it must,
     and the customer can read it in the dashboard anyway."""
     from django.core import mail
@@ -155,9 +158,20 @@ def test_the_pin_never_reaches_the_customer(tenant: Tenant, no_helpdesk, setting
     assert "PGS-99999" in to_us.body
 
 
-def test_without_a_helpdesk_statuses_stay_as_they_are(tenant: Tenant, no_helpdesk) -> None:
+def test_by_email_statuses_stay_as_they_are(tenant: Tenant, by_email) -> None:
     request = _create(tenant)
 
     assert support.sync_statuses([request]) == [request]
     request.refresh_from_db()
     assert request.status == SupportRequest.STATUS_OPEN
+
+
+def test_a_forwarder_that_cannot_be_imported_falls_back_to_email(tenant: Tenant) -> None:
+    from django.core import mail
+    from django.test import override_settings
+
+    with override_settings(SUPPORT_FORWARDER="payglue_backend.does_not_exist", INTERNAL_ADMIN_EMAIL="ops@example.com"):
+        request = _create(tenant)
+
+    assert request.reference == f"PG-REQ-{request.pk}"
+    assert len(mail.outbox) == 2

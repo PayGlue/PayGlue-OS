@@ -1,11 +1,16 @@
 # Copyright (c) 2026 PayGlue by André Nünninghoff
 # Licensed under the Business Source License 1.1, see LICENSE.md
-"""Support requests: store, open a helpdesk ticket, read its status back.
+"""Support requests: store, confirm, forward.
 
 The order matters. The row is written first and everything after it is
 best-effort, because a request we have is a request we can answer, while a
-request lost to a helpdesk timeout is gone for good. Without a helpdesk, or
-when it cannot be reached, the request is confirmed and forwarded by email.
+request lost to a timeout further down is gone for good.
+
+By default a request is confirmed to the customer and forwarded by email to
+INTERNAL_ADMIN_EMAIL. SUPPORT_FORWARDER can name a module that files requests
+somewhere else instead and reports their status back. It provides
+is_configured(), create_support_ticket(...), owns(id) and fetch_statuses(ids).
+When it is unset, not configured or not reachable, email takes over.
 """
 from __future__ import annotations
 
@@ -14,14 +19,9 @@ from email.utils import formataddr
 
 from django.conf import settings
 from django.utils import timezone
+from django.utils.module_loading import import_string
 
 from payglue_backend.authn.lifecycle_emails import _send_branded
-# The helpdesk client is an add-on of the hosted product and is not part of
-# every build. Without it, support works by email alone.
-try:
-    from payglue_backend.tenants import helpdesk
-except ImportError:  # pragma: no cover - depends on the build
-    helpdesk = None
 from payglue_backend.tenants.models import SupportRequest, TenantMembership, Tenant
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,19 @@ TOPIC_LABELS = {
     "other": "Something else",
 }
 
-# Statuses we never re-read from the helpdesk. Once a ticket is resolved or
+def _forwarder():
+    """The module named in SUPPORT_FORWARDER, or None to handle requests by email."""
+    path = (getattr(settings, "SUPPORT_FORWARDER", "") or "").strip()
+    if not path:
+        return None
+    try:
+        return import_string(path)
+    except ImportError:
+        logger.exception("support: SUPPORT_FORWARDER %r cannot be imported", path)
+        return None
+
+
+# Statuses we never re-read from the forwarder. Once a ticket is resolved or
 # closed it stays that way for the customer, so a later re-open on our side
 # (which we do for our own bookkeeping) never reopens a ticket they consider
 # done.
@@ -106,12 +118,13 @@ def create_support_request(
     # fallback rather than the rule.
     headline = subject.strip() or _summary(message)
 
-    # PG-360: with a helpdesk configured the request becomes a ticket there,
-    # and the helpdesk confirms, answers and reports status to the customer.
+    # PG-360: with a forwarder configured the request becomes a ticket there,
+    # and that system confirms, answers and reports status to the customer.
     # Without one, or when it cannot be reached, the request is confirmed and
     # forwarded by email, so it is never left without an answer route.
-    if helpdesk is not None and helpdesk.is_configured():
-        filed = helpdesk.create_support_ticket(
+    forwarder = _forwarder()
+    if forwarder is not None and forwarder.is_configured():
+        filed = forwarder.create_support_ticket(
             title=headline,
             message=message,
             topic=topic,
@@ -189,26 +202,27 @@ def _notify(request: SupportRequest, tenant: Tenant) -> None:
 
 
 def sync_statuses(requests: list[SupportRequest]) -> list[SupportRequest]:
-    """Refresh statuses from the helpdesk and persist what changed.
+    """Refresh statuses from the forwarder and persist what changed.
 
     Called when the customer opens the support page, and by the
-    sync_support_statuses cron. The helpdesk mails status changes to the
+    sync_support_statuses cron. The forwarder mails status changes to the
     customer itself, so nothing is sent from here.
 
-    Requests filed before the helpdesk carry an id from the issue tracker we
+    Requests filed before the forwarder carry an id from the issue tracker we
     used then. That tracker is gone, so they keep the status they had.
     """
-    if helpdesk is None:
+    forwarder = _forwarder()
+    if forwarder is None:
         return requests
     pending = [
         r
         for r in requests
-        if helpdesk.owns(r.tracker_issue_id) and r.status not in _TERMINAL
+        if forwarder.owns(r.tracker_issue_id) and r.status not in _TERMINAL
     ]
     if not pending:
         return requests
 
-    statuses = helpdesk.fetch_statuses([r.tracker_issue_id for r in pending])
+    statuses = forwarder.fetch_statuses([r.tracker_issue_id for r in pending])
     now = timezone.now()
     changed = []
     for request in pending:

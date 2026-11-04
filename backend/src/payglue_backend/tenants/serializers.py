@@ -195,7 +195,7 @@ class ServicePinSerializer(serializers.ModelSerializer):
 class SupportRequestSerializer(serializers.ModelSerializer):
     """What the customer is allowed to see about their own request.
 
-    Note what is absent: the helpdesk ticket id, and any ticket content.
+    Note what is absent: the forwarded ticket's id, and any ticket content.
     Internal notes live on that ticket, so exposing it is exactly the mistake
     this design exists to avoid. Reference plus status is the whole contract.
     """
