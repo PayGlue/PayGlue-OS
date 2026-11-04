@@ -2,6 +2,7 @@
 # Licensed under the Business Source License 1.1, see LICENSE.md
 from datetime import UTC, datetime, timedelta
 import base64
+import calendar
 import json
 from dataclasses import replace
 import urllib.request
@@ -10,6 +11,7 @@ from threading import Lock
 from typing import Callable, Mapping
 
 from payglue_backend.core.errors import (
+    AccessRunsUntilError,
     InvalidWebhookPayloadError,
     InvalidWebhookSignatureError,
     MissingCredentialsError,
@@ -34,6 +36,25 @@ _EVENT_MAP = {
 }
 
 _TOKEN_BUFFER_SECONDS = 300  # refresh 5 min before expiry
+
+
+class PayPalApiError(RuntimeError):
+    """A read from PayPal's REST API failed. Retried like any transient error."""
+
+
+def _add_interval(start: datetime, unit: str, count: int) -> datetime:
+    """`start` moved on by one billing cycle of a PayPal plan."""
+    unit = (unit or "").upper()
+    if unit == "DAY":
+        return start + timedelta(days=count)
+    if unit == "WEEK":
+        return start + timedelta(weeks=count)
+    months = count * (12 if unit == "YEAR" else 1)
+    month_index = start.month - 1 + months
+    year = start.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(start.day, calendar.monthrange(year, month)[1])
+    return start.replace(year=year, month=month, day=day)
 
 
 class PayPalPaymentAdapter:
@@ -91,6 +112,88 @@ class PayPalPaymentAdapter:
         with self._token_lock:
             self._token_cache[cache_key] = (token, expires_at)
         return token
+
+    def _api_get(self, tenant_ctx: TenantContext, path: str) -> dict:
+        credentials = self._credential_provider.get_credentials(
+            tenant_ctx=tenant_ctx, provider_key=self._provider_key
+        )
+        client_id = credentials.get("client_id")
+        client_secret = credentials.get("client_secret")
+        if not client_id or not client_secret:
+            raise MissingCredentialsError(
+                tenant_slug=tenant_ctx.tenant_slug,
+                provider_key=self._provider_key,
+                missing_fields=tuple(f for f in ("client_id", "client_secret") if not credentials.get(f)),
+            )
+        sandbox = credentials.get("sandbox", "") in ("true", "1", True)
+        try:
+            token = self._get_oauth_token(client_id, client_secret, sandbox)
+        except InvalidWebhookSignatureError as exc:
+            # The token endpoint shares its error with signature checks, but a
+            # failed read is not a forged delivery.
+            raise PayPalApiError(str(exc)) from exc
+        req = urllib.request.Request(
+            f"{self._base_url(sandbox)}{path}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            raise PayPalApiError(f"PayPal GET {path.split('/')[3]} failed: HTTP {exc.code}") from exc
+        except Exception as exc:
+            raise PayPalApiError(f"PayPal GET {path.split('/')[3]} failed: {exc}") from exc
+
+    def _time(self, value: object) -> datetime | None:
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            return self._parse_iso8601(value)
+        except InvalidWebhookPayloadError:
+            return None
+
+    def _paid_through(self, resource: dict, tenant_ctx: TenantContext) -> datetime | None:
+        """The day a cancelled subscription's paid period ends, or None.
+
+        PayPal documents billing_info.next_billing_time and
+        billing_info.last_payment on the subscription. A cancelled one may no
+        longer carry the next billing time, so the fallback is the last
+        payment plus one regular billing cycle of the plan. When the delivery
+        carries neither, the subscription is read from the API.
+        """
+        billing = resource.get("billing_info") or {}
+        if not (billing.get("next_billing_time") or billing.get("last_payment")) and resource.get("id"):
+            resource = self._api_get(tenant_ctx, f"/v1/billing/subscriptions/{resource['id']}")
+            billing = resource.get("billing_info") or {}
+
+        next_billing = self._time(billing.get("next_billing_time"))
+        if next_billing is not None:
+            return next_billing
+
+        last_payment = self._time((billing.get("last_payment") or {}).get("time"))
+        plan_id = resource.get("plan_id")
+        if last_payment is None or not plan_id:
+            return None
+        plan = self._api_get(tenant_ctx, f"/v1/billing/plans/{plan_id}")
+        cycles = [c for c in plan.get("billing_cycles") or [] if c.get("tenure_type") == "REGULAR"]
+        if not cycles:
+            return None
+        frequency = cycles[0].get("frequency") or {}
+        try:
+            count = int(frequency.get("interval_count") or 1)
+        except (TypeError, ValueError):
+            count = 1
+        return _add_interval(last_payment, str(frequency.get("interval_unit") or ""), count)
+
+    def subscription_is_active(self, tenant_ctx: TenantContext, raw_body: bytes) -> bool:
+        """Whether the subscription behind a scheduled end runs again."""
+        resource = (json.loads(raw_body) or {}).get("resource") or {}
+        subscription_id = resource.get("id")
+        if not subscription_id:
+            return False
+        current = self._api_get(tenant_ctx, f"/v1/billing/subscriptions/{subscription_id}")
+        return str(current.get("status", "")).upper() == "ACTIVE"
 
     def health_check(self, tenant_ctx: TenantContext) -> dict[str, object]:
         credentials = self._credential_provider.get_credentials(
@@ -241,6 +344,28 @@ class PayPalPaymentAdapter:
                 occurred_at = self._parse_iso8601(raw_time)
             except InvalidWebhookPayloadError:
                 pass
+
+        if event_type == "BILLING.SUBSCRIPTION.CANCELLED" and not payload.get("payglue_scheduled_end"):
+            # The subscriber cancels and keeps what they paid for. PayPal
+            # sends this the moment they cancel and nothing when the period
+            # runs out, so the end is queued here and ends access on its day.
+            ends_at = self._paid_through(resource, tenant_ctx)
+            if ends_at is not None and ends_at > self._now():
+                end_payload = json.dumps(
+                    {
+                        **payload,
+                        "id": f"{event_id}:period-end",
+                        "event_type": "BILLING.SUBSCRIPTION.EXPIRED",
+                        "payglue_scheduled_end": True,
+                    }
+                ).encode()
+                raise AccessRunsUntilError(
+                    "cancellation runs to the end of the paid period, "
+                    f"access runs until {ends_at.isoformat()}",
+                    ends_at=ends_at,
+                    end_payload=end_payload,
+                )
+            canonical_type = "subscription.revoked"
 
         if event_type.startswith("BILLING.SUBSCRIPTION."):
             return self._parse_subscription(resource, event_id, canonical_type, occurred_at)

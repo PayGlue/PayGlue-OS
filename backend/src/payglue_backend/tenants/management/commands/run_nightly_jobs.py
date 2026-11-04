@@ -31,6 +31,7 @@ JOBS: list[tuple[str, bool]] = [
     ("send_lifecycle_emails", True),
     ("pause_lapsed_accounts", True),
     ("delete_inactive_accounts", True),
+    ("end_paid_periods", True),
     ("purge_expired_logs", False),
     ("send_delivery_alerts", False),
     ("purge_test_members", False),
