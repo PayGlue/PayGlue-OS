@@ -30,6 +30,22 @@ Security vulnerabilities should not be reported as public issues. See [SECURITY.
 
 ---
 
+## Sign the Contributor License Agreement
+
+Every contributor signs the [ICLA](ICLA.md) before their first pull request is merged. It gives the project a broad licence to the contribution, including the right to run it in the hosted version of PayGlue. You keep the copyright and stay free to use your own work elsewhere. If you write the code on company time, get your employer's permission first. Section 4 of the ICLA is what you are agreeing to.
+
+Signing happens on the pull request itself: a bot comments and asks you to reply with
+
+```
+I have read the CLA Document and I hereby sign the CLA
+```
+
+The signature is recorded in `signatures/version1/cla.json` on the `cla-signatures` branch. You sign once, later pull requests need no action.
+
+In return, section 9 of the agreement commits the project to publishing every version of PayGlue-OS under the Business Source License 1.1 from [LICENSE.md](LICENSE.md), so each published version still becomes Apache 2.0 four years after its release.
+
+---
+
 ## Pull request guidelines
 
 - One feature or fix per PR — keep changes focused
