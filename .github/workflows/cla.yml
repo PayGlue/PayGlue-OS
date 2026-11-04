@@ -36,9 +36,10 @@ jobs:
           custom-notsigned-prcomment: >
             Thanks for the pull request. Before it can be merged, please read the
             [Individual Contributor License Agreement](https://github.com/PayGlue/PayGlue-OS/blob/main/ICLA.md)
-            and sign it by posting the comment below. You keep the copyright in
-            your contribution, and every published version of PayGlue-OS still
-            turns into Apache 2.0 after four years.
+            and sign it by copying the line between the dashes below and posting
+            it, word for word, as a new comment on this pull request. You keep the
+            copyright in your contribution, and every published version of
+            PayGlue-OS still turns into Apache 2.0 after four years.
           custom-allsigned-prcomment: >
             Thank you for signing the CLA. We will review your pull request
             shortly. You only need to sign once, so later pull requests go
