@@ -1,5 +1,6 @@
 # Copyright (c) 2026 PayGlue by André Nünninghoff
 # Licensed under the Business Source License 1.1, see LICENSE.md
+import logging
 from datetime import timedelta
 from datetime import datetime
 
@@ -9,6 +10,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from payglue_backend.core.errors import (
+    AccessRunsUntilError,
     AdapterNotRegisteredError,
     CmsApplyEntitlementError,
     InvalidIdempotencyKeyError,
@@ -20,9 +22,11 @@ from payglue_backend.core.errors import (
 )
 from payglue_backend.core.models import TenantContext
 from payglue_backend.tenants.models import Tenant
-from payglue_backend.webhooks import delivery_alerts, wiring
+from payglue_backend.webhooks import delivery_alerts, period_ends, wiring
 from payglue_backend.webhooks.models import WebhookInboundEvent
 
+
+logger = logging.getLogger(__name__)
 
 NON_RETRYABLE_EXCEPTIONS = (
     AdapterNotRegisteredError,
@@ -179,6 +183,11 @@ def _process_inbound_webhook_event(
         )
     except UnsupportedEventTypeError as exc:
         # Unsupported event types are silently skipped — not a failure, not retried.
+        if isinstance(exc, AccessRunsUntilError):
+            try:
+                period_ends.schedule(event, exc)
+            except Exception:  # noqa: BLE001 - the skip itself must still be recorded
+                logger.exception("could not schedule the end of access for event %s", event.id)
         _update_if_current_processing(
             event_id=event.id,
             attempts=event.attempts,

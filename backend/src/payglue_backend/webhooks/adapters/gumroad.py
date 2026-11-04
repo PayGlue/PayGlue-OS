@@ -252,23 +252,44 @@ class GumroadPaymentAdapter:
     ) -> CanonicalPaymentEvent:
         payload = self._decode_payload(raw_body, headers)
 
-        email = payload.get("email")
+        # Sales carry `email`; the subscription lifecycle resources carry
+        # `user_email` instead (seen on a real cancellation, 4 November 2026).
+        email = payload.get("email") or payload.get("user_email")
         if not email:
             raise InvalidWebhookPayloadError("missing email")
 
         sale_id = payload.get("sale_id")
         subscription_id = payload.get("subscription_id")
         product_id = payload.get("product_id") or payload.get("permalink")
+        resource_name = payload.get("resource_name")
 
         if sale_id:
             return self._parse_sale(payload, email, sale_id, product_id)
-        if subscription_id and self._is_truthy(payload.get("cancelled")):
+        if subscription_id and (
+            resource_name == "cancellation" or self._is_truthy(payload.get("cancelled"))
+        ):
+            # A cancellation runs to the end of the paid period. Gumroad sends
+            # it when the buyer cancels, with cancelled_at set to the day access
+            # ends: a yearly plan bought on 3 November 2026 and cancelled the
+            # next day came back with cancelled_at 3 November 2027.
+            # subscription_ended follows on that day. Only a cancellation whose
+            # date has already passed ends access here.
+            cancelled_at = payload.get("cancelled_at")
+            if self._still_running(cancelled_at):
+                raise UnsupportedEventTypeError(
+                    "cancellation runs to the end of the paid period, "
+                    f"access runs until {cancelled_at}"
+                )
             return self._parse_lifecycle(
-                payload, email, subscription_id, product_id, "subscription.canceled"
+                payload, email, subscription_id, product_id, "subscription.revoked", "cancelled"
             )
-        if subscription_id and self._is_truthy(payload.get("ended")):
+        if subscription_id and (
+            resource_name == "subscription_ended"
+            or self._is_truthy(payload.get("ended"))
+            or payload.get("ended_at")
+        ):
             return self._parse_lifecycle(
-                payload, email, subscription_id, product_id, "subscription.revoked"
+                payload, email, subscription_id, product_id, "subscription.revoked", "ended"
             )
 
         raise UnsupportedEventTypeError(
@@ -310,10 +331,14 @@ class GumroadPaymentAdapter:
         subscription_id: str,
         product_id: str | None,
         canonical_type: str,
+        stage: str,
     ) -> CanonicalPaymentEvent:
         return CanonicalPaymentEvent(
             provider=self._provider_key,
-            provider_event_id=str(subscription_id),
+            # One subscription sends a cancellation and later its end, both
+            # with the same subscription_id. Keyed on the id alone, the end
+            # was dropped as a duplicate of the cancellation (PG-339).
+            provider_event_id=f"{subscription_id}:{stage}",
             event_type=canonical_type,
             occurred_at=self._now(),
             customer=CanonicalCustomer(email=email),
@@ -327,6 +352,21 @@ class GumroadPaymentAdapter:
             ),
             status="canceled" if canonical_type == "subscription.canceled" else "revoked",
         )
+
+    def _still_running(self, ends_at: object) -> bool:
+        """True while the paid period has not run out. A missing or unreadable
+        date counts as running: keeping access until subscription_ended is the
+        safe side, taking it early is not."""
+        if not isinstance(ends_at, str) or not ends_at:
+            return True
+        try:
+            parsed = ends_at[:-1] + "+00:00" if ends_at.endswith("Z") else ends_at
+            dt = datetime.fromisoformat(parsed)
+        except ValueError:
+            return True
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt > self._now()
 
     def supports_event(self, event_type: str) -> bool:
         return event_type in self._supported_events

@@ -1,8 +1,11 @@
 import json
+from datetime import UTC, datetime
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from payglue_backend.core.errors import UnsupportedEventTypeError
 from payglue_backend.core.models import TenantContext
 from payglue_backend.webhooks.adapters.gumroad import GumroadPaymentAdapter
 
@@ -114,3 +117,60 @@ def test_registration_reports_a_failed_resource(adapter, monkeypatch) -> None:
     result = adapter.register_webhook_subscriptions(TenantContext(tenant_slug="tenant-a"), CURRENT)
 
     assert result == {"registered": [], "failed": ["sale", "cancellation", "subscription_ended"]}
+
+
+# --- subscription lifecycle --------------------------------------------------
+
+_FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "gumroad"
+_FORM = {"Content-Type": "application/x-www-form-urlencoded"}
+
+
+def _cancellation(**overrides: str) -> bytes:
+    from urllib.parse import parse_qsl, urlencode
+
+    fields = dict(parse_qsl((_FIXTURES / "cancellation.txt").read_text(), keep_blank_values=True))
+    fields.update(overrides)
+    return urlencode(fields).encode()
+
+
+def _adapter_at(when: datetime) -> GumroadPaymentAdapter:
+    return GumroadPaymentAdapter(credential_provider=StubCredentialProvider(), now=lambda: when)
+
+
+def test_a_cancellation_keeps_access_until_the_paid_period_ends() -> None:
+    """The real payload: cancelled the day after a yearly purchase, so access
+    runs for another year and subscription_ended takes it away then."""
+    adapter = _adapter_at(datetime(2026, 11, 4, tzinfo=UTC))
+
+    with pytest.raises(UnsupportedEventTypeError, match="2027-11-03"):
+        adapter.parse_event(_cancellation(), _FORM, TenantContext(tenant_slug="tenant-a"))
+
+
+def test_a_cancellation_whose_period_has_run_out_ends_access() -> None:
+    adapter = _adapter_at(datetime(2027, 11, 4, tzinfo=UTC))
+
+    event = adapter.parse_event(_cancellation(), _FORM, TenantContext(tenant_slug="tenant-a"))
+
+    assert event.event_type == "subscription.revoked"
+    assert event.customer.email == "reader@example.com"
+    assert event.provider_event_id == "sub_TEST==:cancelled"
+    assert event.line_items[0].external_product_id == "prod_TEST=="
+
+
+def test_a_cancellation_without_a_date_keeps_access() -> None:
+    adapter = _adapter_at(datetime(2027, 11, 4, tzinfo=UTC))
+
+    with pytest.raises(UnsupportedEventTypeError):
+        adapter.parse_event(_cancellation(cancelled_at=""), _FORM, TenantContext(tenant_slug="tenant-a"))
+
+
+def test_the_end_of_a_subscription_is_not_a_duplicate_of_its_cancellation() -> None:
+    """Both carry the same subscription_id. Keyed on it alone, the end was
+    dropped as a duplicate and access never ended."""
+    adapter = _adapter_at(datetime(2026, 11, 4, tzinfo=UTC))
+    ended = _cancellation(resource_name="subscription_ended", cancelled="", cancelled_at="")
+
+    event = adapter.parse_event(ended, _FORM, TenantContext(tenant_slug="tenant-a"))
+
+    assert event.event_type == "subscription.revoked"
+    assert event.provider_event_id == "sub_TEST==:ended"

@@ -26,6 +26,20 @@ class UnsupportedEventTypeError(PayGlueError):
     """Webhook event type is not supported by adapter."""
 
 
+class AccessRunsUntilError(UnsupportedEventTypeError):
+    """A cancellation that takes effect only when the paid period ends.
+
+    Skipped like any other event that changes nothing now. A provider that
+    sends nothing when the period ends hands over `end_payload`, a delivery
+    of its own that ends access, and the worker queues it for `ends_at`.
+    """
+
+    def __init__(self, message: str, ends_at, end_payload: bytes | None = None) -> None:
+        super().__init__(message)
+        self.ends_at = ends_at
+        self.end_payload = end_payload
+
+
 class MissingCustomerIdentityError(PayGlueError):
     """Webhook event is missing customer identity fields."""
 
