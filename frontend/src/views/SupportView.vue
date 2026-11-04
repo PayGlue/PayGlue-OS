@@ -2,7 +2,7 @@
 // Licensed under the Business Source License 1.1, see LICENSE.md
 
 <script setup lang="ts">
-import { statusHref } from '../lib/hub'
+import { statusHref } from '../lib/shellLinks'
 import { computed, onMounted, ref } from 'vue'
 import AppShell from '../components/AppShell.vue'
 import {

@@ -1013,15 +1013,16 @@ class NewsletterRouting(models.Model):
 
 
 class SupportRequest(models.Model):
-    """A support request raised from the dashboard, mirrored into the helpdesk.
+    """A support request raised from the dashboard.
 
-    Every request becomes a ticket in the helpdesk and keeps its reference so
-    both sides can name the same thing. Without a helpdesk the request is
-    confirmed and forwarded by email and keeps our own reference.
+    By default it is confirmed and forwarded by email and keeps our own
+    reference. With a forwarder configured (see tenants/support.py) it becomes
+    a ticket there and keeps that reference, so both sides name the same
+    thing.
 
-    Deliberately one-way: we push the request in and read the status back out.
-    Replies happen in the helpdesk by email. Ticket *content* is never exposed
-    to the customer here, because internal notes live on the same ticket.
+    Deliberately one-way: we push the request out and read the status back.
+    Ticket *content* is never exposed to the customer here, because internal
+    notes live on the same ticket.
     """
 
     STATUS_OPEN = "open"
@@ -1029,8 +1030,8 @@ class SupportRequest(models.Model):
     STATUS_DONE = "done"
     STATUS_CANCELLED = "cancelled"
     # The words the customer reads. The keys stay internal and stay stable:
-    # the helpdesk's stages are mapped onto them in helpdesk.py, so renaming a
-    # stage there changes neither.
+    # a forwarder maps its own stages onto them, so renaming a stage there
+    # changes neither.
     STATUS_CHOICES = [
         (STATUS_OPEN, "Pending"),
         (STATUS_IN_PROGRESS, "Active"),
@@ -1056,10 +1057,10 @@ class SupportRequest(models.Model):
     subject = models.CharField(max_length=120, blank=True)
     message = models.TextField()
 
-    # The helpdesk ticket id and reference. Blank when the helpdesk was off or
-    # unreachable: the request is still stored and the customer still gets a
-    # reply, just with our own reference. Older rows hold ids from the issue
-    # tracker used before the helpdesk; the column names date from then.
+    # The forwarded ticket's id and reference. Blank when no forwarder was
+    # configured or it was unreachable: the request is still stored and the
+    # customer still gets a reply, just with our own reference. The column
+    # names date from an earlier issue tracker.
     tracker_issue_id = models.CharField(max_length=64, blank=True)
     tracker_identifier = models.CharField(max_length=32, blank=True, db_index=True)
 
@@ -1080,7 +1081,7 @@ class SupportRequest(models.Model):
     @property
     def reference(self) -> str:
         """What the customer is told to quote. Falls back to our own id so a
-        helpdesk outage still leaves something to search for."""
+        forwarding outage still leaves something to search for."""
         return self.tracker_identifier or f"PG-REQ-{self.pk}"
 
 

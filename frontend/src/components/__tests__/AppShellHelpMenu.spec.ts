@@ -13,9 +13,11 @@ import { vi } from 'vitest'
 import AppShell from '../AppShell.vue'
 import { useSessionStore } from '../../stores/session'
 
-vi.mock('../../lib/hub', () => ({
-  hubUrl: 'https://hub.example.test',
+vi.mock('../../lib/shellLinks', () => ({
+  changelogHref: 'https://hub.example.test/changelog',
+  roadmapHref: 'https://hub.example.test/roadmap',
   statusHref: 'https://hub.example.test/status',
+  linkTarget: '_blank',
 }))
 
 const mountShell = async () => {

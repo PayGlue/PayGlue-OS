@@ -224,6 +224,6 @@ export interface ChangelogBellEntry {
   title: string
   body: string
   publishedAt: string
-  /** The full entry on the helpdesk portal, when the changelog lives there. */
+  /** The full entry, when the changelog lives on another site. */
   url?: string
 }

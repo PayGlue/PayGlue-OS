@@ -7,11 +7,11 @@ import { useRoute, useRouter } from 'vue-router'
 import PayGlueLogo from './PayGlueLogo.vue'
 import CommandPalette, { type PaletteItem } from './CommandPalette.vue'
 import GracePeriodBanner from './GracePeriodBanner.vue'
-import SupportWidget from './SupportWidget.vue'
+import ShellExtras from './ShellExtras.vue'
 import { useSessionStore } from '../stores/session'
 import { usePageResetStore } from '../stores/pageReset'
 import { checkHeaderScript, getChangelogForBell, getGhostStripeStatus, getIntegrationConfig } from '../lib/api'
-import { hubUrl, statusHref } from '../lib/hub'
+import { changelogHref, linkTarget, roadmapHref, statusHref } from '../lib/shellLinks'
 import type { ChangelogBellEntry } from '../types/api'
 import { useHeaderScriptStatus } from '../composables/useHeaderScriptStatus'
 import { useTheme } from '../composables/useTheme'
@@ -42,11 +42,6 @@ const themeLabel = computed(() =>
 // is synced to PayGlue-OS, so the old array put "the blog moved to payglue.io"
 // in front of people running their own copy.
 const bellEntries = ref<ChangelogBellEntry[]>([])
-// The changelog and roadmap live on the helpdesk portal when one is
-// configured; without it they stay on our own pages.
-const changelogHref = hubUrl ? `${hubUrl}/changelog` : '/changelog/'
-const roadmapHref = hubUrl ? `${hubUrl}/roadmap` : '/roadmap/'
-const linkTarget = hubUrl ? '_blank' : undefined
 function bellHref(entry: ChangelogBellEntry): string {
   return entry.url || `/changelog/#${entry.anchor}`
 }
@@ -1135,6 +1130,6 @@ watch(
     </div>
 
     <CommandPalette v-model:open="paletteOpen" :items="allNavItems" />
-    <SupportWidget />
+    <ShellExtras />
   </div>
 </template>
