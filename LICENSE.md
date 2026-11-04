@@ -64,4 +64,4 @@ In consideration of the right to use this License's text and the "Business Sourc
 - **Can I self-host PayGlue for myself, my company, or a client, on my own infrastructure?** Yes, including for production/commercial use, as long as you're not offering it as a hosted service to others.
 - **Can I fork PayGlue and offer it as a competing hosted SaaS?** Not without a commercial license from the Licensor.
 - **Will PayGlue eventually become fully open source?** Yes. Each version automatically converts to Apache License 2.0 four years after its first public release.
-- **Can I contribute to PayGlue?** Yes, contributions are welcome under the terms described in the project's CONTRIBUTING file (if present).
+- **Can I contribute to PayGlue?** Yes. Contributors sign the [Individual Contributor License Agreement](ICLA.md) once, on their first pull request. See [CONTRIBUTING.md](CONTRIBUTING.md).
