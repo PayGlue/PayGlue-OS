@@ -17,7 +17,9 @@ updates:
       - dependency-name: "pinia"
         update-types: ["version-update:semver-major"]
 
-  - package-ecosystem: "pip"
+  # The backend pins its packages in uv.lock, which only the "uv" ecosystem
+  # updates.
+  - package-ecosystem: "uv"
     directory: "/backend"
     schedule:
       interval: "weekly"
