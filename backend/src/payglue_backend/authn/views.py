@@ -52,7 +52,12 @@ from payglue_backend.authn.verifier import (
 from payglue_backend.authn.lifecycle_emails import send_lifecycle_email
 from payglue_backend.http.throttling import DynamicScopedRateThrottle
 from payglue_backend.authn.newsletter import route_checkout as route_newsletter_checkout
-from payglue_backend.tenants.founding import record_sale_safely as record_founding_sale_safely
+try:
+    from payglue_backend.tenants.founding import record_sale_safely as record_founding_sale_safely
+except ImportError:  # the founding ladder is not part of every installation
+
+    def record_founding_sale_safely(checkout: dict, email: str = "") -> None:
+        return None
 from payglue_backend.authn.step_up import (
     StepUpError,
     StepUpUnavailable,
