@@ -6,6 +6,10 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "celery>=5.4,<6",
+    # kombu 5.7 imports packaging in its Redis transport without declaring it.
+    # Without this line the worker crashes when the dev dependencies (which
+    # used to pull it in through pytest) are not installed.
+    "packaging>=24",
     "cryptography>=50.0.0,<51",
     # Pinned to the 6.1 series. A ceiling that spans major versions lets a
     # routine security bump jump a whole release; moving to the next series is
