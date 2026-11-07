@@ -29,11 +29,10 @@ export interface ProviderBrand {
   border?: boolean
 }
 
-// Creem has no simple-icons mark; inline its logo as a data URI so it renders
-// offline like the rest (the landing page uses the external creem.io/icon.png,
-// but the app must not depend on that at runtime).
-const CREEM_IMG =
-  'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSI+PHJlY3QgeD0iMyIgeT0iMyIgd2lkdGg9IjE4IiBoZWlnaHQ9IjE4IiByeD0iNSIgZmlsbD0iIzExMSIvPjxwYXRoIGQ9Ik0xNS41IDkuMkE0IDQgMCAxMCAxNiAxNSIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjEuOCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBmaWxsPSJub25lIi8+PC9zdmc+'
+// Creem has no simple-icons mark. Its V mark is traced from Creem's own
+// logo file and kept inline like the rest.
+const CREEM_PATH =
+  'M1.63 1.18C1.29 1.38 1 1.88 1 2.27C1 2.44 2.45 5.4 6.03 12.57C11.66 23.82 11.17 22.98 12 22.98C12.83 22.98 12.34 23.82 17.97 12.57C21.61 5.29 23 2.45 23 2.27C23 1.86 22.7 1.39 22.33 1.19L22 1.02L15.24 1.04C7.62 1.06 8.29 1.01 7.88 1.62C7.49 2.19 7.47 2.15 9.93 6.67C12.35 11.12 12.34 11.1 12.01 11.65C11.63 12.3 10.64 12.4 10.17 11.86C10.1 11.78 8.77 9.4 7.23 6.55C4.76 2.03 4.38 1.37 4.14 1.22C3.72 0.97 2.07 0.94 1.63 1.18Z'
 
 export const PROVIDER_BRAND: Record<string, ProviderBrand> = {
   ghost: {
@@ -88,8 +87,8 @@ export const PROVIDER_BRAND: Record<string, ProviderBrand> = {
     name: 'Creem',
     chip: '#ffffff',
     fill: '#111111',
-    kind: 'img',
-    img: CREEM_IMG,
+    kind: 'path',
+    path: CREEM_PATH,
     border: true,
   },
   dodo: {

@@ -12,6 +12,7 @@ import { isPlanLimitError, planKeyFromError } from '../lib/planUpgrade'
 import PayGlueLogo from '../components/PayGlueLogo.vue'
 import UpgradeBanner from '../components/UpgradeBanner.vue'
 import { appDisplayHost } from '../lib/publicUrls'
+import { PROVIDER_BRAND } from '../lib/providers'
 
 const appHost = appDisplayHost()
 const session = useSessionStore()
@@ -501,7 +502,7 @@ const skipProvider = () => router.push(`/t/${slug.value}/dashboard`)
                     <circle cx="12" cy="12" r="12" fill="#111827"/>
                     <path d="M5.5 8.5h2.3l4.2 4.5 4.2-4.5H18.5v7h-2.2v-4.6l-4 4.3-4-4.3v4.6H5.5V8.5Z" fill="white"/>
                   </svg>
-                  <img v-else-if="provider.key === 'creem'" src="https://www.creem.io/icon.png" alt="Creem" class="h-5 w-5" />
+                  <svg v-else-if="provider.key === 'creem'" class="h-5 w-5" viewBox="0 0 24 24" role="img" aria-label="Creem"><path :d="PROVIDER_BRAND.creem.path" fill="#111827" /></svg>
                   <img v-else-if="provider.key === 'dodo'" src="https://cdn.simpleicons.org/dodopayments/111827" alt="Dodo Payments" class="h-5 w-5" />
                   <img v-else :src="`https://cdn.simpleicons.org/${provider.key}/111827`" :alt="provider.name" class="h-5 w-5" />
                 </span>
