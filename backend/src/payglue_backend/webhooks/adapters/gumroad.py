@@ -11,6 +11,7 @@ import urllib.request
 from typing import Callable, Mapping
 
 from payglue_backend.core.errors import (
+    AccessRunsUntilError,
     InvalidWebhookPayloadError,
     InvalidWebhookSignatureError,
     MissingCredentialsError,
@@ -276,9 +277,20 @@ class GumroadPaymentAdapter:
             # date has already passed ends access here.
             cancelled_at = payload.get("cancelled_at")
             if self._still_running(cancelled_at):
-                raise UnsupportedEventTypeError(
+                message = (
                     "cancellation runs to the end of the paid period, "
                     f"access runs until {cancelled_at}"
+                )
+                ends_at = self._end_date(cancelled_at)
+                if ends_at is None:
+                    raise UnsupportedEventTypeError(message)
+                # subscription_ended has not been seen live yet, and
+                # without it access would never end. The end is queued for
+                # cancelled_at as a delivery of its own that looks like
+                # subscription_ended, so it carries the same event id: whichever
+                # arrives first ends access and the other is a duplicate.
+                raise AccessRunsUntilError(
+                    message, ends_at=ends_at, end_payload=self._scheduled_end(payload, cancelled_at)
                 )
             return self._parse_lifecycle(
                 payload, email, subscription_id, product_id, "subscription.revoked", "cancelled"
@@ -352,6 +364,50 @@ class GumroadPaymentAdapter:
             ),
             status="canceled" if canonical_type == "subscription.canceled" else "revoked",
         )
+
+    def _end_date(self, value: object) -> datetime | None:
+        """cancelled_at as an aware datetime, or None when it cannot be read."""
+        if not isinstance(value, str) or not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+    @staticmethod
+    def _scheduled_end(payload: dict, ends_at: str) -> bytes:
+        """The delivery that ends access on cancelled_at, form encoded like
+        Gumroad's own pings because a queued event keeps no headers."""
+        fields = {
+            key: value
+            for key, value in payload.items()
+            if key not in ("cancelled", "cancelled_at")
+        }
+        fields.update(resource_name="subscription_ended", ended_at=ends_at)
+        return urlencode(fields).encode("utf-8")
+
+    def subscription_is_active(self, tenant_ctx: TenantContext, raw_body: bytes) -> bool:
+        """Whether the subscription behind a queued end runs again, because
+        the buyer restarted it after cancelling. Raises when Gumroad cannot be
+        asked, so the end waits for the next night instead of guessing."""
+        payload = self._decode_payload(raw_body, {})
+        subscription_id = payload.get("subscription_id")
+        if not subscription_id:
+            return False
+        credentials = self._credential_provider.get_credentials(
+            tenant_ctx=tenant_ctx, provider_key=self._provider_key
+        )
+        access_token = credentials.get("access_token")
+        if not access_token:
+            raise MissingCredentialsError(
+                tenant_slug=tenant_ctx.tenant_slug,
+                provider_key=self._provider_key,
+                missing_fields=("access_token",),
+            )
+        data = self._call("GET", f"/subscribers/{subscription_id}", {"access_token": access_token})
+        subscriber = data.get("subscriber") or {}
+        return str(subscriber.get("status", "")).lower() == "alive"
 
     def _still_running(self, ends_at: object) -> bool:
         """True while the paid period has not run out. A missing or unreadable

@@ -2,7 +2,8 @@
 # Licensed under the Business Source License 1.1, see LICENSE.md
 """PG-368: end access when a cancelled subscription's paid period runs out.
 
-Only for providers that send nothing on that day (PayPal). Their cancellation
+For providers that send nothing on that day (PayPal), and as a safety net
+for Gumroad, whose subscription_ended has not been seen live yet. Their cancellation
 was skipped and left a scheduled end behind, see webhooks/period_ends.py. This
 job processes the ones that are due like any other delivery. A subscriber who
 resumed in the meantime keeps access: the provider is asked first, and if it

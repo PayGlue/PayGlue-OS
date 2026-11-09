@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from payglue_backend.core.errors import UnsupportedEventTypeError
+from payglue_backend.core.errors import AccessRunsUntilError, UnsupportedEventTypeError
 from payglue_backend.core.models import TenantContext
 from payglue_backend.webhooks.adapters.gumroad import GumroadPaymentAdapter
 
@@ -144,6 +144,69 @@ def test_a_cancellation_keeps_access_until_the_paid_period_ends() -> None:
 
     with pytest.raises(UnsupportedEventTypeError, match="2027-11-03"):
         adapter.parse_event(_cancellation(), _FORM, TenantContext(tenant_slug="tenant-a"))
+
+
+def test_a_cancellation_queues_its_own_end_on_the_cancellation_date() -> None:
+    """subscription_ended has not been seen live, so access must not depend
+    on it alone: the cancellation hands over an end for cancelled_at."""
+    adapter = _adapter_at(datetime(2026, 11, 4, tzinfo=UTC))
+
+    with pytest.raises(AccessRunsUntilError) as raised:
+        adapter.parse_event(_cancellation(), _FORM, TenantContext(tenant_slug="tenant-a"))
+
+    fields = dict(parse_qs(raised.value.end_payload.decode()))
+    assert raised.value.ends_at.date().isoformat() == "2027-11-03"
+    assert fields["resource_name"] == ["subscription_ended"]
+    assert "cancelled" not in fields and "cancelled_at" not in fields
+
+
+def test_the_queued_end_and_subscription_ended_are_one_event() -> None:
+    """Keyed alike, so whichever arrives first ends access and the other is a
+    duplicate rather than a second revocation."""
+    adapter = _adapter_at(datetime(2026, 11, 4, tzinfo=UTC))
+    with pytest.raises(AccessRunsUntilError) as raised:
+        adapter.parse_event(_cancellation(), _FORM, TenantContext(tenant_slug="tenant-a"))
+    later = _adapter_at(datetime(2027, 11, 4, tzinfo=UTC))
+    real_end = _cancellation(resource_name="subscription_ended", cancelled="", cancelled_at="")
+
+    # A queued event keeps no headers, so the end must parse without them.
+    queued = later.parse_event(raised.value.end_payload, {}, TenantContext(tenant_slug="tenant-a"))
+    real = later.parse_event(real_end, _FORM, TenantContext(tenant_slug="tenant-a"))
+
+    assert queued.event_type == real.event_type == "subscription.revoked"
+    assert queued.provider_event_id == real.provider_event_id == "sub_TEST==:ended"
+    assert queued.customer.email == "reader@example.com"
+
+
+def test_a_test_cancellation_queues_a_test_end() -> None:
+    adapter = _adapter_at(datetime(2026, 11, 4, tzinfo=UTC))
+    with pytest.raises(AccessRunsUntilError) as raised:
+        adapter.parse_event(_cancellation(test="true"), _FORM, TenantContext(tenant_slug="tenant-a"))
+
+    later = _adapter_at(datetime(2027, 11, 4, tzinfo=UTC))
+    assert later.parse_event(raised.value.end_payload, {}, TenantContext(tenant_slug="tenant-a")).is_test
+
+
+class _Subscriber:
+    def __init__(self, status: str) -> None:
+        self.status = status
+        self.paths: list[str] = []
+
+    def urlopen(self, req, timeout=None):
+        self.paths.append(urlparse(req.full_url).path)
+        return _Response({"success": True, "subscriber": {"status": self.status}})
+
+
+@pytest.mark.parametrize("status, active", [("alive", True), ("cancelled", False), ("pending_cancellation", False)])
+def test_a_restarted_membership_counts_as_active(monkeypatch, status, active) -> None:
+    gumroad = _Subscriber(status)
+    monkeypatch.setattr("urllib.request.urlopen", gumroad.urlopen)
+    adapter = _adapter_at(datetime(2027, 11, 4, tzinfo=UTC))
+
+    result = adapter.subscription_is_active(TenantContext(tenant_slug="tenant-a"), _cancellation())
+
+    assert result is active
+    assert gumroad.paths == ["/v2/subscribers/sub_TEST=="]
 
 
 def test_a_cancellation_whose_period_has_run_out_ends_access() -> None:
