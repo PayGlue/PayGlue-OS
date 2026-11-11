@@ -160,6 +160,21 @@ def test_a_cancellation_queues_its_own_end_on_the_cancellation_date() -> None:
     assert "cancelled" not in fields and "cancelled_at" not in fields
 
 
+def test_a_real_subscription_ended_ends_access() -> None:
+    """The real payload, seen when three trial memberships ran out on
+    10 November 2026: ended_at and ended_reason, no cancelled fields."""
+    adapter = _adapter_at(datetime(2026, 11, 10, 14, tzinfo=UTC))
+
+    event = adapter.parse_event(
+        (_FIXTURES / "subscription_ended.txt").read_bytes(), _FORM, TenantContext(tenant_slug="tenant-a")
+    )
+
+    assert event.event_type == "subscription.revoked"
+    assert event.provider_event_id == "sub_TEST==:ended"
+    assert event.customer.email == "reader@example.com"
+    assert event.line_items[0].external_product_id == "prod_TEST=="
+
+
 def test_the_queued_end_and_subscription_ended_are_one_event() -> None:
     """Keyed alike, so whichever arrives first ends access and the other is a
     duplicate rather than a second revocation."""
@@ -167,7 +182,7 @@ def test_the_queued_end_and_subscription_ended_are_one_event() -> None:
     with pytest.raises(AccessRunsUntilError) as raised:
         adapter.parse_event(_cancellation(), _FORM, TenantContext(tenant_slug="tenant-a"))
     later = _adapter_at(datetime(2027, 11, 4, tzinfo=UTC))
-    real_end = _cancellation(resource_name="subscription_ended", cancelled="", cancelled_at="")
+    real_end = (_FIXTURES / "subscription_ended.txt").read_bytes()
 
     # A queued event keeps no headers, so the end must parse without them.
     queued = later.parse_event(raised.value.end_payload, {}, TenantContext(tenant_slug="tenant-a"))

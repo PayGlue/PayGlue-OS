@@ -4,9 +4,9 @@
 
 Most providers send an event of their own on that day. PayPal does not: a
 cancellation arrives the moment the subscriber cancels, and nothing follows.
-Gumroad says it sends subscription_ended on that day, but until it has been
-seen arriving, its cancellations queue an end as well, keyed like
-subscription_ended so the two cannot both apply. For such a provider the
+Gumroad does send subscription_ended on that day, but a single lost delivery
+would leave access open for good, so its cancellations queue an end as well,
+keyed like subscription_ended so the two cannot both apply. For such a provider the
 adapter skips the cancellation with
 AccessRunsUntilError and hands over a delivery that ends access. It is stored
 here as an ordinary inbound event, received but due only at the end of the
