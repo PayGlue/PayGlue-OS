@@ -284,8 +284,8 @@ class GumroadPaymentAdapter:
                 ends_at = self._end_date(cancelled_at)
                 if ends_at is None:
                     raise UnsupportedEventTypeError(message)
-                # subscription_ended has not been seen live yet, and
-                # without it access would never end. The end is queued for
+                # Gumroad sends subscription_ended on that day, but if that one
+                # delivery is lost, access would never end. The end is queued for
                 # cancelled_at as a delivery of its own that looks like
                 # subscription_ended, so it carries the same event id: whichever
                 # arrives first ends access and the other is a duplicate.
