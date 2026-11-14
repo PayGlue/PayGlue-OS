@@ -1,10 +1,11 @@
 # Copyright (c) 2026 PayGlue by André Nünninghoff
 # Licensed under the Business Source License 1.1, see LICENSE.md
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Callable, Mapping
 from typing import Literal
 
 from payglue_backend.core.errors import (
+    InvalidWebhookSignatureError,
     MissingCustomerIdentityError,
     UnsupportedEventTypeError,
 )
@@ -40,12 +41,23 @@ class WebhookOrchestrator:
         tenant_ctx: TenantContext,
         skip_verification: bool = False,
         force: bool = False,
+        on_verified: Callable[[], None] | None = None,
     ) -> OrchestrationResult:
         payment_adapter = self._adapter_registry.get_payment(payment_provider_key)
         cms_adapter = self._adapter_registry.get_cms(cms_provider_key)
 
         if not skip_verification:
-            payment_adapter.verify_webhook(raw_body, headers, tenant_ctx)
+            try:
+                payment_adapter.verify_webhook(raw_body, headers, tenant_ctx)
+            except (TypeError, ValueError, UnicodeError) as exc:
+                # Malformed input, such as a signature with characters a
+                # constant-time compare refuses. It fails closed: a rejected
+                # signature, never a transient error that gets retried.
+                raise InvalidWebhookSignatureError(
+                    f"signature could not be checked: {type(exc).__name__}"
+                ) from exc
+            if on_verified is not None:
+                on_verified()
         event = payment_adapter.parse_event(raw_body, headers, tenant_ctx)
 
         if not payment_adapter.supports_event(event.event_type):

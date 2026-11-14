@@ -341,3 +341,43 @@ def test_orchestrator_falls_back_to_customer_email_when_external_id_missing() ->
     customer, _, _ = cms.applied[0]
     assert customer.email == "email-only@example.com"
     assert customer.external_id is None
+
+
+class _CrashingVerifyAdapter(StubPaymentAdapter):
+    def verify_webhook(self, raw_body, headers, tenant_ctx) -> None:
+        raise TypeError("comparing strings with non-ASCII characters is not supported")
+
+
+def test_an_error_inside_the_signature_check_fails_closed() -> None:
+    cms = StubCmsAdapter()
+    orchestrator = build_orchestrator(_CrashingVerifyAdapter(make_event()), cms)
+    verified: list[bool] = []
+
+    with pytest.raises(InvalidWebhookSignatureError):
+        orchestrator.process_webhook(
+            payment_provider_key="polar",
+            cms_provider_key="ghost",
+            raw_body=b"{}",
+            headers={},
+            tenant_ctx=TenantContext(tenant_slug="tenant-a"),
+            on_verified=lambda: verified.append(True),
+        )
+
+    assert verified == []
+    assert cms.applied == []
+
+
+def test_a_passed_check_is_reported() -> None:
+    orchestrator = build_orchestrator(StubPaymentAdapter(make_event()), StubCmsAdapter())
+    verified: list[bool] = []
+
+    orchestrator.process_webhook(
+        payment_provider_key="polar",
+        cms_provider_key="ghost",
+        raw_body=b"{}",
+        headers={},
+        tenant_ctx=TenantContext(tenant_slug="tenant-a"),
+        on_verified=lambda: verified.append(True),
+    )
+
+    assert verified == [True]

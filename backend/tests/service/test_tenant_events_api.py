@@ -192,8 +192,9 @@ def test_replay_checks_an_unverified_event_again(monkeypatch: pytest.MonkeyPatch
         role=TenantMembership.Role.OWNER,
         uid_suffix="replay-verify",
     )
-    passed = _failed_event(last_error="upstream timeout")
+    passed = _failed_event(last_error="upstream timeout", signature_verified=True)
     rejected = _failed_event(last_error="signature mismatch", verification_failed=True)
+    crashed = _failed_event(last_error="comparing strings with non-ASCII characters is not supported")
     skipped: dict[int, object] = {}
 
     def _capture_delay(event_id: int, **kwargs: object) -> None:
@@ -206,10 +207,12 @@ def test_replay_checks_an_unverified_event_again(monkeypatch: pytest.MonkeyPatch
 
     first = client.post(f"/t/tenant-a/api/v1/events/{passed.id}/replay", **headers)
     second = client.post(f"/t/tenant-a/api/v1/events/{rejected.id}/replay", **headers)
+    third = client.post(f"/t/tenant-a/api/v1/events/{crashed.id}/replay", **headers)
 
     assert first.json()["reverify"] is False
     assert second.json()["reverify"] is True
-    assert skipped == {passed.id: True, rejected.id: False}
+    assert third.json()["reverify"] is True
+    assert skipped == {passed.id: True, rejected.id: False, crashed.id: False}
 
 
 def test_event_replay_rejects_invalid_state_and_missing_events(
