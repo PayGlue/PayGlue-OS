@@ -13,7 +13,7 @@
     "@headlessui/vue": "^1.7.23",
     "@heroicons/vue": "^2.2.0",
     "@supabase/supabase-js": "^2.118.0",
-    "axios": "^1.21.0",
+    "axios": "^1.21.1",
     "cfturnstile-vue3": "^2.0.0",
     "pinia": "^4.1.0",
     "vue": "^3.5.44",
@@ -30,7 +30,7 @@
     "jsdom": "^31.0.0",
     "tailwindcss": "^4.2.1",
     "typescript": "~6.0.3",
-    "vite": "^8.3.5",
+    "vite": "^8.3.7",
     "vitest": "^5.0.5",
     "vue-tsc": "^3.3.14"
   },
