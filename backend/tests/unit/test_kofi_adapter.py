@@ -45,6 +45,14 @@ def test_verify_webhook_rejects_mismatched_verification_token() -> None:
         adapter.verify_webhook(body, {}, TenantContext(tenant_slug="tenant-a"))
 
 
+def test_verify_webhook_rejects_a_token_with_non_ascii_characters() -> None:
+    adapter = KofiPaymentAdapter(credential_provider=StubCredentialProvider())
+    body = _body({"verification_token": "tok_t\u00e9st", "type": "Tip"})
+
+    with pytest.raises(InvalidWebhookSignatureError):
+        adapter.verify_webhook(body, {}, TenantContext(tenant_slug="tenant-a"))
+
+
 def test_verify_webhook_raises_on_missing_credentials() -> None:
     adapter = KofiPaymentAdapter(credential_provider=StubCredentialProvider(credentials={}))
     body = _body({"verification_token": "tok_test", "type": "Tip"})

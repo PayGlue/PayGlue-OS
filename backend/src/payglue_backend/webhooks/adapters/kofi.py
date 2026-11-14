@@ -84,8 +84,10 @@ class KofiPaymentAdapter:
 
         data = self._decode_data(raw_body)
         actual_token = data.get("verification_token")
+        # Compared as bytes: on str, compare_digest raises instead of
+        # answering when either side holds a non-ASCII character.
         if not isinstance(actual_token, str) or not secrets.compare_digest(
-            actual_token, expected_token
+            actual_token.encode("utf-8"), str(expected_token).encode("utf-8")
         ):
             raise InvalidWebhookSignatureError("verification token mismatch")
 

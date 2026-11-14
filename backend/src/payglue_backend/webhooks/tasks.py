@@ -159,15 +159,17 @@ def _process_inbound_webhook_event(
 
     orchestrator = wiring.get_webhook_orchestrator()
     tenant_ctx = TenantContext(tenant_slug=event.tenant_slug)
-    # The signature is checked on the first attempt only. A failed check is
-    # terminal (InvalidWebhookSignatureError is not retried), so an event that
-    # reaches a second attempt has passed it. Checking again would compare a
-    # timestamped signature against the clock after the backoff, and from the
-    # second retry on that comparison fails for every provider that signs
-    # with a timestamp, hiding the error the first attempt actually hit. The
-    # exception is a first attempt that could not check at all because the
-    # secret was missing: that one has passed nothing yet.
-    verify = not skip_verification and (event.attempts == 1 or event.verification_failed)
+    # The signature is checked until it has passed once. A passed check is
+    # recorded on the event, and only then may a retry skip it: checking a
+    # timestamped signature again after the backoff would fail for every
+    # provider that signs with a timestamp. An attempt that ended before the
+    # check passed, for whatever reason, has proven nothing, so the next one
+    # verifies again.
+    verify = not skip_verification and not event.signature_verified
+
+    def _mark_verified() -> None:
+        WebhookInboundEvent.objects.filter(id=event.id).update(signature_verified=True)
+
     try:
         result = orchestrator.process_webhook(
             payment_provider_key=event.provider,
@@ -176,6 +178,7 @@ def _process_inbound_webhook_event(
             headers=event.headers_snapshot,
             tenant_ctx=tenant_ctx,
             skip_verification=not verify,
+            on_verified=_mark_verified if verify else None,
             # A replay from the Events page takes the idempotency record over;
             # a retry of that replay must not, or a provider redelivery that
             # arrives between the two would be applied twice.

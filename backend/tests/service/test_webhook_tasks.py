@@ -36,6 +36,7 @@ def test_process_inbound_event_marks_processed_on_success(monkeypatch) -> None:
             tenant_ctx: TenantContext,
             skip_verification: bool = False,
             force: bool = False,
+            on_verified=None,
         ) -> OrchestrationResult:
             assert payment_provider_key == "polar"
             assert cms_provider_key == "ghost"
@@ -74,13 +75,14 @@ def test_a_retry_does_not_verify_the_signature_again(monkeypatch) -> None:
     """The first attempt verifies. A retry runs after the backoff, and a
     provider that signs with a timestamp (Paddle allows about a minute) would
     fail that check on the clock alone, hiding the error the first attempt
-    hit. An event that reaches attempt two has passed verification: a failed
-    check is terminal and never retried."""
+    hit. Once the check has passed it is recorded, and the retry skips it."""
     seen: list[bool] = []
 
     class FailsOnceOrchestrator:
-        def process_webhook(self, *, skip_verification: bool = False, **kwargs) -> OrchestrationResult:
+        def process_webhook(self, *, skip_verification: bool = False, on_verified=None, **kwargs) -> OrchestrationResult:
             seen.append(skip_verification)
+            if on_verified is not None:
+                on_verified()
             if len(seen) == 1:
                 raise CmsApplyEntitlementError("ghost returned status 500")
             return OrchestrationResult(status="processed", event_id="evt_1", applied_count=1)
@@ -104,7 +106,42 @@ def test_a_retry_does_not_verify_the_signature_again(monkeypatch) -> None:
     event.refresh_from_db()
     assert event.status == WebhookInboundEvent.Status.PROCESSED
     assert event.attempts == 2
+    assert event.signature_verified is True
     assert seen == [False, True]
+
+
+@override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+def test_a_retry_verifies_again_when_the_first_attempt_never_passed_the_check(monkeypatch) -> None:
+    """An error raised before the check passed proves nothing about the
+    delivery. Skipping the check on the retry would apply a forged event that
+    merely made the first attempt crash."""
+    seen: list[bool] = []
+
+    class CrashesBeforeTheCheckOrchestrator:
+        def process_webhook(self, *, skip_verification: bool = False, on_verified=None, **kwargs) -> OrchestrationResult:
+            seen.append(skip_verification)
+            raise RuntimeError("unexpected error inside the check")
+
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.wiring.get_webhook_orchestrator",
+        lambda: CrashesBeforeTheCheckOrchestrator(),
+    )
+    event = WebhookInboundEvent.objects.create(
+        tenant_slug="tenant-a",
+        provider="kofi",
+        status=WebhookInboundEvent.Status.RECEIVED,
+        payload_raw=b"{}",
+        headers_snapshot={},
+        max_attempts=3,
+        endpoint_path="/t/tenant-a/webhooks/kofi/endpoint-token/",
+    )
+
+    process_inbound_webhook_event.delay(event.id)
+
+    event.refresh_from_db()
+    assert seen == [False, False, False]
+    assert event.signature_verified is False
+    assert event.status == WebhookInboundEvent.Status.DEAD_LETTER
 
 
 @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
@@ -260,6 +297,7 @@ def test_process_inbound_event_retries_then_dead_letters(monkeypatch) -> None:
             tenant_ctx: TenantContext,
             skip_verification: bool = False,
             force: bool = False,
+            on_verified=None,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             raise CmsApplyEntitlementError("ghost unavailable")
@@ -300,6 +338,7 @@ def test_process_inbound_event_ignores_already_processing_events(monkeypatch) ->
             tenant_ctx: TenantContext,
             skip_verification: bool = False,
             force: bool = False,
+            on_verified=None,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             raise AssertionError("orchestrator should not run for processing event")
@@ -340,6 +379,7 @@ def test_process_inbound_event_recovers_stale_processing_events(monkeypatch) -> 
             tenant_ctx: TenantContext,
             skip_verification: bool = False,
             force: bool = False,
+            on_verified=None,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             return OrchestrationResult(
@@ -395,6 +435,7 @@ def test_process_inbound_event_does_not_override_status_changed_by_other_worker(
             tenant_ctx: TenantContext,
             skip_verification: bool = False,
             force: bool = False,
+            on_verified=None,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             WebhookInboundEvent.objects.filter(id=event.id).update(
@@ -427,6 +468,7 @@ def test_process_inbound_event_fails_for_non_active_tenant(monkeypatch) -> None:
             tenant_ctx: TenantContext,
             skip_verification: bool = False,
             force: bool = False,
+            on_verified=None,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             raise AssertionError("orchestrator should not run for suspended tenant")
@@ -468,6 +510,7 @@ def test_process_inbound_event_marks_queue_publish_failure_on_retry_enqueue_erro
             tenant_ctx: TenantContext,
             skip_verification: bool = False,
             force: bool = False,
+            on_verified=None,
         ) -> OrchestrationResult:
             del payment_provider_key, cms_provider_key, raw_body, headers, tenant_ctx
             raise CmsApplyEntitlementError("ghost unavailable")
@@ -519,6 +562,7 @@ def test_process_inbound_event_uses_tenant_selected_cms_provider(monkeypatch) ->
             tenant_ctx: TenantContext,
             skip_verification: bool = False,
             force: bool = False,
+            on_verified=None,
         ) -> OrchestrationResult:
             del payment_provider_key, raw_body, headers, tenant_ctx
             seen_cms_provider.append(cms_provider_key)

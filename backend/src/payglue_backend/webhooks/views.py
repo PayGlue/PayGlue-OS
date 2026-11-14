@@ -1698,7 +1698,7 @@ class TenantEventReplayView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            reverify = event.verification_failed
+            reverify = not event.signature_verified
             event.status = WebhookInboundEvent.Status.RECEIVED
             event.attempts = 0
             event.next_attempt_at = None

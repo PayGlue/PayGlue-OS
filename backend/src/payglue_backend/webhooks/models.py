@@ -45,6 +45,11 @@ class WebhookInboundEvent(models.Model):
     # The delivery could not be verified, so nothing proves it came from the
     # provider. A retry or a replay has to check it again.
     verification_failed = models.BooleanField(default=False)
+    # Set the moment the provider's signature or token has been checked and
+    # accepted. Only then may a retry or a replay skip the check. Anything
+    # else, including an error the check itself raised, leaves it False, so
+    # the next attempt verifies again instead of trusting the first one.
+    signature_verified = models.BooleanField(default=False)
     payload_raw = models.BinaryField()
     payload_snapshot = models.JSONField(null=True, blank=True)
     headers_snapshot = models.JSONField(default=dict)
