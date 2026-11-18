@@ -21,6 +21,7 @@ export type ProviderKey =
   | 'creem'
   | 'patreon'
   | 'dodo'
+  | 'digistore24'
 
 export interface CredField {
   /** Credential key POSTed to setIntegrationCredentials -- do not change. */
@@ -267,6 +268,25 @@ export const CONNECTION_PROVIDERS: Record<ProviderKey, ConnectionProvider> = {
     ],
   },
 
+  digistore24: {
+    key: 'digistore24',
+    name: PROVIDER_BRAND.digistore24.name,
+    blurb: 'Connect Digistore24 to automatically sync member access on payments, refunds and the end of a subscription.',
+    docsUrl: 'https://docs.payglue.io/hc/providers/digistore24',
+    notConnectedMsg: 'Not connected. An API key with full access is required',
+    requireOnFirstSave: 'api_key',
+    registersWebhooks: true,
+    webhookUrlHint: 'PayGlue sets up this address in Digistore24 as an IPN connection every time you click Save. You do not need to enter it in Digistore24.',
+    fields: [
+      { key: 'api_key', label: 'API Key', placeholder: 'Your Digistore24 API key', detect: 'credential_ref', hint: 'Needs full access, so PayGlue can set up the IPN connection for you.' },
+    ],
+    steps: [
+      { title: 'Create an API key', bodyHtml: 'In Digistore24, go to <strong>Settings → Account access → API keys</strong> and click <strong>New API key</strong>. Choose <strong>full access</strong> and leave <strong>Allowed IPs</strong> empty.' },
+      { title: 'Save in PayGlue', bodyHtml: 'Paste the key into the field on the left and click <strong>Save credentials</strong>. PayGlue creates an IPN connection named <strong>PayGlue</strong> in your Digistore24 account, for all products and with its own passphrase. There is nothing to set up in Digistore24.' },
+      { title: 'Test it', bodyHtml: 'Map a product to a Ghost tier, then buy it with the payment method <strong>Testpay</strong> while you are logged in to Digistore24 in the same browser window. The member appears in Ghost with a test label.' },
+    ],
+  },
+
   patreon: {
     key: 'patreon',
     name: PROVIDER_BRAND.patreon.name,
@@ -291,7 +311,6 @@ export const WEBHOOK_URL_HINT = WEBHOOK_HINT
 /** Display order for the Connections overview grid + provider sub-nav. */
 export const PROVIDER_ORDER: ProviderKey[] = [
   'polar',
-  'lemonsqueezy',
   'paypal',
   'gumroad',
   'creem',
@@ -299,6 +318,7 @@ export const PROVIDER_ORDER: ProviderKey[] = [
   'kofi',
   'paddle',
   'dodo',
+  'digistore24',
 ]
 
 export const isConnectionProvider = (key: string): key is ProviderKey =>

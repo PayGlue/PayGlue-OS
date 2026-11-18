@@ -23,6 +23,7 @@ vi.mock('../../lib/api', async () => {
     getKofiProducts: vi.fn().mockResolvedValue([]),
     getCreemProducts: vi.fn().mockResolvedValue([]),
     getDodoProducts: vi.fn().mockResolvedValue([]),
+    getDigistore24Products: vi.fn().mockResolvedValue([]),
     getPatreonProducts: vi.fn().mockResolvedValue([]),
     getIntegrationConfig: vi.fn().mockResolvedValue({ enabled: false, metadata: {} }),
     listMappings: vi.fn().mockResolvedValue([]),

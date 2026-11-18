@@ -503,7 +503,7 @@ export const ownershipTransferAction = async (
 export const getIntegrationConfig = async (
   tenantSlug: string,
   idToken: string,
-  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'cms',
+  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'digistore24' | 'cms',
 ): Promise<IntegrationConfig> => {
   try {
     const { data } = await api.get<IntegrationConfig>(
@@ -523,7 +523,7 @@ export const getIntegrationConfig = async (
 export const updateIntegrationConfig = async (
   tenantSlug: string,
   idToken: string,
-  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'cms',
+  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'digistore24' | 'cms',
   payload: Pick<IntegrationConfig, 'enabled' | 'provider_type' | 'metadata'>,
 ): Promise<IntegrationConfig> => {
   try {
@@ -547,7 +547,7 @@ export const updateIntegrationConfig = async (
 export const disconnectIntegration = async (
   tenantSlug: string,
   idToken: string,
-  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo',
+  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'digistore24',
 ): Promise<void> => {
   try {
     await api.delete(tenantPath(tenantSlug, `integrations/${providerKey}`), {
@@ -563,7 +563,7 @@ export const disconnectIntegration = async (
 export const setIntegrationCredentials = async (
   tenantSlug: string,
   idToken: string,
-  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'cms',
+  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'digistore24' | 'cms',
   credentials: Record<string, string>,
 ): Promise<IntegrationCredentialWriteResult> => {
   try {
@@ -586,7 +586,7 @@ export const setIntegrationCredentials = async (
 export const registerIntegrationWebhooks = async (
   tenantSlug: string,
   idToken: string,
-  providerKey: 'gumroad',
+  providerKey: 'gumroad' | 'digistore24',
 ): Promise<Pick<IntegrationCredentialWriteResult, 'webhook_registration'>> => {
   try {
     const { data } = await api.post<Pick<IntegrationCredentialWriteResult, 'webhook_registration'>>(
@@ -607,7 +607,7 @@ export const registerIntegrationWebhooks = async (
 export const runIntegrationHealthCheck = async (
   tenantSlug: string,
   idToken: string,
-  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'cms',
+  providerKey: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'digistore24' | 'cms',
 ): Promise<IntegrationHealthStatus> => {
   try {
     const { data } = await api.get<IntegrationHealthStatus>(
@@ -1025,6 +1025,21 @@ export const getDodoProducts = async (
   try {
     const { data } = await api.get<{ products: { id: string; name: string; checkout_url?: string }[]; has_token: boolean; error?: string }>(
       tenantPath(tenantSlug, 'billing/dodo-products'),
+      { headers: { Authorization: `Bearer ${idToken}` } },
+    )
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+export const getDigistore24Products = async (
+  tenantSlug: string,
+  idToken: string,
+): Promise<{ products: { id: string; name: string; checkout_url?: string }[]; has_token: boolean; error?: string }> => {
+  try {
+    const { data } = await api.get<{ products: { id: string; name: string; checkout_url?: string }[]; has_token: boolean; error?: string }>(
+      tenantPath(tenantSlug, 'billing/digistore24-products'),
       { headers: { Authorization: `Bearer ${idToken}` } },
     )
     return data

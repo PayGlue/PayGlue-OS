@@ -17,6 +17,7 @@ import {
   getPaddleProducts,
   getCreemProducts,
   getDodoProducts,
+  getDigistore24Products,
   getPatreonProducts,
   listPaywallConfigs,
   createPaywallConfig,
@@ -35,7 +36,7 @@ const { isInstalled: headerScriptInstalled } = useHeaderScriptStatus()
 
 interface Product { id: string; name: string; checkout_url?: string }
 
-const selectedProvider = ref<'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo'>('polar')
+const selectedProvider = ref<'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'digistore24'>('polar')
 const isManualProduct = computed(() => selectedProvider.value === 'kofi')
 
 const polarProducts = ref<Product[]>([])
@@ -61,10 +62,13 @@ const paddleProductsError = ref<string | null>(null)
 
 const creemProducts = ref<Product[]>([])
 const dodoProducts = ref<Product[]>([])
+const digistore24Products = ref<Product[]>([])
 const creemProductsLoading = ref(false)
 const dodoProductsLoading = ref(false)
+const digistore24ProductsLoading = ref(false)
 const creemProductsError = ref<string | null>(null)
 const dodoProductsError = ref<string | null>(null)
+const digistore24ProductsError = ref<string | null>(null)
 
 const patreonProducts = ref<Product[]>([])
 const patreonProductsLoading = ref(false)
@@ -77,6 +81,7 @@ const activeProducts = computed(() => {
   if (selectedProvider.value === 'paddle') return paddleProducts.value
   if (selectedProvider.value === 'creem') return creemProducts.value
   if (selectedProvider.value === 'dodo') return dodoProducts.value
+  if (selectedProvider.value === 'digistore24') return digistore24Products.value
   if (selectedProvider.value === 'patreon') return patreonProducts.value
   return lsProducts.value
 })
@@ -87,6 +92,7 @@ const productsLoading = computed(() => {
   if (selectedProvider.value === 'paddle') return paddleProductsLoading.value
   if (selectedProvider.value === 'creem') return creemProductsLoading.value
   if (selectedProvider.value === 'dodo') return dodoProductsLoading.value
+  if (selectedProvider.value === 'digistore24') return digistore24ProductsLoading.value
   if (selectedProvider.value === 'patreon') return patreonProductsLoading.value
   return lsProductsLoading.value
 })
@@ -97,6 +103,7 @@ const productsError = computed(() => {
   if (selectedProvider.value === 'paddle') return paddleProductsError.value
   if (selectedProvider.value === 'creem') return creemProductsError.value
   if (selectedProvider.value === 'dodo') return dodoProductsError.value
+  if (selectedProvider.value === 'digistore24') return digistore24ProductsError.value
   if (selectedProvider.value === 'patreon') return patreonProductsError.value
   return lsProductsError.value
 })
@@ -225,6 +232,7 @@ function startEdit(cfg: PaywallConfigData) {
     if (mappedProvider === 'kofi') selectedProvider.value = 'kofi'
     else if (mappedProvider === 'creem') selectedProvider.value = 'creem'
     else if (mappedProvider === 'dodo') selectedProvider.value = 'dodo'
+    else if (mappedProvider === 'digistore24') selectedProvider.value = 'digistore24'
     else if (mappedProvider === 'patreon') selectedProvider.value = 'patreon'
     else if (lsProducts.value.some(p => p.id === cfg.product_id)) selectedProvider.value = 'lemonsqueezy'
     else if (paypalProducts.value.some(p => p.id === cfg.product_id)) selectedProvider.value = 'paypal'
@@ -453,6 +461,24 @@ async function loadDodoProducts() {
   }
 }
 
+async function loadDigistore24Products() {
+  const slug = session.activeTenantSlug
+  const token = session.idToken
+  if (!slug || !token) return
+  digistore24ProductsLoading.value = true
+  digistore24ProductsError.value = null
+  try {
+    const result = await getDigistore24Products(slug, token)
+    digistore24Products.value = result.products ?? []
+    if (!result.has_token) digistore24ProductsError.value = 'No Digistore24 credentials configured. Connect Digistore24 first.'
+    else if (result.error) digistore24ProductsError.value = result.error
+  } catch {
+    digistore24ProductsError.value = 'Could not load Digistore24 products.'
+  } finally {
+    digistore24ProductsLoading.value = false
+  }
+}
+
 async function loadPatreonProducts() {
   const slug = session.activeTenantSlug
   const token = session.idToken
@@ -486,8 +512,8 @@ async function loadPricingTables() {
 
 watch(selectedProductId, (id) => { if (id && ctaMode.value === 'product') syncMappingState(id) })
 
-onMounted(() => { loadConfigs(); loadPolarProducts(); loadLsProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadDodoProducts(); loadPatreonProducts(); loadPricingTables(); loadMappings() })
-watch(() => session.activeTenantSlug, () => { loadConfigs(); loadPolarProducts(); loadLsProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadDodoProducts(); loadPatreonProducts(); loadPricingTables(); loadMappings() })
+onMounted(() => { loadConfigs(); loadPolarProducts(); loadLsProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadDodoProducts(); loadDigistore24Products(); loadPatreonProducts(); loadPricingTables(); loadMappings() })
+watch(() => session.activeTenantSlug, () => { loadConfigs(); loadPolarProducts(); loadLsProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadDodoProducts(); loadDigistore24Products(); loadPatreonProducts(); loadPricingTables(); loadMappings() })
 watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = 'subscription.active' })
 
 const checkoutUrlForProduct = (id: string) => {

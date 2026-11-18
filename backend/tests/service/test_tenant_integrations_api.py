@@ -808,3 +808,162 @@ def test_webhook_registration_is_refused_for_other_providers(monkeypatch: pytest
     response = client.post("/t/tenant-a/api/v1/integrations/polar/credentials", **owner)
 
     assert response.status_code == 400
+
+
+# -- Digistore24: IPN set up on save ---------------------------------------------
+
+
+class _MemoryCredentialProvider(_CapturingCredentialProvider):
+    """Keeps what was written, so a second read sees the first write."""
+
+    def __init__(self, initial: dict[str, str] | None = None) -> None:
+        super().__init__()
+        self.store: dict[str, str] = dict(initial or {})
+
+    def get_credentials(self, tenant_ctx, provider_key):
+        del tenant_ctx, provider_key
+        return dict(self.store)
+
+    def set_credentials(self, tenant_ctx, provider_key, credentials):
+        self.store = dict(credentials)
+        return super().set_credentials(tenant_ctx, provider_key, credentials)
+
+
+def _digistore24_setup(monkeypatch: pytest.MonkeyPatch, provider) -> list[tuple[str, str, dict]]:
+    IntegrationConfig.objects.create(
+        tenant_slug="tenant-a", provider_key="digistore24", enabled=True, provider_type="digistore24"
+    )
+    monkeypatch.setattr("payglue_backend.webhooks.wiring.get_credential_provider", lambda: provider)
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_call(function, api_key, params=None):
+        calls.append((function, api_key, dict(params or {})))
+        return {}
+
+    monkeypatch.setattr("payglue_backend.webhooks.adapters.digistore24.ds24_call", fake_call)
+    return calls
+
+
+def test_digistore24_save_sets_up_the_ipn_with_a_generated_passphrase(
+    monkeypatch: pytest.MonkeyPatch, settings
+) -> None:
+    from urllib.parse import parse_qs, urlparse
+
+    settings.PUBLIC_API_BASE_URL = "https://api.example.com"
+    client = Client()
+    headers = _auth_headers(monkeypatch, TenantMembership.Role.OWNER)
+    provider = _MemoryCredentialProvider()
+    calls = _digistore24_setup(monkeypatch, provider)
+
+    response = client.put(
+        "/t/tenant-a/api/v1/integrations/digistore24/credentials",
+        # A key pasted from a terminal, with the escape an arrow key sends.
+        data={"credentials": {"api_key": "\u001b[C123-abcDEF\n", "webhook_secret": "typed-in"}},
+        content_type="application/json",
+        **headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["webhook_registration"] == {"registered": ["ipn"], "failed": []}
+    assert provider.store["api_key"] == "123-abcDEF"
+    passphrase = provider.store["webhook_secret"]
+    assert passphrase != "typed-in" and len(passphrase) == 48
+
+    function, api_key, params = calls[0]
+    assert function == "ipnSetup"
+    assert api_key == "123-abcDEF"
+    assert params["sha_passphrase"] == passphrase
+    assert params["domain_id"] == "payglue-tenant-a"
+    assert params["product_ids"] == "all"
+    assert params["categories"] == "orders"
+    assert "last_paid_day" in params["transactions"].split(",")
+    url = urlparse(params["ipn_url"])
+    assert f"{url.scheme}://{url.netloc}{url.path}" == "https://api.example.com/webhooks/digistore24"
+    query = parse_qs(url.query)
+    assert query["tenant"] == ["tenant-a"]
+    assert query["key"] == [Tenant.objects.get(slug="tenant-a").webhook_secret]
+
+
+def test_digistore24_saving_again_keeps_the_passphrase(monkeypatch: pytest.MonkeyPatch, settings) -> None:
+    settings.PUBLIC_API_BASE_URL = "https://api.example.com"
+    client = Client()
+    headers = _auth_headers(monkeypatch, TenantMembership.Role.OWNER)
+    provider = _MemoryCredentialProvider({"api_key": "123-abc", "webhook_secret": "kept-passphrase"})
+    calls = _digistore24_setup(monkeypatch, provider)
+
+    response = client.post("/t/tenant-a/api/v1/integrations/digistore24/credentials", **headers)
+
+    assert response.status_code == 200
+    assert response.json() == {"webhook_registration": {"registered": ["ipn"], "failed": []}}
+    assert calls[0][2]["sha_passphrase"] == "kept-passphrase"
+    assert provider.store["webhook_secret"] == "kept-passphrase"
+
+
+def test_digistore24_ipn_setup_failure_is_reported_not_raised(
+    monkeypatch: pytest.MonkeyPatch, settings
+) -> None:
+    settings.PUBLIC_API_BASE_URL = "https://api.example.com"
+    client = Client()
+    headers = _auth_headers(monkeypatch, TenantMembership.Role.OWNER)
+    provider = _MemoryCredentialProvider({"api_key": "123-abc"})
+    _digistore24_setup(monkeypatch, provider)
+
+    def refuse(function, api_key, params=None):
+        raise RuntimeError("Digistore24 API error: Permission denied")
+
+    monkeypatch.setattr("payglue_backend.webhooks.adapters.digistore24.ds24_call", refuse)
+
+    response = client.post("/t/tenant-a/api/v1/integrations/digistore24/credentials", **headers)
+
+    assert response.status_code == 200
+    registration = response.json()["webhook_registration"]
+    assert registration["registered"] == [] and registration["failed"] == ["ipn"]
+    assert "Permission denied" in registration["detail"]
+    assert "123-abc" not in str(registration)
+
+
+
+def test_a_second_save_with_stale_metadata_keeps_the_credential_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The dashboard sends back the metadata it loaded with the page. A second
+    Save without a reload must not erase the note that credentials are stored,
+    or the saved fields show as empty after the next reload."""
+    client = Client()
+    headers = _auth_headers(monkeypatch, TenantMembership.Role.OWNER)
+    IntegrationConfig.objects.create(
+        tenant_slug="tenant-a", provider_key="digistore24", enabled=True, provider_type="digistore24",
+        metadata={
+            "credential_ref": {"backend": "db", "masked_keys": ["api_key", "webhook_secret"]},
+            "health": {"ok": True},
+        },
+    )
+
+    response = client.put(
+        "/t/tenant-a/api/v1/integrations/digistore24",
+        data={"enabled": True, "provider_type": "digistore24", "metadata": {}},
+        content_type="application/json",
+        **headers,
+    )
+
+    assert response.status_code == 200
+    stored = IntegrationConfig.objects.get(tenant_slug="tenant-a", provider_key="digistore24").metadata
+    assert stored["credential_ref"]["masked_keys"] == ["api_key", "webhook_secret"]
+    assert stored["health"] == {"ok": True}
+
+
+def test_a_config_save_still_sets_what_the_dashboard_owns(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = Client()
+    headers = _auth_headers(monkeypatch, TenantMembership.Role.OWNER)
+    IntegrationConfig.objects.create(
+        tenant_slug="tenant-a", provider_key="cms", enabled=True, provider_type="ghost",
+        metadata={"api_base_url": "https://old.example.com"},
+    )
+
+    client.put(
+        "/t/tenant-a/api/v1/integrations/cms",
+        data={"enabled": True, "provider_type": "ghost", "metadata": {"api_base_url": "https://new.example.com"}},
+        content_type="application/json",
+        **headers,
+    )
+
+    stored = IntegrationConfig.objects.get(tenant_slug="tenant-a", provider_key="cms").metadata
+    assert stored["api_base_url"] == "https://new.example.com"

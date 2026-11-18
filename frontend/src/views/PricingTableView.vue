@@ -22,6 +22,7 @@ import {
   getPaddleProducts,
   getCreemProducts,
   getDodoProducts,
+  getDigistore24Products,
   getPatreonProducts,
   listMappings,
 } from '../lib/api'
@@ -52,7 +53,7 @@ interface LocalTier {
   selectedProductIdYearly: string
   cta_url_yearly: string
   existingMappingIdYearly: number | null
-  selectedProvider: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo'
+  selectedProvider: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'digistore24'
   mappingEventType: 'order.paid' | 'subscription.active'
   mappingGhostSubscribed: boolean
   mappingEmailType: 'signin' | 'signup' | 'subscribe' | ''
@@ -173,18 +174,21 @@ const paddleProductsError = ref<string | null>(null)
 
 const creemProducts = ref<Product[]>([])
 const dodoProducts = ref<Product[]>([])
+const digistore24Products = ref<Product[]>([])
 const creemProductsLoading = ref(false)
 const dodoProductsLoading = ref(false)
+const digistore24ProductsLoading = ref(false)
 const creemProductsError = ref<string | null>(null)
 const dodoProductsError = ref<string | null>(null)
+const digistore24ProductsError = ref<string | null>(null)
 
 const patreonProducts = ref<Product[]>([])
 const patreonProductsLoading = ref(false)
 const patreonProductsError = ref<string | null>(null)
 
-const allProducts = computed(() => [...polarProducts.value, ...lsProducts.value, ...paypalProducts.value, ...gumroadProducts.value, ...paddleProducts.value, ...creemProducts.value, ...patreonProducts.value, ...dodoProducts.value])
+const allProducts = computed(() => [...polarProducts.value, ...lsProducts.value, ...paypalProducts.value, ...gumroadProducts.value, ...paddleProducts.value, ...creemProducts.value, ...patreonProducts.value, ...dodoProducts.value, ...digistore24Products.value])
 
-type ProviderKey = 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo'
+type ProviderKey = 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'digistore24'
 
 function productsForProvider(provider: ProviderKey): Product[] {
   if (provider === 'polar') return polarProducts.value
@@ -193,6 +197,7 @@ function productsForProvider(provider: ProviderKey): Product[] {
   if (provider === 'paddle') return paddleProducts.value
   if (provider === 'creem') return creemProducts.value
   if (provider === 'dodo') return dodoProducts.value
+  if (provider === 'digistore24') return digistore24Products.value
   if (provider === 'patreon') return patreonProducts.value
   return lsProducts.value
 }
@@ -204,6 +209,7 @@ function productsLoadingForProvider(provider: ProviderKey): boolean {
   if (provider === 'paddle') return paddleProductsLoading.value
   if (provider === 'creem') return creemProductsLoading.value
   if (provider === 'dodo') return dodoProductsLoading.value
+  if (provider === 'digistore24') return digistore24ProductsLoading.value
   if (provider === 'patreon') return patreonProductsLoading.value
   return lsProductsLoading.value
 }
@@ -215,6 +221,7 @@ function productsErrorForProvider(provider: ProviderKey): string | null {
   if (provider === 'paddle') return paddleProductsError.value
   if (provider === 'creem') return creemProductsError.value
   if (provider === 'dodo') return dodoProductsError.value
+  if (provider === 'digistore24') return digistore24ProductsError.value
   if (provider === 'patreon') return patreonProductsError.value
   return lsProductsError.value
 }
@@ -362,6 +369,22 @@ async function loadDodoProducts() {
   }
 }
 
+async function loadDigistore24Products() {
+  if (!session.activeTenantSlug || !session.idToken) return
+  digistore24ProductsLoading.value = true
+  digistore24ProductsError.value = null
+  try {
+    const result = await getDigistore24Products(session.activeTenantSlug, session.idToken)
+    digistore24Products.value = result.products ?? []
+    if (!result.has_token) digistore24ProductsError.value = 'No Digistore24 credentials configured. Connect Digistore24 first.'
+    else if (result.error) digistore24ProductsError.value = result.error
+  } catch {
+    digistore24ProductsError.value = 'Could not load Digistore24 products.'
+  } finally {
+    digistore24ProductsLoading.value = false
+  }
+}
+
 async function loadMappings() {
   if (!session.activeTenantSlug || !session.idToken) return
   try {
@@ -460,7 +483,7 @@ function startEdit(table: PricingTableData) {
   formAccentColor.value = table.accent_color || '#4f46e5'
   formCurrency.value = (table.currency as 'EUR' | 'USD' | 'GBP' | 'CHF') || 'EUR'
   formToggleEnabled.value = table.show_toggle !== false
-  const KNOWN_PROVIDERS = ['polar', 'lemonsqueezy', 'paypal', 'gumroad', 'paddle', 'kofi', 'creem', 'patreon', 'dodo'] as const
+  const KNOWN_PROVIDERS = ['polar', 'lemonsqueezy', 'paypal', 'gumroad', 'paddle', 'kofi', 'creem', 'patreon', 'dodo', 'digistore24'] as const
   formTiers.value = table.tiers.map(t => {
     // Tiers saved since PR (product_provider/product_id) restore directly --
     // older tiers fall back to the legacy guess (cta_url matched against live
@@ -782,6 +805,7 @@ onMounted(async () => {
   loadPaddleProducts()
   loadCreemProducts()
   loadDodoProducts()
+  loadDigistore24Products()
   loadPatreonProducts()
   loadMappings()
 })

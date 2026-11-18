@@ -31,7 +31,6 @@ import { useSessionStore } from '../../stores/session'
 /** Ghost is a CMS and Stripe is a special case, so neither sells anything here. */
 const PAYMENT_PROVIDERS = [
   'polar',
-  'lemonsqueezy',
   'paypal',
   'gumroad',
   'paddle',
@@ -39,6 +38,7 @@ const PAYMENT_PROVIDERS = [
   'creem',
   'patreon',
   'dodo',
+  'digistore24',
 ] as const
 
 const props = defineProps<{
@@ -57,6 +57,17 @@ const session = useSessionStore()
 const connected = ref<Record<string, boolean>>({})
 
 const name = (key: string) => PROVIDER_BRAND[key]?.name ?? key
+
+// A widget saved with a provider that is no longer offered here (Lemon
+// Squeezy, closing on 31 March 2027) matches none of the pills, so nothing
+// looked selected while the products and the checkout link still came from
+// that provider. Say so instead of leaving it to guesswork.
+const RETIRED: Record<string, string> = {
+  lemonsqueezy: 'This still sells through Lemon Squeezy, which stops processing payments on March 31, 2027. Pick another provider and product below.',
+}
+const retiredNotice = computed(() =>
+  props.modelValue && !keys.value.includes(props.modelValue) ? RETIRED[props.modelValue] ?? null : null,
+)
 
 onMounted(async () => {
   const slug = session.activeTenantSlug
@@ -79,6 +90,12 @@ onMounted(async () => {
 </script>
 
 <template>
+  <p
+    v-if="retiredNotice"
+    class="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200"
+  >
+    {{ retiredNotice }}
+  </p>
   <div class="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-2">
     <button
       v-for="key in keys"

@@ -533,6 +533,7 @@ _CONNECTION_PATHS = {
     "creem": "creem",
     "patreon": "patreon",
     "dodo": "dodo",
+    "digistore24": "digistore24",
 }
 
 

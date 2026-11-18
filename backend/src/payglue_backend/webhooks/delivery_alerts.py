@@ -76,6 +76,7 @@ PROVIDER_NAMES = {
     "creem": "Creem",
     "patreon": "Patreon",
     "dodo": "Dodo Payments",
+    "digistore24": "Digistore24",
 }
 
 

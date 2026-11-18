@@ -155,3 +155,14 @@ def test_wiring_supports_dodo_payment_provider() -> None:
     wiring._orchestrator = None
     orchestrator = wiring.get_webhook_orchestrator()
     assert isinstance(orchestrator._adapter_registry.get_payment("dodo"), DodoPaymentAdapter)
+
+
+def test_wiring_supports_digistore24_payment_provider() -> None:
+    from payglue_backend.webhooks.adapters.digistore24 import Digistore24PaymentAdapter
+
+    assert "digistore24" in wiring.get_supported_payment_provider_keys()
+    assert isinstance(wiring.get_payment_adapter("digistore24"), Digistore24PaymentAdapter)
+
+    wiring._orchestrator = None
+    orchestrator = wiring.get_webhook_orchestrator()
+    assert isinstance(orchestrator._adapter_registry.get_payment("digistore24"), Digistore24PaymentAdapter)

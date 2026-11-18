@@ -124,11 +124,11 @@ const PROVIDERS = [
   { key: 'paypal', name: 'PayPal', status: 'available' as const },
   { key: 'paddle', name: 'Paddle', status: 'available' as const },
   { key: 'gumroad', name: 'Gumroad', status: 'available' as const },
-  { key: 'lemonsqueezy', name: 'Lemon Squeezy', status: 'available' as const },
   { key: 'kofi', name: 'Ko-fi', status: 'available' as const },
   { key: 'creem', name: 'Creem', status: 'available' as const },
   { key: 'patreon', name: 'Patreon', status: 'available' as const },
   { key: 'dodo', name: 'Dodo Payments', status: 'available' as const },
+  { key: 'digistore24', name: 'Digistore24', status: 'available' as const },
   { key: 'stripe', name: 'Stripe', status: 'deployment' as const },
 ]
 
@@ -143,6 +143,7 @@ const pageTitles: Record<string, { title: string; description: string }> = {
   'connection-kofi': { title: 'Ko-fi', description: 'Connect Ko-fi webhooks for automatic member sync.' },
   'connection-creem': { title: 'Creem', description: 'Connect Creem webhooks for automatic member sync.' },
   'connection-dodo': { title: 'Dodo Payments', description: 'Connect Dodo Payments webhooks for automatic member sync.' },
+  'connection-digistore24': { title: 'Digistore24', description: 'Connect Digistore24 for automatic member sync.' },
   'connection-patreon': { title: 'Patreon', description: 'Connect Patreon so active pledges grant Ghost access automatically.' },
   'connection-lemonsqueezy': { title: 'Lemon Squeezy', description: 'Connect Lemon Squeezy webhooks for automatic member sync.' },
   events: { title: 'Webhook Events', description: 'Inspect webhook pipelines and replay outcomes.' },
@@ -208,7 +209,7 @@ const loadHeaderScriptStatus = async () => {
 // Light per-provider connection status for the small green/grey dots in the
 // Connections sub-nav: connected vs not connected only (provider configs, no
 // webhook-event data -- deliberately cheap).
-const STATUS_PROVIDERS = ['polar', 'lemonsqueezy', 'paypal', 'gumroad', 'paddle', 'kofi', 'creem', 'patreon', 'dodo'] as const
+const STATUS_PROVIDERS = ['polar', 'paypal', 'gumroad', 'paddle', 'kofi', 'creem', 'patreon', 'dodo', 'digistore24'] as const
 const providerEnabled = ref<Record<string, boolean>>({})
 const loadProviderStatuses = async () => {
   const slug = session.activeTenantSlug
