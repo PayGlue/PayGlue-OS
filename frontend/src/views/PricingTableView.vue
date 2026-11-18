@@ -16,7 +16,6 @@ import {
   updatePricingTable,
   deletePricingTable,
   getPolarProducts,
-  getLemonSqueezyProducts,
   getPayPalProducts,
   getGumroadProducts,
   getPaddleProducts,
@@ -156,9 +155,6 @@ const polarProductsLoading = ref(false)
 const polarProductsError = ref<string | null>(null)
 const polarSandbox = ref(false)
 
-const lsProducts = ref<Product[]>([])
-const lsProductsLoading = ref(false)
-const lsProductsError = ref<string | null>(null)
 
 const paypalProducts = ref<Product[]>([])
 const paypalProductsLoading = ref(false)
@@ -186,7 +182,7 @@ const patreonProducts = ref<Product[]>([])
 const patreonProductsLoading = ref(false)
 const patreonProductsError = ref<string | null>(null)
 
-const allProducts = computed(() => [...polarProducts.value, ...lsProducts.value, ...paypalProducts.value, ...gumroadProducts.value, ...paddleProducts.value, ...creemProducts.value, ...patreonProducts.value, ...dodoProducts.value, ...digistore24Products.value])
+const allProducts = computed(() => [...polarProducts.value, ...paypalProducts.value, ...gumroadProducts.value, ...paddleProducts.value, ...creemProducts.value, ...patreonProducts.value, ...dodoProducts.value, ...digistore24Products.value])
 
 type ProviderKey = 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'digistore24'
 
@@ -199,7 +195,7 @@ function productsForProvider(provider: ProviderKey): Product[] {
   if (provider === 'dodo') return dodoProducts.value
   if (provider === 'digistore24') return digistore24Products.value
   if (provider === 'patreon') return patreonProducts.value
-  return lsProducts.value
+  return []
 }
 
 function productsLoadingForProvider(provider: ProviderKey): boolean {
@@ -211,7 +207,7 @@ function productsLoadingForProvider(provider: ProviderKey): boolean {
   if (provider === 'dodo') return dodoProductsLoading.value
   if (provider === 'digistore24') return digistore24ProductsLoading.value
   if (provider === 'patreon') return patreonProductsLoading.value
-  return lsProductsLoading.value
+  return false
 }
 
 function productsErrorForProvider(provider: ProviderKey): string | null {
@@ -223,7 +219,7 @@ function productsErrorForProvider(provider: ProviderKey): string | null {
   if (provider === 'dodo') return dodoProductsError.value
   if (provider === 'digistore24') return digistore24ProductsError.value
   if (provider === 'patreon') return patreonProductsError.value
-  return lsProductsError.value
+  return null
 }
 
 const mappings = ref<ProductMapping[]>([])
@@ -253,23 +249,6 @@ async function loadPolarProducts() {
     polarProductsError.value = 'Could not load Polar products.'
   } finally {
     polarProductsLoading.value = false
-  }
-}
-
-async function loadLsProducts() {
-  if (!session.activeTenantSlug || !session.idToken) return
-  lsProductsLoading.value = true
-  lsProductsError.value = null
-  try {
-    const result = await getLemonSqueezyProducts(session.activeTenantSlug, session.idToken)
-    lsProducts.value = result.products ?? []
-    if (!result.has_token) lsProductsError.value = 'No Lemon Squeezy API key configured.'
-    else if (result.needs_store) lsProductsError.value = 'Select your Lemon Squeezy store in the connection settings to load products.'
-    else if (result.error) lsProductsError.value = result.error
-  } catch {
-    lsProductsError.value = 'Could not load Lemon Squeezy products.'
-  } finally {
-    lsProductsLoading.value = false
   }
 }
 
@@ -417,8 +396,6 @@ function productIdForUrl(url: string): { id: string; provider: ProviderKey } {
   if (!url) return { id: '', provider: 'polar' }
   const polar = polarProducts.value.find(p => p.checkout_url === url)
   if (polar) return { id: polar.id, provider: 'polar' }
-  const ls = lsProducts.value.find(p => p.checkout_url === url)
-  if (ls) return { id: ls.id, provider: 'lemonsqueezy' }
   const gumroad = gumroadProducts.value.find(p => p.checkout_url === url)
   if (gumroad) return { id: gumroad.id, provider: 'gumroad' }
   return { id: '', provider: 'polar' }
@@ -799,7 +776,6 @@ const TEMPLATES = [
 onMounted(async () => {
   await loadTables()
   loadPolarProducts()
-  loadLsProducts()
   loadPayPalProducts()
   loadGumroadProducts()
   loadPaddleProducts()

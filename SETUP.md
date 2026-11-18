@@ -13,7 +13,6 @@ Step-by-step instructions for connecting Ghost, payment providers, and deploying
 - [Infrastructure overview](#infrastructure-overview)
 - [Ghost connection](#ghost-connection)
 - [Polar](#polar)
-- [Lemon Squeezy](#lemon-squeezy)
 - [PayPal](#paypal)
 - [Cloudflare Worker proxy](#cloudflare-worker-proxy)
 
@@ -163,26 +162,6 @@ PayGlue needs a small script tag in your Ghost theme's `<head>`. Go to **Setting
 3. In the PayGlue dashboard, open **Connections > Polar**
 4. Enter your API token and webhook secret, then save
 5. Go to **Mappings** and map each Polar product to a Ghost membership tier
-
----
-
-## Lemon Squeezy
-
-### What you need
-
-- A Lemon Squeezy account at [lemonsqueezy.com](https://www.lemonsqueezy.com)
-- At least one store with a product or subscription
-
-### Steps
-
-1. In Lemon Squeezy, go to **Settings > API** and create a new API key
-2. In Lemon Squeezy, go to **Settings > Webhooks** and add a new webhook
-   - URL: the webhook URL shown in the PayGlue dashboard under **Connections > Lemon Squeezy**
-   - Events to enable: `order_created`, `subscription_created`, `subscription_updated`, `subscription_expired`
-   - Copy the **signing secret**
-3. In the PayGlue dashboard, open **Connections > Lemon Squeezy**
-4. Enter your API key, store ID, and signing secret, then save
-5. Go to **Mappings** and map each Lemon Squeezy product to a Ghost membership tier
 
 ---
 

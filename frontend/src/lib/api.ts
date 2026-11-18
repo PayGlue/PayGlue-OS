@@ -943,36 +943,6 @@ export const cancelCreemSubscription = async (
   }
 }
 
-export const getLemonSqueezyStores = async (
-  tenantSlug: string,
-  idToken: string,
-): Promise<{ stores: { id: string; name: string; slug: string }[]; has_token: boolean; selected_store_id?: string; error?: string }> => {
-  try {
-    const { data } = await api.get<{ stores: { id: string; name: string; slug: string }[]; has_token: boolean; selected_store_id?: string; error?: string }>(
-      tenantPath(tenantSlug, 'billing/lemonsqueezy-stores'),
-      { headers: { Authorization: `Bearer ${idToken}` } },
-    )
-    return data
-  } catch (error) {
-    throw toActionableApiError(error)
-  }
-}
-
-export const getLemonSqueezyProducts = async (
-  tenantSlug: string,
-  idToken: string,
-): Promise<{ products: { id: string; name: string; checkout_url?: string }[]; has_token: boolean; needs_store?: boolean; error?: string }> => {
-  try {
-    const { data } = await api.get<{ products: { id: string; name: string; checkout_url?: string }[]; has_token: boolean; needs_store?: boolean; error?: string }>(
-      tenantPath(tenantSlug, 'billing/lemonsqueezy-products'),
-      { headers: { Authorization: `Bearer ${idToken}` } },
-    )
-    return data
-  } catch (error) {
-    throw toActionableApiError(error)
-  }
-}
-
 export const getPayPalProducts = async (
   tenantSlug: string,
   idToken: string,

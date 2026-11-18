@@ -49,8 +49,8 @@ Every webhook payload is cryptographically verified against the payment provider
 | Provider | Mechanism |
 |---|---|
 | Polar | HMAC-SHA256 over raw body, verified against stored webhook secret |
-| Lemon Squeezy | HMAC-SHA256 via `X-Signature` header |
 | PayPal | RSA-SHA256 via PayPal's `verify-webhook-signature` API |
+| Digistore24 | SHA-512 over the sorted fields and a passphrase PayGlue sets when it creates the IPN connection |
 
 A forged or replayed webhook that does not pass provider signature verification is rejected before any Ghost membership action occurs. The endpoint token alone is not sufficient to inject fake payment events.
 

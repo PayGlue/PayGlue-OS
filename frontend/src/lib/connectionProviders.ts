@@ -13,7 +13,6 @@ import { PROVIDER_BRAND } from './providers'
 
 export type ProviderKey =
   | 'polar'
-  | 'lemonsqueezy'
   | 'paypal'
   | 'gumroad'
   | 'paddle'
@@ -65,8 +64,6 @@ export interface ConnectionProvider {
   staticCreds?: Record<string, string>
   /** Credentials derived from the entered values (e.g. Paddle sandbox prefix). */
   computeCreds?: (form: Record<string, string>) => Record<string, string>
-  /** Lemon Squeezy: show the store selector + send store_id. */
-  hasStore?: boolean
   /** Polar: publication-rename webhook warning banner. */
   renameBanner?: boolean
   /** PayGlue registers the webhook with the provider itself (Gumroad). */
@@ -106,43 +103,6 @@ export const CONNECTION_PROVIDERS: Record<ProviderKey, ConnectionProvider> = {
         events: ['benefit_grant.created', 'benefit_grant.updated', 'benefit_grant.revoked', 'order.created', 'subscription.active', 'subscription.canceled', 'subscription.revoked'],
       },
       { title: 'Copy the secret', bodyHtml: 'After saving, Polar shows a <strong>Webhook secret</strong>. Copy it, paste it into the field on the left, then click <strong>Save credentials</strong>.' },
-    ],
-  },
-
-  lemonsqueezy: {
-    key: 'lemonsqueezy',
-    name: PROVIDER_BRAND.lemonsqueezy.name,
-    blurb: 'Connect Lemon Squeezy webhooks to automatically sync member access on payment events.',
-    docsUrl: 'https://docs.payglue.io/setup/lemon-squeezy',
-    notConnectedMsg: 'Not connected. A signing secret is required',
-    requireOnFirstSave: 'webhook_secret',
-    hasStore: true,
-    fields: [
-      {
-        key: 'webhook_secret',
-        label: 'Signing secret',
-        placeholder: 'Your signing secret (same value as entered in Lemon Squeezy)',
-        detect: 'enabled',
-        hint: 'You choose this secret yourself. Enter the same value here and in Lemon Squeezy.',
-      },
-      {
-        key: 'api_key',
-        label: 'API key',
-        placeholder: 'Your Lemon Squeezy API key (for product fetching)',
-        detect: 'credential_ref',
-        hint: 'Used to load your products in the Paywall, Buy Button, and Pricing Table editors. Find it in Lemon Squeezy under Settings > API. To see test products, use the API key generated while test mode is active in the LS dashboard.',
-      },
-    ],
-    steps: [
-      { title: 'Open Lemon Squeezy settings', bodyHtml: 'In your Lemon Squeezy dashboard, click your store name and go to <strong>Settings</strong>.' },
-      { title: 'Open Webhooks', bodyHtml: 'Click <strong>Webhooks</strong> in the left sidebar, then click <strong>+ Add webhook</strong>.' },
-      { title: 'Create a signing secret', bodyHtml: 'In the <strong>Signing secret</strong> field in Lemon Squeezy, enter any random string you choose, for example a long password. You will paste the same value into PayGlue in Step 5.' },
-      {
-        title: 'Paste the webhook URL and select events',
-        bodyHtml: 'Paste the Webhook URL from the left into <strong>Callback URL</strong>. Then enable these events:',
-        events: ['order_created', 'subscription_created', 'subscription_updated', 'subscription_resumed', 'subscription_unpaused', 'subscription_payment_success', 'subscription_cancelled', 'subscription_paused', 'subscription_expired'],
-      },
-      { title: 'Save in PayGlue', bodyHtml: 'Enter the <strong>same signing secret</strong> you chose in Step 3 into the field on the left, then click <strong>Save credentials</strong>.' },
     ],
   },
 

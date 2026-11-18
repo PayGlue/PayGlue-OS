@@ -63,7 +63,7 @@ const name = (key: string) => PROVIDER_BRAND[key]?.name ?? key
 // looked selected while the products and the checkout link still came from
 // that provider. Say so instead of leaving it to guesswork.
 const RETIRED: Record<string, string> = {
-  lemonsqueezy: 'This still sells through Lemon Squeezy, which stops processing payments on March 31, 2027. Pick another provider and product below.',
+  lemonsqueezy: 'This was set up with Lemon Squeezy, which PayGlue no longer supports because Lemon Squeezy is closing. Pick another provider and product below.',
 }
 const retiredNotice = computed(() =>
   props.modelValue && !keys.value.includes(props.modelValue) ? RETIRED[props.modelValue] ?? null : null,

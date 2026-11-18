@@ -34,7 +34,6 @@ vi.mock('../../lib/api', () => ({
   ApiHttpError: h.ApiHttpError,
   getIntegrationConfig: h.getIntegrationConfig,
   getTenantWebhookSecret: h.getTenantWebhookSecret,
-  getLemonSqueezyStores: vi.fn().mockResolvedValue({ stores: [] }),
   getPolarProducts: vi.fn().mockResolvedValue({ products: [], has_token: false }),
   runIntegrationHealthCheck: vi.fn(),
   setIntegrationCredentials: vi.fn(),

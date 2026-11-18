@@ -15,7 +15,6 @@ import {
   updateBuyButton,
   deleteBuyButton,
   getPolarProducts,
-  getLemonSqueezyProducts,
   getPayPalProducts,
   getGumroadProducts,
   getPaddleProducts,
@@ -47,9 +46,6 @@ const polarProductsLoading = ref(false)
 const polarProductsError = ref<string | null>(null)
 const polarSandbox = ref(false)
 
-const lsProducts = ref<Product[]>([])
-const lsProductsLoading = ref(false)
-const lsProductsError = ref<string | null>(null)
 
 const paypalProducts = ref<Product[]>([])
 const paypalProductsLoading = ref(false)
@@ -86,7 +82,7 @@ const activeProducts = computed(() => {
   if (selectedProvider.value === 'dodo') return dodoProducts.value
   if (selectedProvider.value === 'digistore24') return digistore24Products.value
   if (selectedProvider.value === 'patreon') return patreonProducts.value
-  return lsProducts.value
+  return []
 })
 const productsLoading = computed(() => {
   if (selectedProvider.value === 'polar') return polarProductsLoading.value
@@ -97,7 +93,7 @@ const productsLoading = computed(() => {
   if (selectedProvider.value === 'dodo') return dodoProductsLoading.value
   if (selectedProvider.value === 'digistore24') return digistore24ProductsLoading.value
   if (selectedProvider.value === 'patreon') return patreonProductsLoading.value
-  return lsProductsLoading.value
+  return false
 })
 const productsError = computed(() => {
   if (selectedProvider.value === 'polar') return polarProductsError.value
@@ -108,7 +104,7 @@ const productsError = computed(() => {
   if (selectedProvider.value === 'dodo') return dodoProductsError.value
   if (selectedProvider.value === 'digistore24') return digistore24ProductsError.value
   if (selectedProvider.value === 'patreon') return patreonProductsError.value
-  return lsProductsError.value
+  return null
 })
 
 const useProduct = ref(true)
@@ -170,23 +166,6 @@ async function loadPolarProducts() {
     polarProductsError.value = 'Could not load products.'
   } finally {
     polarProductsLoading.value = false
-  }
-}
-
-async function loadLsProducts() {
-  if (!session.activeTenantSlug || !session.idToken) return
-  lsProductsLoading.value = true
-  lsProductsError.value = null
-  try {
-    const result = await getLemonSqueezyProducts(session.activeTenantSlug, session.idToken)
-    lsProducts.value = result.products ?? []
-    if (!result.has_token) lsProductsError.value = 'No Lemon Squeezy API key configured. Add it in the Lemon Squeezy connection settings.'
-    else if (result.needs_store) lsProductsError.value = 'Select your Lemon Squeezy store in the connection settings to load products.'
-    else if (result.error) lsProductsError.value = result.error
-  } catch {
-    lsProductsError.value = 'Could not load Lemon Squeezy products.'
-  } finally {
-    lsProductsLoading.value = false
   }
 }
 
@@ -415,9 +394,8 @@ function startEdit(btn: BuyButtonData) {
   const PROVIDERS = ['polar', 'lemonsqueezy', 'paypal', 'gumroad', 'paddle', 'kofi', 'creem', 'patreon', 'dodo', 'digistore24'] as const
   const persisted = btn.product_id && (PROVIDERS as readonly string[]).includes(btn.product_provider)
   const matchingPolar = polarProducts.value.find(p => p.checkout_url && p.checkout_url === btn.target_url)
-  const matchingLs = lsProducts.value.find(p => p.checkout_url && p.checkout_url === btn.target_url)
   const matchingGumroad = gumroadProducts.value.find(p => p.checkout_url && p.checkout_url === btn.target_url)
-  const matchingProduct = matchingPolar ?? matchingLs ?? matchingGumroad
+  const matchingProduct = matchingPolar ?? matchingGumroad
   const kofiMapping = mappings.value.find(m => m.payment_provider === 'kofi' && m.metadata?.source_type === 'button' && m.metadata?.source_name === btn.name)
   if (persisted) {
     useProduct.value = true
@@ -427,7 +405,7 @@ function startEdit(btn: BuyButtonData) {
     nextTick(() => { formTargetUrl.value = btn.target_url })
   } else if (matchingProduct) {
     useProduct.value = true
-    selectedProvider.value = matchingPolar ? 'polar' : matchingLs ? 'lemonsqueezy' : 'gumroad'
+    selectedProvider.value = matchingPolar ? 'polar' : 'gumroad'
     selectedProductId.value = matchingProduct.id
     syncMappingState(matchingProduct.id)
     nextTick(() => { formTargetUrl.value = btn.target_url })
@@ -551,8 +529,8 @@ const copyEmbedCode = async () => {
 
 watch(selectedProductId, (id) => { if (id) syncMappingState(id) })
 
-onMounted(() => { loadButtons(); loadPolarProducts(); loadLsProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadDodoProducts(); loadDigistore24Products(); loadPatreonProducts(); loadMappings() })
-watch(() => session.activeTenantSlug, () => { loadButtons(); loadPolarProducts(); loadLsProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadDodoProducts(); loadDigistore24Products(); loadPatreonProducts(); loadMappings() })
+onMounted(() => { loadButtons(); loadPolarProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadDodoProducts(); loadDigistore24Products(); loadPatreonProducts(); loadMappings() })
+watch(() => session.activeTenantSlug, () => { loadButtons(); loadPolarProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadDodoProducts(); loadDigistore24Products(); loadPatreonProducts(); loadMappings() })
 
 // Patreon only grants on an active pledge (subscription.active); there is no
 // one-off "order.paid" for a membership. Default the event type accordingly
@@ -568,7 +546,7 @@ watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = '
 
       <!-- Value prop -->
       <section class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 p-5 dark:border-slate-800 dark:bg-slate-800/40">
-        <p class="mb-1.5 text-sm font-semibold text-slate-700 dark:text-slate-200">Why not use the button from Polar, Lemon Squeezy, or PayPal?</p>
+        <p class="mb-1.5 text-sm font-semibold text-slate-700 dark:text-slate-200">Why not use the button from Polar, Gumroad, or PayPal?</p>
         <p class="text-sm leading-relaxed text-slate-500 dark:text-slate-400">You can, but each platform gives you a different button with different settings. If you sell through multiple providers, or want to change button text or color, you have to log into each platform separately and update the HTML on every page. PayGlue buttons are provider-agnostic: create them once here, embed a single script tag, and manage everything from one place.</p>
       </section>
 

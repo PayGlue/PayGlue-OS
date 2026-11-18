@@ -145,7 +145,6 @@ const pageTitles: Record<string, { title: string; description: string }> = {
   'connection-dodo': { title: 'Dodo Payments', description: 'Connect Dodo Payments webhooks for automatic member sync.' },
   'connection-digistore24': { title: 'Digistore24', description: 'Connect Digistore24 for automatic member sync.' },
   'connection-patreon': { title: 'Patreon', description: 'Connect Patreon so active pledges grant Ghost access automatically.' },
-  'connection-lemonsqueezy': { title: 'Lemon Squeezy', description: 'Connect Lemon Squeezy webhooks for automatic member sync.' },
   events: { title: 'Webhook Events', description: 'Inspect webhook pipelines and replay outcomes.' },
   mappings: { title: 'Product Mapping', description: 'Overview of all configured product-to-Ghost action mappings.' },
   billing: { title: 'Billing', description: 'Maintain billing profile and invoicing context.' },
