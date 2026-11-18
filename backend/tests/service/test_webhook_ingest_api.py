@@ -156,6 +156,52 @@ def test_webhook_ingest_stores_supported_paddle_event(monkeypatch) -> None:
     assert seen
 
 
+def test_webhook_ingest_answers_digistore24_with_plain_ok(monkeypatch) -> None:
+    # Digistore24 counts a delivery as received only when the body is "OK".
+    seen: list[int] = []
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.wiring.validate_endpoint_token",
+        lambda tenant_slug, provider, endpoint_token: True,
+    )
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.tasks.process_inbound_webhook_event.delay",
+        lambda event_id, **kwargs: seen.append(event_id),
+    )
+    client = Client()
+
+    response = client.post(
+        "/t/tenant-a/webhooks/digistore24/endpoint-token/",
+        data=b"event=on_payment&order_id=ABC&product_id=1&email=a%40b.c&sha_sign=X",
+        content_type="application/x-www-form-urlencoded",
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"OK"
+    assert response["Content-Type"].startswith("text/plain")
+    event = WebhookInboundEvent.objects.get()
+    assert event.provider == "digistore24"
+    assert event.payload_snapshot["event"] == "on_payment"
+    assert seen == [event.id]
+
+
+def test_webhook_ingest_answers_digistore24_connection_test_with_ok_without_storing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.wiring.validate_endpoint_token",
+        lambda tenant_slug, provider, endpoint_token: True,
+    )
+    client = Client()
+
+    response = client.post(
+        "/t/tenant-a/webhooks/digistore24/endpoint-token/",
+        data=b"event=connection_test&api_mode=test&sha_sign=X",
+        content_type="application/x-www-form-urlencoded",
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"OK"
+    assert WebhookInboundEvent.objects.count() == 0
+
+
 def test_webhook_ingest_returns_503_when_queue_publish_fails(monkeypatch) -> None:
     monkeypatch.setattr(
         "payglue_backend.webhooks.wiring.validate_endpoint_token",
@@ -197,3 +243,32 @@ def test_webhook_ingest_rejects_oversized_payload(monkeypatch) -> None:
     )
 
     assert response.status_code == 413
+
+
+def test_webhook_ingest_answers_a_digistore24_url_check_with_ok(monkeypatch) -> None:
+    # Digistore24 opens the IPN address once while setting up the connection.
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.wiring.validate_endpoint_token",
+        lambda tenant_slug, provider, endpoint_token: True,
+    )
+    response = Client().get("/t/tenant-a/webhooks/digistore24/endpoint-token/")
+
+    assert response.status_code == 200
+    assert response.content == b"OK"
+    assert WebhookInboundEvent.objects.count() == 0
+
+
+def test_webhook_ingest_url_check_needs_the_right_key(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "payglue_backend.webhooks.wiring.validate_endpoint_token",
+        lambda tenant_slug, provider, endpoint_token: False,
+    )
+    response = Client().get("/t/tenant-a/webhooks/digistore24/wrong/")
+
+    assert response.status_code == 404
+
+
+def test_webhook_ingest_get_stays_refused_for_other_providers() -> None:
+    response = Client().get("/t/tenant-a/webhooks/polar/endpoint-token/")
+
+    assert response.status_code == 405

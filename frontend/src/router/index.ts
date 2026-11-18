@@ -282,6 +282,13 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresTenantMatch: true },
     },
     {
+      path: '/t/:tenantSlug/connection/digistore24',
+      name: 'connection-digistore24',
+      component: ConnectionDetailView,
+      props: { provider: 'digistore24' },
+      meta: { requiresAuth: true, requiresTenantMatch: true },
+    },
+    {
       path: '/t/:tenantSlug/connection/patreon',
       name: 'connection-patreon',
       component: ConnectionDetailView,

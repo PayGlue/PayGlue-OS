@@ -25,13 +25,13 @@
     "@testing-library/vue": "^8.1.0",
     "@types/node": "^26.6.6",
     "@vitejs/plugin-vue": "^6.0.11",
-    "@vue/test-utils": "^2.5.1",
+    "@vue/test-utils": "^2.6.0",
     "@vue/tsconfig": "^0.9.1",
     "jsdom": "^31.0.1",
     "tailwindcss": "^4.2.1",
     "typescript": "~6.0.3",
     "vite": "^8.3.8",
-    "vitest": "^5.0.5",
+    "vitest": "^5.1.1",
     "vue-tsc": "^3.3.14"
   },
   "overrides": {

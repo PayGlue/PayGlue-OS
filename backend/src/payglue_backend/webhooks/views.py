@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
 from urllib.parse import urlencode, urlparse
@@ -45,6 +46,8 @@ from payglue_backend.webhooks.serializers import (
     WebhookInboundEventSerializer,
 )
 from payglue_backend.webhooks.tasks import process_inbound_webhook_event
+
+logger = logging.getLogger(__name__)
 
 
 def _enforce_resource_limit(tenant_slug: str, resource: str) -> Response | None:
@@ -116,7 +119,18 @@ class WebhookIngestView(APIView):
         "paypal": "event_type",
         "paddle": "event_type",
         "dodo": "type",
+        # Digistore24 posts form fields; the event name is in `event`.
+        "digistore24": "event",
     }
+
+    # Providers that count a delivery as received only when the body is the
+    # plain text "OK". Digistore24 retries anything else for ten days, even a
+    # 2xx with a JSON body.
+    _PLAIN_OK_PROVIDERS = frozenset({"digistore24"})
+
+    @staticmethod
+    def _plain_ok() -> DjangoHttpResponse:
+        return DjangoHttpResponse("OK", content_type="text/plain; charset=utf-8", status=200)
 
     @classmethod
     def _extract_raw_event_type(cls, payment_provider: str, payload: dict) -> str | None:
@@ -168,6 +182,25 @@ class WebhookIngestView(APIView):
                 continue
             snapshot[key] = value[:max_value_length]
         return snapshot
+
+    def get(
+        self,
+        request: Request,
+        tenant_slug: str,
+        payment_provider: str,
+        endpoint_token: str,
+    ) -> Response:
+        """Digistore24 opens the IPN address once when the connection is set
+        up and refuses an address that does not answer. Nothing is stored or
+        processed; any other provider still gets 405 for a GET."""
+        if payment_provider not in self._PLAIN_OK_PROVIDERS:
+            return Response(
+                {"detail": 'Method "GET" not allowed.'},
+                status=status.HTTP_405_METHOD_NOT_ALLOWED,
+            )
+        if not wiring.validate_endpoint_token(tenant_slug, payment_provider, endpoint_token):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        return self._plain_ok()
 
     def post(
         self,
@@ -237,6 +270,8 @@ class WebhookIngestView(APIView):
                     adapter = wiring.get_payment_adapter(payment_provider)
                     supports_raw_event_type = getattr(adapter, "supports_raw_event_type", None)
                     if supports_raw_event_type and not supports_raw_event_type(raw_event_type):
+                        if payment_provider in self._PLAIN_OK_PROVIDERS:
+                            return self._plain_ok()
                         return Response(
                             {"status": "ignored", "event_type": raw_event_type},
                             status=status.HTTP_200_OK,
@@ -275,6 +310,8 @@ class WebhookIngestView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
+        if payment_provider in self._PLAIN_OK_PROVIDERS:
+            return self._plain_ok()
         return Response(
             {"status": "accepted", "tracking_id": inbound_event.id},
             status=status.HTTP_202_ACCEPTED,
@@ -293,6 +330,13 @@ def _integration_provider_key_allowlist() -> dict[str, set[str]]:
     for key in wiring.get_supported_payment_provider_keys():
         allowed[key] = {key}
     return allowed
+
+
+# Metadata keys only the server writes: the note which credentials are stored,
+# from a credentials save, and the last health check. A config update from the
+# dashboard never replaces them. (`api_base_url` is not one of them: the Ghost
+# page sets it through this endpoint on purpose.)
+_SERVER_WRITTEN_METADATA_KEYS = ("credential_ref", "health")
 
 
 class TenantIntegrationConfigView(APIView):
@@ -340,13 +384,27 @@ class TenantIntegrationConfigView(APIView):
             },
         )
         serializer.is_valid(raise_exception=True)
+        metadata = dict(serializer.validated_data.get("metadata") or {})
+        # The dashboard sends back the metadata it loaded with the page. A
+        # second Save without a reload therefore sends a copy from before the
+        # first one, and overwriting with it erased the note that credentials
+        # are stored: after a reload the saved fields showed as empty again
+        # (seen with Digistore24 and Gumroad, whose Save registers webhooks
+        # again). What only the server writes is kept from the stored row.
+        existing = IntegrationConfig.objects.filter(
+            tenant_slug=tenant_slug, provider_key=provider_key
+        ).only("metadata").first()
+        existing_metadata = existing.metadata if existing and isinstance(existing.metadata, dict) else {}
+        for server_key in _SERVER_WRITTEN_METADATA_KEYS:
+            if server_key in existing_metadata:
+                metadata[server_key] = existing_metadata[server_key]
         integration, _ = IntegrationConfig.objects.update_or_create(
             tenant_slug=tenant_slug,
             provider_key=provider_key,
             defaults={
                 "enabled": serializer.validated_data["enabled"],
                 "provider_type": serializer.validated_data["provider_type"],
-                "metadata": serializer.validated_data.get("metadata", {}),
+                "metadata": metadata,
             },
         )
         return Response(IntegrationConfigSerializer(integration).data)
@@ -512,6 +570,52 @@ def _register_gumroad_webhooks(request: Request, tenant_slug: str, provider) -> 
         return {"registered": [], "failed": ["sale", "cancellation", "subscription_ended"]}
 
 
+def _register_digistore24_ipn(request: Request, tenant_slug: str, provider) -> dict[str, object]:
+    """Set up the IPN connection in the publisher's Digistore24 account.
+
+    The passphrase is generated here once and kept with the credentials, so
+    a second Save replaces the connection with the same passphrase instead of
+    invalidating deliveries already on their way. It is stored before the
+    call: if Digistore24 accepted the connection and storing failed
+    afterwards, every IPN would fail its signature check."""
+    from payglue_backend.webhooks.adapters.digistore24 import Digistore24PaymentAdapter
+
+    tenant_ctx = TenantContext(tenant_slug=tenant_slug)
+    try:
+        stored = dict(provider.get_credentials(tenant_ctx, "digistore24"))
+        passphrase = stored.get("webhook_secret") or ""
+        if not passphrase:
+            # Digistore24 allows up to 63 characters; hex keeps it free of
+            # anything a form encoding could alter.
+            passphrase = secrets.token_hex(24)
+            provider.set_credentials(
+                tenant_ctx=tenant_ctx,
+                provider_key="digistore24",
+                credentials={**stored, "webhook_secret": passphrase},
+            )
+        adapter = Digistore24PaymentAdapter(credential_provider=provider)
+        # Called by Digistore24's servers: the public origin, never the
+        # request host (PG-238). The key identifies the publication.
+        api_base = settings.PUBLIC_API_BASE_URL or request.build_absolute_uri("/").rstrip("/")
+        query = urlencode(
+            {"tenant": tenant_slug, "key": wiring.get_tenant_webhook_secret(tenant_slug) or ""}
+        )
+        return adapter.register_ipn(
+            tenant_ctx, f"{api_base}/webhooks/digistore24?{query}", passphrase
+        )
+    except Exception as exc:
+        # The message never contains the key: ds24_call reports only
+        # Digistore24's own error text or an HTTP status.
+        logger.warning("digistore24: IPN setup failed: %s", exc)
+        return {"registered": [], "failed": ["ipn"], "detail": str(exc)[:200]}
+
+
+_WEBHOOK_REGISTRARS = {
+    "gumroad": ("access_token", _register_gumroad_webhooks),
+    "digistore24": ("api_key", _register_digistore24_ipn),
+}
+
+
 class TenantIntegrationCredentialsView(APIView):
     authentication_classes = [SupabaseBearerAuthentication]
     permission_classes = [TenantReadOwnerAdminWrite]
@@ -530,24 +634,25 @@ class TenantIntegrationCredentialsView(APIView):
         ).first()
         if integration is None:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        if integration.provider_type != "gumroad":
+        registrar = _WEBHOOK_REGISTRARS.get(integration.provider_type)
+        if registrar is None:
             return Response(
                 {"detail": "This provider has no webhooks to register."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        required_field, register = registrar
         provider = wiring.get_credential_provider()
         try:
             stored = provider.get_credentials(TenantContext(tenant_slug=tenant_slug), integration.provider_type)
         except Exception:
             stored = {}
-        if not stored.get("access_token"):
+        if not stored.get(required_field):
+            label = "an access token" if required_field == "access_token" else "an API key"
             return Response(
-                {"detail": "Save an access token first."},
+                {"detail": f"Save {label} first."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        return Response(
-            {"webhook_registration": _register_gumroad_webhooks(request, tenant_slug, provider)}
-        )
+        return Response({"webhook_registration": register(request, tenant_slug, provider)})
 
     def put(self, request: Request, tenant_slug: str, provider_key: str) -> Response:
         self._require_tenant_context(request, tenant_slug)
@@ -567,6 +672,13 @@ class TenantIntegrationCredentialsView(APIView):
         serializer = IntegrationCredentialsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         credentials = serializer.validated_data["credentials"]
+        if integration.provider_type == "digistore24":
+            from payglue_backend.webhooks.adapters.digistore24 import clean_api_key
+
+            if credentials.get("api_key"):
+                credentials = {**credentials, "api_key": clean_api_key(credentials["api_key"])}
+            # The IPN passphrase is PayGlue's own; it is never typed in.
+            credentials = {k: v for k, v in credentials.items() if k != "webhook_secret"}
 
         tenant_ctx = TenantContext(tenant_slug=tenant_slug)
         provider = wiring.get_credential_provider()
@@ -616,8 +728,9 @@ class TenantIntegrationCredentialsView(APIView):
             )
 
         webhook_registration: dict[str, object] | None = None
-        if integration.provider_type == "gumroad" and "access_token" in merged:
-            webhook_registration = _register_gumroad_webhooks(request, tenant_slug, provider)
+        registrar = _WEBHOOK_REGISTRARS.get(integration.provider_type)
+        if registrar is not None and registrar[0] in merged:
+            webhook_registration = registrar[1](request, tenant_slug, provider)
 
         response_body = {
             "provider_key": provider_key,

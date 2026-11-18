@@ -206,72 +206,74 @@ const saveGhost = async () => {
 const skipGhost = () => { step.value = 3 }
 
 // Step 3: Payment provider
-const providers = [
+// 'planned' shows a provider greyed out with a badge; none is listed that way
+// right now, the state stays for the next one.
+type OnboardingProvider = {
+  key: string
+  name: string
+  description: string
+  status: 'available' | 'visible' | 'planned'
+}
+const providers: OnboardingProvider[] = [
   {
     key: 'polar',
     name: 'Polar',
     description: 'Modern payments for developers. Built-in subscriptions, one-time purchases, and license keys.',
-    status: 'available' as const,
+    status: 'available',
   },
   {
     key: 'paypal',
     name: 'PayPal',
     description: 'Widely trusted payment platform, available in 200+ countries and markets.',
-    status: 'available' as const,
-  },
-  {
-    key: 'mollie',
-    name: 'Mollie',
-    description: 'European payment provider with support for cards, SEPA, iDEAL, and more. Hosted in the EU.',
-    status: 'planned' as const,
+    status: 'available',
   },
   {
     key: 'paddle',
     name: 'Paddle',
     description: 'Merchant of record solution with built-in tax and compliance handling.',
-    status: 'available' as const,
+    status: 'available',
   },
   {
     key: 'gumroad',
     name: 'Gumroad',
     description: 'Simple digital product sales for creators.',
-    status: 'available' as const,
-  },
-  {
-    key: 'lemonsqueezy',
-    name: 'Lemon Squeezy',
-    description: 'All-in-one payments, subscriptions, and digital products platform.',
-    status: 'available' as const,
+    status: 'available',
   },
   {
     key: 'kofi',
     name: 'Ko-fi',
     description: 'Popular in the Ghost community for tips and memberships. No dashboard API to auto-fetch products.',
-    status: 'available' as const,
+    status: 'available',
   },
   {
     key: 'patreon',
     name: 'Patreon',
     description: 'Membership platform for creators. Map your Patreon tiers to Ghost access levels.',
-    status: 'available' as const,
+    status: 'available',
   },
   {
     key: 'creem',
     name: 'Creem',
     description: 'Modern checkout with built-in subscriptions and license keys.',
-    status: 'available' as const,
+    status: 'available',
   },
   {
     key: 'dodo',
     name: 'Dodo Payments',
     description: 'Merchant of record for one-time payments and subscriptions, VAT handled.',
-    status: 'available' as const,
+    status: 'available',
+  },
+  {
+    key: 'digistore24',
+    name: 'Digistore24',
+    description: 'Reseller for digital products and memberships, VAT handled. Popular in German-speaking countries.',
+    status: 'available',
   },
   {
     key: 'stripe',
     name: 'Stripe',
     description: 'The gold standard for online payments. Full control, maximum flexibility.',
-    status: 'visible' as const,
+    status: 'visible',
   },
 ]
 
@@ -283,10 +285,6 @@ const goToDashboard = () => {
   }
   if (selectedProvider.value === 'polar') {
     router.push(`/t/${slug.value}/connection/polar`)
-    return
-  }
-  if (selectedProvider.value === 'lemonsqueezy') {
-    router.push(`/t/${slug.value}/connection/lemonsqueezy`)
     return
   }
   const tyKey = `pg_ty_${slug.value}`
@@ -498,12 +496,9 @@ const skipProvider = () => router.push(`/t/${slug.value}/dashboard`)
                     <circle cx="10" cy="10" r="9" stroke="#111827" stroke-width="1.5"/>
                     <circle cx="10" cy="10" r="5" stroke="#111827" stroke-width="1.5"/>
                   </svg>
-                  <svg v-else-if="provider.key === 'mollie'" class="h-5 w-5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="12" cy="12" r="12" fill="#111827"/>
-                    <path d="M5.5 8.5h2.3l4.2 4.5 4.2-4.5H18.5v7h-2.2v-4.6l-4 4.3-4-4.3v4.6H5.5V8.5Z" fill="white"/>
-                  </svg>
                   <svg v-else-if="provider.key === 'creem'" class="h-5 w-5" viewBox="0 0 24 24" role="img" aria-label="Creem"><path :d="PROVIDER_BRAND.creem.path" fill="#111827" /></svg>
                   <img v-else-if="provider.key === 'dodo'" src="https://cdn.simpleicons.org/dodopayments/111827" alt="Dodo Payments" class="h-5 w-5" />
+                  <svg v-else-if="provider.key === 'digistore24'" class="h-5 w-5" viewBox="0 0 24 24" role="img" aria-label="Digistore24"><rect width="24" height="24" rx="2.4" fill="#000000" /><path :d="PROVIDER_BRAND.digistore24.path" fill="white" /></svg>
                   <img v-else :src="`https://cdn.simpleicons.org/${provider.key}/111827`" :alt="provider.name" class="h-5 w-5" />
                 </span>
                 <div class="min-w-0 flex-1">
@@ -511,7 +506,6 @@ const skipProvider = () => router.push(`/t/${slug.value}/dashboard`)
                     <span class="text-sm font-semibold" :class="provider.status === 'available' || provider.status === 'visible' ? 'text-slate-900' : 'text-slate-400'">
                       {{ provider.name }}
                     </span>
-                    <span v-if="provider.key === 'mollie'" class="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600">EU</span>
                     <span v-if="provider.status === 'planned'" class="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-500">Planned</span>
                   </div>
                   <p class="mt-0.5 text-xs" :class="provider.status === 'available' || provider.status === 'visible' ? 'text-slate-500' : 'text-slate-400'">

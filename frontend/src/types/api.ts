@@ -125,14 +125,14 @@ export interface PricingTableData {
 }
 
 export interface IntegrationConfig {
-  provider_key: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'cms'
+  provider_key: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'digistore24' | 'cms'
   enabled: boolean
   provider_type: string
   metadata: Record<string, unknown>
 }
 
 export interface IntegrationCredentialWriteResult {
-  provider_key: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'cms'
+  provider_key: 'polar' | 'lemonsqueezy' | 'paypal' | 'gumroad' | 'paddle' | 'kofi' | 'creem' | 'patreon' | 'dodo' | 'digistore24' | 'cms'
   provider_type: string
   credential_ref: {
     backend: string
@@ -142,6 +142,8 @@ export interface IntegrationCredentialWriteResult {
   webhook_registration?: {
     registered: string[]
     failed: string[]
+    /** The provider's own error message, when it gave one (Digistore24). */
+    detail?: string
   }
 }
 

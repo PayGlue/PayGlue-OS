@@ -174,7 +174,9 @@ const showWebhookRegistration = (reg: IntegrationCredentialWriteResult['webhook_
   if (!reg || !(reg.registered?.length || reg.failed?.length)) return
   if (reg.failed?.length) {
     webhookRegistrationOk.value = false
-    webhookRegistrationMessage.value = `Some webhook events could not be registered: ${reg.failed.join(', ')}.`
+    webhookRegistrationMessage.value = reg.detail
+      ? `The webhook could not be set up: ${reg.detail}`
+      : `Some webhook events could not be registered: ${reg.failed.join(', ')}.`
   } else {
     webhookRegistrationOk.value = true
     webhookRegistrationMessage.value = 'Webhook events registered automatically.'
@@ -220,6 +222,9 @@ const save = async () => {
         creds,
       )
       const maskedKeys: string[] = result.credential_ref?.masked_keys ?? []
+      // Keep the page's copy current, so a second Save without a reload does
+      // not send metadata from before this one.
+      if (result.credential_ref) config.metadata = { ...(config.metadata ?? {}), credential_ref: result.credential_ref }
       for (const field of meta.value.fields) {
         if (field.detect === 'credential_ref') stored[field.key] = maskedKeys.includes(field.key)
         else if (field.detect === 'polar_token' && (form[field.key] ?? '').trim()) stored[field.key] = true
@@ -229,7 +234,7 @@ const save = async () => {
         await loadStores()
       }
     } else if (meta.value.registersWebhooks && config.enabled) {
-      const result = await registerIntegrationWebhooks(tenantSlug, idToken, 'gumroad')
+      const result = await registerIntegrationWebhooks(tenantSlug, idToken, meta.value.key as 'gumroad' | 'digistore24')
       showWebhookRegistration(result.webhook_registration)
     }
 
@@ -389,11 +394,18 @@ watch(() => props.provider, () => {
         <UiCard class="lg:col-span-2">
           <div class="space-y-4">
             <!-- Webhook URL -->
-            <FormField label="Webhook URL" :hint="meta.webhookUrlHint ?? WEBHOOK_URL_HINT">
+            <FormField label="Webhook URL" :hint="meta.registersWebhooks ? undefined : (meta.webhookUrlHint ?? WEBHOOK_URL_HINT)">
               <div v-if="webhookUrl" class="flex gap-2">
                 <input :value="webhookUrl" readonly class="pg-input pg-mono" />
-                <CopyButton :text="webhookUrl" />
+                <!-- PayGlue registers the address itself, so there is nothing to copy. -->
+                <CopyButton v-if="!meta.registersWebhooks" :text="webhookUrl" />
               </div>
+              <p
+                v-if="webhookUrl && meta.registersWebhooks"
+                class="mt-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:border-indigo-900/50 dark:bg-indigo-950/40 dark:text-indigo-200"
+              >
+                {{ meta.webhookUrlHint }}
+              </p>
               <div v-else-if="session.webhookSecretError" class="flex items-center gap-3">
                 <p class="text-sm text-rose-600 dark:text-rose-400">Could not load your webhook key. The URL is incomplete without it, so please retry before copying.</p>
                 <UiButton size="sm" variant="default" class="shrink-0" @click="loadWebhookSecret">Retry</UiButton>

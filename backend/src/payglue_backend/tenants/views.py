@@ -2439,6 +2439,62 @@ class DodoProductsView(_PolarBaseMixin, APIView):
         return Response({"products": products, "has_token": True})
 
 
+class Digistore24ProductsView(_PolarBaseMixin, APIView):
+    """Returns the tenant's Digistore24 products using their stored api_key.
+
+    The checkout link is the product's public order form,
+    `orderform_customer_url`. The preview link Digistore24 also returns
+    carries a Testpay token for the account and is never passed on.
+    Inactive and deleted products are left out.
+    """
+
+    def get(self, request: Request, tenant_slug: str) -> Response:
+        try:
+            self._require_tenant_context(request, tenant_slug)
+        except Tenant.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        from payglue_backend.webhooks.wiring import get_credential_provider
+        from payglue_backend.core.errors import MissingCredentialsError
+        from payglue_backend.webhooks.adapters.digistore24 import clean_api_key, ds24_call
+
+        try:
+            creds = get_credential_provider().get_credentials(
+                TenantContext(tenant_slug=tenant_slug), "digistore24"
+            )
+        except MissingCredentialsError:
+            return Response({"products": [], "has_token": False})
+
+        api_key = clean_api_key(creds.get("api_key", ""))
+        if not api_key:
+            return Response({"products": [], "has_token": False})
+
+        try:
+            data = ds24_call("listProducts", api_key)
+        except Exception as exc:
+            logger.warning("digistore24: products fetch failed: %s", exc)
+            return Response(
+                {"products": [], "has_token": True, "error": "Digistore24 API call failed. Check your API key."}
+            )
+
+        items = data.get("products") if isinstance(data.get("products"), list) else []
+        products = [
+            {
+                "id": str(item.get("id", "")),
+                "name": item.get("name") or str(item.get("id", "")),
+                "checkout_url": item.get("orderform_customer_url")
+                or f"https://www.digistore24.com/product/{item.get('id', '')}",
+            }
+            for item in items
+            if isinstance(item, dict)
+            and item.get("id")
+            and item.get("is_active", "Y") == "Y"
+            and item.get("is_deleted", "N") != "Y"
+        ]
+        products.sort(key=lambda p: p["name"])
+        return Response({"products": products, "has_token": True})
+
+
 class PatreonProductsView(_PolarBaseMixin, APIView):
     """PG-123: returns the tenant's Patreon tiers (as "products" for the
     shared mapping picker) using their stored Creator's Access Token.
