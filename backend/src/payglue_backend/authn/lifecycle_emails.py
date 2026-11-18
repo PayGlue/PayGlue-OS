@@ -525,7 +525,6 @@ _PROVIDER_ALERT_FALLBACK_BODY = (
 
 _CONNECTION_PATHS = {
     "polar": "polar",
-    "lemonsqueezy": "lemonsqueezy",
     "paypal": "paypal",
     "gumroad": "gumroad",
     "paddle": "paddle",

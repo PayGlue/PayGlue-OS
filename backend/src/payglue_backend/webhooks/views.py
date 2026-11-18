@@ -90,8 +90,6 @@ class WebhookIngestView(APIView):
         "webhook-id",
         "webhook-timestamp",
         "webhook-signature",
-        # Lemon Squeezy
-        "x-signature",
         # Creem
         "creem-signature",
         # Paddle
@@ -134,12 +132,6 @@ class WebhookIngestView(APIView):
 
     @classmethod
     def _extract_raw_event_type(cls, payment_provider: str, payload: dict) -> str | None:
-        if payment_provider == "lemonsqueezy":
-            meta = payload.get("meta")
-            if isinstance(meta, dict):
-                event_name = meta.get("event_name")
-                return event_name if isinstance(event_name, str) and event_name else None
-            return None
         if payment_provider == "kofi":
             # Ko-fi's form-encoded body has a single 'data' field holding a
             # JSON string -- the payload_snapshot dict() pass in post() below

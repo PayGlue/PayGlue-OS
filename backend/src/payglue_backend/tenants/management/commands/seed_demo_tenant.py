@@ -169,9 +169,9 @@ class Command(BaseCommand):
             "client_id": "AeDEMOclientid0000000000000000000000000000000000",
             "client_secret": "EDEMOsecret000000000000000000000000000000000000",
         },
-        "lemonsqueezy": {
-            "api_key": "lsq_demo_0000000000000000000000000000000000000000",
-            "signing_secret": "demo_lemonsqueezy_signing_secret",
+        "digistore24": {
+            "api_key": "123456-DEMOxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "webhook_secret": "demo_digistore24_ipn_passphrase",
         },
     }
 
@@ -179,7 +179,7 @@ class Command(BaseCommand):
         from payglue_backend.webhooks.credentials import FernetCipher
         from payglue_backend.webhooks.models import TenantProviderCredential
 
-        connected = ["ghost", "polar", "paypal", "lemonsqueezy"]
+        connected = ["ghost", "polar", "paypal", "digistore24"]
         cipher = FernetCipher()
         for key in connected:
             provider_key = "cms" if key == "ghost" else key
@@ -203,7 +203,7 @@ class Command(BaseCommand):
         rows = [
             ("polar", "order.paid", "founding-member", "founding_member", "grant"),
             ("polar", "subscription.canceled", "founding-member", "founding_member", "revoke"),
-            ("lemonsqueezy", "order.paid", "pro-monthly", "pro", "grant"),
+            ("digistore24", "order.paid", "100001", "pro", "grant"),
             ("paypal", "order.paid", "deep-dive-report", "free_comped", "grant"),
         ]
         for provider, event_type, product_id, entitlement, action in rows:
@@ -226,14 +226,14 @@ class Command(BaseCommand):
         samples = [
             ("polar", WebhookInboundEvent.Status.PROCESSED, 0),
             ("polar", WebhookInboundEvent.Status.PROCESSED, 1),
-            ("lemonsqueezy", WebhookInboundEvent.Status.PROCESSED, 2),
+            ("digistore24", WebhookInboundEvent.Status.PROCESSED, 2),
             ("paypal", WebhookInboundEvent.Status.PROCESSED, 3),
             ("polar", WebhookInboundEvent.Status.PROCESSED, 5),
-            ("lemonsqueezy", WebhookInboundEvent.Status.FAILED, 6),
+            ("digistore24", WebhookInboundEvent.Status.FAILED, 6),
             ("polar", WebhookInboundEvent.Status.PROCESSED, 8),
             ("paypal", WebhookInboundEvent.Status.PROCESSED, 9),
             ("polar", WebhookInboundEvent.Status.PROCESSED, 11),
-            ("lemonsqueezy", WebhookInboundEvent.Status.PROCESSED, 13),
+            ("digistore24", WebhookInboundEvent.Status.PROCESSED, 13),
         ]
         for provider, status, days_ago in samples:
             hours_ago = days_ago * 24 + secrets.randbelow(20)
@@ -294,7 +294,7 @@ class Command(BaseCommand):
                 "id": secrets.token_urlsafe(12),
                 "label": "Subscribe monthly",
                 "description": "Full archive access, cancel anytime.",
-                "target_url": "https://northwind.lemonsqueezy.com/checkout/pro-monthly",
+                "target_url": "https://www.digistore24.com/product/100001",
                 "bg_color": "#0ea5e9",
                 "text_color": "#ffffff",
             },
@@ -336,7 +336,7 @@ class Command(BaseCommand):
                 "description": "Full archive, deep dives included.",
                 "price_monthly": "9", "price_yearly": "90", "highlight": True, "ribbon_text": "Popular",
                 "cta_type": PricingTier.CtaType.SUBSCRIPTION, "cta_label": "Subscribe",
-                "cta_url": "https://northwind.lemonsqueezy.com/checkout/pro-monthly",
+                "cta_url": "https://www.digistore24.com/product/100001",
                 "features": ["Everything in Free", "Full article archive", "Monthly deep dives", "Ad-free reading"],
             },
             {

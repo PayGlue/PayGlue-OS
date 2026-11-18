@@ -55,22 +55,6 @@ export default {
       return addCors(res)
     }
 
-    // Route Lemon Squeezy webhooks to Django: /webhooks/lemonsqueezy?tenant={slug} → /t/{slug}/webhooks/lemonsqueezy/{token}/
-    if (path === '/webhooks/lemonsqueezy') {
-      const tenantSlug = url.searchParams.get('tenant')
-      if (!tenantSlug) return new Response('Missing tenant parameter', { status: 400, headers: CORS_HEADERS })
-      const token = env.WEBHOOK_ENDPOINT_TOKEN
-      const djangoPath = `/t/${tenantSlug}/webhooks/lemonsqueezy/${token}/`
-      const target = new URL(env.RAILWAY_BACKEND_URL + djangoPath)
-      const res = await fetch(new Request(target.toString(), {
-        method: request.method,
-        headers: request.headers,
-        body: request.body,
-      }))
-      console.log(`[webhook] lemonsqueezy tenant=${tenantSlug} → ${res.status}`)
-      return addCors(res)
-    }
-
     // Route PayPal webhooks to Django: /webhooks/paypal?tenant={slug} → /t/{slug}/webhooks/paypal/{token}/
     if (path === '/webhooks/paypal') {
       const tenantSlug = url.searchParams.get('tenant')

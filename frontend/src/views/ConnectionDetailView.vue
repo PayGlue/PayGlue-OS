@@ -12,7 +12,6 @@ import {
   ApiHttpError,
   disconnectIntegration,
   getIntegrationConfig,
-  getLemonSqueezyStores,
   getPolarProducts,
   listMappings,
   registerIntegrationWebhooks,
@@ -56,13 +55,6 @@ const form = reactive<Record<string, string>>({})
 const stored = reactive<Record<string, boolean>>({})
 const editing = reactive<Record<string, boolean>>({})
 
-// Lemon Squeezy store selector.
-interface LsStore { id: string; name: string; slug: string }
-const stores = ref<LsStore[]>([])
-const storesLoading = ref(false)
-const storesError = ref<string | null>(null)
-const selectedStoreId = ref('')
-
 // Polar rename banner.
 const hasPendingRename = ref(false)
 const renameConfirmed = ref(false)
@@ -99,23 +91,6 @@ const resetFieldState = () => {
   }
 }
 
-const loadStores = async () => {
-  if (!session.activeTenantSlug || !session.idToken) return
-  storesLoading.value = true
-  storesError.value = null
-  try {
-    const result = await getLemonSqueezyStores(session.activeTenantSlug, session.idToken)
-    stores.value = result.stores ?? []
-    if (result.selected_store_id) selectedStoreId.value = result.selected_store_id
-    else if (result.stores && result.stores.length === 1) selectedStoreId.value = result.stores[0]?.id ?? ''
-    if (!stores.value.length) storesError.value = 'No stores found. Check that your API key has access to at least one store.'
-  } catch {
-    storesError.value = 'Could not load stores. Check your API key and try again.'
-  } finally {
-    storesLoading.value = false
-  }
-}
-
 const load = async () => {
   loading.value = true
   resetFieldState()
@@ -140,8 +115,6 @@ const load = async () => {
         }
       } catch { /* token check is non-critical */ }
     }
-    // Lemon Squeezy: load the store list once we know the API key is stored.
-    if (meta.value.hasStore && stored['api_key']) loadStores()
     if (meta.value.renameBanner && pendingRenameKey.value) {
       hasPendingRename.value = localStorage.getItem(pendingRenameKey.value) === '1'
     }
@@ -164,7 +137,6 @@ const showSaveButton = computed(() => {
   // every field is already stored.
   if (meta.value.registersWebhooks) return true
   if (meta.value.fields.some((f) => editing[f.key] || (form[f.key] ?? '').trim())) return true
-  if (meta.value.hasStore && selectedStoreId.value) return true
   return false
 })
 
@@ -208,7 +180,6 @@ const save = async () => {
       const v = (form[field.key] ?? '').trim()
       if (v) creds[field.key] = v
     }
-    if (meta.value.hasStore && selectedStoreId.value) creds.store_id = selectedStoreId.value
 
     if (Object.keys(creds).length > 0) {
       // Merge always-on / derived credentials (PayPal sandbox flag, Paddle
@@ -230,9 +201,6 @@ const save = async () => {
         else if (field.detect === 'polar_token' && (form[field.key] ?? '').trim()) stored[field.key] = true
       }
       showWebhookRegistration(result.webhook_registration)
-      if (meta.value.hasStore && ((form['api_key'] ?? '').trim() || (stored['api_key'] && !stores.value.length))) {
-        await loadStores()
-      }
     } else if (meta.value.registersWebhooks && config.enabled) {
       const result = await registerIntegrationWebhooks(tenantSlug, idToken, meta.value.key as 'gumroad' | 'digistore24')
       showWebhookRegistration(result.webhook_registration)
@@ -303,8 +271,6 @@ const disconnect = async () => {
     resetFieldState()
     latestHealth.value = undefined
     webhookRegistrationMessage.value = null
-    stores.value = []
-    selectedStoreId.value = ''
     confirmingDisconnect.value = false
     disconnectedMessage.value = `${meta.value.name} is disconnected and the saved keys are deleted. Remove the webhook and the API key in your ${meta.value.name} dashboard as well.`
   } catch (e) {
@@ -319,8 +285,6 @@ const startEditing = (key: string) => {
   editing[key] = true
   form[key] = ''
 }
-
-const showStore = computed(() => meta.value.hasStore && (stored['api_key'] || (form['api_key'] ?? '').trim()))
 
 // Deliberately not part of load(). The webhook secret is tenant-level and has
 // nothing to do with this provider's config, but it used to be fetched as the
@@ -345,8 +309,6 @@ watch(() => props.provider, () => {
   webhookRegistrationMessage.value = null
   disconnectedMessage.value = null
   confirmingDisconnect.value = false
-  stores.value = []
-  selectedStoreId.value = ''
   hasPendingRename.value = false
   load()
   // Cached per tenant in the store, so this is a no-op once loaded -- but it
@@ -435,23 +397,6 @@ watch(() => props.provider, () => {
                 class="pg-input pg-mono"
               />
             </FormField>
-
-            <!-- Lemon Squeezy store selector -->
-            <FormField
-              v-if="showStore"
-              label="Store"
-              hint="Limits product fetching to this store. Required if your API key has access to multiple stores."
-            >
-              <p v-if="storesLoading" class="text-xs text-slate-400 dark:text-slate-500">Loading stores...</p>
-              <template v-else>
-                <p v-if="storesError" class="mb-1 text-xs text-amber-600 dark:text-amber-400">{{ storesError }}</p>
-                <select v-model="selectedStoreId" :disabled="!canWrite" class="pg-input">
-                  <option value="">Select your store</option>
-                  <option v-for="s in stores" :key="s.id" :value="s.id">{{ s.name }} ({{ s.slug }})</option>
-                </select>
-              </template>
-            </FormField>
-
             <!-- Status -->
             <div class="flex items-center gap-1.5 text-xs">
               <span class="inline-block h-2 w-2 rounded-full" :class="config.enabled ? 'bg-emerald-500' : 'bg-rose-500'"></span>

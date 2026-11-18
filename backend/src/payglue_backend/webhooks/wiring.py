@@ -21,7 +21,6 @@ from payglue_backend.webhooks.adapters.ghost import (
 )
 from payglue_backend.webhooks.adapters.gumroad import GumroadPaymentAdapter
 from payglue_backend.webhooks.adapters.kofi import KofiPaymentAdapter
-from payglue_backend.webhooks.adapters.lemon_squeezy import LemonSqueezyPaymentAdapter
 from payglue_backend.webhooks.adapters.paddle import PaddlePaymentAdapter
 from payglue_backend.webhooks.adapters.patreon import PatreonPaymentAdapter
 from payglue_backend.webhooks.adapters.paypal import PayPalPaymentAdapter
@@ -34,7 +33,7 @@ from payglue_backend.webhooks.models import IntegrationConfig
 from payglue_backend.webhooks.resolver import DbProductMappingResolver
 
 _DEFAULT_CMS_PROVIDER_KEY = "ghost"
-_SUPPORTED_PAYMENT_PROVIDER_KEYS = {"polar", "lemonsqueezy", "paypal", "gumroad", "paddle", "kofi", "creem", "patreon", "dodo", "digistore24"}
+_SUPPORTED_PAYMENT_PROVIDER_KEYS = {"polar", "paypal", "gumroad", "paddle", "kofi", "creem", "patreon", "dodo", "digistore24"}
 _SUPPORTED_CMS_PROVIDER_KEYS = {_DEFAULT_CMS_PROVIDER_KEY}
 _orchestrator: WebhookOrchestrator | None = None
 _credential_provider: CredentialProvider | None = None
@@ -68,9 +67,6 @@ def get_webhook_orchestrator() -> WebhookOrchestrator:
     registry = AdapterRegistry()
     registry.register_payment(
         "polar", PolarPaymentAdapter(credential_provider=credential_provider)
-    )
-    registry.register_payment(
-        "lemonsqueezy", LemonSqueezyPaymentAdapter(credential_provider=credential_provider)
     )
     registry.register_payment(
         "paypal", PayPalPaymentAdapter(credential_provider=credential_provider)
@@ -138,11 +134,6 @@ def get_cms_adapter(provider_key: str) -> CmsAdapter:
 def get_payment_adapter(provider_key: str) -> PaymentAdapter:
     if provider_key == "polar":
         return PolarPaymentAdapter(
-            credential_provider=get_credential_provider(),
-            provider_key=provider_key,
-        )
-    if provider_key == "lemonsqueezy":
-        return LemonSqueezyPaymentAdapter(
             credential_provider=get_credential_provider(),
             provider_key=provider_key,
         )

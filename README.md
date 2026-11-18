@@ -21,7 +21,7 @@
 
 I run a several german Ghost blogs and wanted to accept payments through LemonSqueezy, not Stripe. Ghost said no. So I built PayGlue: a relay that receives signed webhooks from your payment provider and syncs membership state into Ghost via the Admin API. Someone pays, they get access. Someone cancels, access is revoked. No Ghost code changes, no manual syncing, no spreadsheet of shame.
 
-**Eight providers, one relay:** Polar · LemonSqueezy · PayPal · Gumroad · Paddle · Ko-fi · Creem · Patreon
+**Nine providers, one relay:** Polar · PayPal · Gumroad · Paddle · Ko-fi · Creem · Patreon · Dodo Payments · Digistore24
 
 Your existing Stripe setup stays untouched. PayGlue runs next to it and only covers what Ghost can't do natively.
 
@@ -123,7 +123,7 @@ curl -i -X POST "http://localhost:8000/t/your-tenant/webhooks/polar/dev-token/" 
 
 ## 🔌 Provider status
 
-Live: **Polar, Lemon Squeezy, PayPal, Gumroad, Paddle, Ko-fi, Creem, Patreon.** Each ships with encrypted credential storage, health checks, webhook signature verification, and product autofetch.
+Live: **Polar, PayPal, Gumroad, Paddle, Ko-fi, Creem, Patreon, Dodo Payments, Digistore24.** Each ships with encrypted credential storage, health checks, webhook signature verification, and product autofetch.
 
 <p align="center">
   <img src=".github/assets/provider-config.png" alt="Configuring a payment provider in the PayGlue dashboard" width="720" />
@@ -133,7 +133,7 @@ Missing yours? [Open a discussion](https://github.com/PayGlue/PayGlue-OS/discuss
 
 ## 🔐 Security
 
-Two-layer model for inbound webhooks: a URL endpoint token for proxy authentication, plus per-provider cryptographic signature verification (HMAC-SHA256 for Polar and Lemon Squeezy, RSA-SHA256 for PayPal). Credentials are encrypted at rest (AES-256). Boring by design, this thing sits next to your revenue.
+Two-layer model for inbound webhooks: a URL endpoint token for proxy authentication, plus per-provider cryptographic signature verification (for example HMAC-SHA256 for Polar, RSA-SHA256 for PayPal). Credentials are encrypted at rest (AES-256). Boring by design, this thing sits next to your revenue.
 
 Full architecture and vulnerability disclosure process: [SECURITY.md](SECURITY.md)
 
@@ -143,7 +143,7 @@ Full architecture and vulnerability disclosure process: [SECURITY.md](SECURITY.m
 
 ## 🤝 Contributing
 
-Contributions are welcome and rewarded, and we mean the second part literally. New provider adapters live in `backend/src/payglue_backend/webhooks/adapters/`, Polar and Lemon Squeezy are the cleanest references to follow. Contributors who want to run PayGlue on their own Ghost site using our infrastructure get a goodie.
+Contributions are welcome and rewarded, and we mean the second part literally. New provider adapters live in `backend/src/payglue_backend/webhooks/adapters/`, the Polar adapter is the cleanest reference to follow. Contributors who want to run PayGlue on their own Ghost site using our infrastructure get a goodie.
 
 Workflow, branch naming, and PR conventions: [CONTRIBUTING.md](CONTRIBUTING.md) · Reach out: team@payglue.io
 

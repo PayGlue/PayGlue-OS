@@ -63,7 +63,7 @@ Payment providers are implemented as adapters in `backend/src/payglue_backend/we
 1. **Signature verification** — cryptographically verify the incoming webhook payload against the provider's secret
 2. **Event mapping** — translate provider-specific event types into PayGlue's internal event format (`order.paid`, `subscription.created`, etc.)
 
-The Polar adapter (`adapters/polar.py`) and Lemon Squeezy adapter (`adapters/lemon_squeezy.py`) are the cleanest references to follow. Each adapter is registered in `webhooks/wiring.py`.
+The Polar adapter (`adapters/polar.py`) is the cleanest reference to follow. Each adapter is registered in `webhooks/wiring.py`.
 
 A new provider PR should include:
 - The adapter file under `adapters/`

@@ -11,7 +11,6 @@ import { usePageResetStore } from '../stores/pageReset'
 import { isPlanLimitError, planKeyFromError } from '../lib/planUpgrade'
 import {
   getPolarProducts,
-  getLemonSqueezyProducts,
   getPayPalProducts,
   getGumroadProducts,
   getPaddleProducts,
@@ -44,9 +43,6 @@ const polarProductsLoading = ref(false)
 const polarProductsError = ref<string | null>(null)
 const polarSandbox = ref(false)
 
-const lsProducts = ref<Product[]>([])
-const lsProductsLoading = ref(false)
-const lsProductsError = ref<string | null>(null)
 
 const paypalProducts = ref<Product[]>([])
 const paypalProductsLoading = ref(false)
@@ -83,7 +79,7 @@ const activeProducts = computed(() => {
   if (selectedProvider.value === 'dodo') return dodoProducts.value
   if (selectedProvider.value === 'digistore24') return digistore24Products.value
   if (selectedProvider.value === 'patreon') return patreonProducts.value
-  return lsProducts.value
+  return []
 })
 const productsLoading = computed(() => {
   if (selectedProvider.value === 'polar') return polarProductsLoading.value
@@ -94,7 +90,7 @@ const productsLoading = computed(() => {
   if (selectedProvider.value === 'dodo') return dodoProductsLoading.value
   if (selectedProvider.value === 'digistore24') return digistore24ProductsLoading.value
   if (selectedProvider.value === 'patreon') return patreonProductsLoading.value
-  return lsProductsLoading.value
+  return false
 })
 const productsError = computed(() => {
   if (selectedProvider.value === 'polar') return polarProductsError.value
@@ -105,7 +101,7 @@ const productsError = computed(() => {
   if (selectedProvider.value === 'dodo') return dodoProductsError.value
   if (selectedProvider.value === 'digistore24') return digistore24ProductsError.value
   if (selectedProvider.value === 'patreon') return patreonProductsError.value
-  return lsProductsError.value
+  return null
 })
 
 const savedConfigs = ref<PaywallConfigData[]>([])
@@ -234,7 +230,6 @@ function startEdit(cfg: PaywallConfigData) {
     else if (mappedProvider === 'dodo') selectedProvider.value = 'dodo'
     else if (mappedProvider === 'digistore24') selectedProvider.value = 'digistore24'
     else if (mappedProvider === 'patreon') selectedProvider.value = 'patreon'
-    else if (lsProducts.value.some(p => p.id === cfg.product_id)) selectedProvider.value = 'lemonsqueezy'
     else if (paypalProducts.value.some(p => p.id === cfg.product_id)) selectedProvider.value = 'paypal'
     else if (gumroadProducts.value.some(p => p.id === cfg.product_id)) selectedProvider.value = 'gumroad'
     else if (paddleProducts.value.some(p => p.id === cfg.product_id)) selectedProvider.value = 'paddle'
@@ -349,25 +344,6 @@ async function loadPolarProducts() {
     polarProductsError.value = 'Could not load products.'
   } finally {
     polarProductsLoading.value = false
-  }
-}
-
-async function loadLsProducts() {
-  const slug = session.activeTenantSlug
-  const token = session.idToken
-  if (!slug || !token) return
-  lsProductsLoading.value = true
-  lsProductsError.value = null
-  try {
-    const result = await getLemonSqueezyProducts(slug, token)
-    lsProducts.value = result.products ?? []
-    if (!result.has_token) lsProductsError.value = 'No Lemon Squeezy API key configured. Add it in the Lemon Squeezy connection settings.'
-    else if (result.needs_store) lsProductsError.value = 'Select your Lemon Squeezy store in the connection settings to load products.'
-    else if (result.error) lsProductsError.value = result.error
-  } catch {
-    lsProductsError.value = 'Could not load Lemon Squeezy products.'
-  } finally {
-    lsProductsLoading.value = false
   }
 }
 
@@ -512,8 +488,8 @@ async function loadPricingTables() {
 
 watch(selectedProductId, (id) => { if (id && ctaMode.value === 'product') syncMappingState(id) })
 
-onMounted(() => { loadConfigs(); loadPolarProducts(); loadLsProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadDodoProducts(); loadDigistore24Products(); loadPatreonProducts(); loadPricingTables(); loadMappings() })
-watch(() => session.activeTenantSlug, () => { loadConfigs(); loadPolarProducts(); loadLsProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadDodoProducts(); loadDigistore24Products(); loadPatreonProducts(); loadPricingTables(); loadMappings() })
+onMounted(() => { loadConfigs(); loadPolarProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadDodoProducts(); loadDigistore24Products(); loadPatreonProducts(); loadPricingTables(); loadMappings() })
+watch(() => session.activeTenantSlug, () => { loadConfigs(); loadPolarProducts(); loadPayPalProducts(); loadGumroadProducts(); loadPaddleProducts(); loadCreemProducts(); loadDodoProducts(); loadDigistore24Products(); loadPatreonProducts(); loadPricingTables(); loadMappings() })
 watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = 'subscription.active' })
 
 const checkoutUrlForProduct = (id: string) => {
@@ -571,7 +547,7 @@ const step2Config = computed(() => {
   <AppShell>
     <div class="space-y-5">
 
-      <PageHeader title="Paywall configuration" description="Gate individual Ghost articles behind any payment provider. Ideal if Stripe is not available in your country, or if you want to sell articles as one-time purchases via Polar, Lemon Squeezy, or any other provider of your choice. Configure a paywall per article and paste the snippet into your Ghost HTML card." />
+      <PageHeader title="Paywall configuration" description="Gate individual Ghost articles behind any payment provider. Ideal if Stripe is not available in your country, or if you want to sell articles as one-time purchases via Polar, Gumroad, or any other provider of your choice. Configure a paywall per article and paste the snippet into your Ghost HTML card." />
 
       <div class="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
 

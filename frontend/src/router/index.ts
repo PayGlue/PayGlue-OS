@@ -233,13 +233,6 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresTenantMatch: true },
     },
     {
-      path: '/t/:tenantSlug/connection/lemonsqueezy',
-      name: 'connection-lemonsqueezy',
-      component: ConnectionDetailView,
-      props: { provider: 'lemonsqueezy' },
-      meta: { requiresAuth: true, requiresTenantMatch: true },
-    },
-    {
       path: '/t/:tenantSlug/connection/paypal',
       name: 'connection-paypal',
       component: ConnectionDetailView,

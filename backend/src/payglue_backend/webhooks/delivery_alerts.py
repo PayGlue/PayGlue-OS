@@ -68,7 +68,6 @@ _FAILURE = (_Status.FAILED, _Status.DEAD_LETTER)
 
 PROVIDER_NAMES = {
     "polar": "Polar",
-    "lemonsqueezy": "Lemon Squeezy",
     "paypal": "PayPal",
     "gumroad": "Gumroad",
     "paddle": "Paddle",

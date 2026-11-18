@@ -16,7 +16,6 @@ vi.mock('../../lib/api', async () => {
     updatePricingTable: vi.fn(),
     deletePricingTable: vi.fn(),
     getPolarProducts: vi.fn().mockResolvedValue([]),
-    getLemonSqueezyProducts: vi.fn().mockResolvedValue([]),
     getPayPalProducts: vi.fn().mockResolvedValue([]),
     getGumroadProducts: vi.fn().mockResolvedValue([]),
     getPaddleProducts: vi.fn().mockResolvedValue([]),
