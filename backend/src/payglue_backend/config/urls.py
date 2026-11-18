@@ -42,8 +42,6 @@ from payglue_backend.tenants.views import (
     PatreonProductsView,
     CreemSubscriptionView,
     GumroadProductsView,
-    LemonSqueezyProductsView,
-    LemonSqueezyStoresView,
     PaddleProductsView,
     PayPalProductsView,
     PolarInvoicesView,
@@ -219,16 +217,6 @@ urlpatterns = [
         r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/polar-products/?$",
         PolarProductsView.as_view(),
         name="tenant-billing-polar-products",
-    ),
-    re_path(
-        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/lemonsqueezy-products/?$",
-        LemonSqueezyProductsView.as_view(),
-        name="tenant-billing-lemonsqueezy-products",
-    ),
-    re_path(
-        r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/lemonsqueezy-stores/?$",
-        LemonSqueezyStoresView.as_view(),
-        name="tenant-billing-lemonsqueezy-stores",
     ),
     re_path(
         r"^t/(?P<tenant_slug>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/api/v1/billing/paypal-products/?$",
