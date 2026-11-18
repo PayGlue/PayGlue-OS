@@ -16,7 +16,7 @@ dependencies = [
     # a decision, made here.
     "django>=6.1,<6.2",
     "djangorestframework>=3.15,<4",
-    "gunicorn>=23,<27",
+    "gunicorn>=23,<28",
     "psycopg[binary]>=3.2,<4",
     "redis>=5.0,<9",
 ]
