@@ -4,7 +4,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import AppShell from '../components/AppShell.vue'
-import { PageHeader, ProviderPicker } from '../components/ui'
+import { PageHeader, ProviderPicker, ShowMoreRow, UiButton } from '../components/ui'
+import { useCollapsedList } from '../lib/collapsedList'
 import UpgradeBanner from '../components/UpgradeBanner.vue'
 import { useSessionStore } from '../stores/session'
 import { usePageResetStore } from '../stores/pageReset'
@@ -41,6 +42,11 @@ const isManualProduct = computed(() => selectedProvider.value === 'kofi')
 const polarProducts = ref<Product[]>([])
 const polarProductsLoading = ref(false)
 const polarProductsError = ref<string | null>(null)
+// Same as the buy button editor (PG-402): the real reason for an empty
+// product list, and "Required" only once the name was left or saved empty.
+const polarNeedsToken = ref(false)
+const nameTouched = ref(false)
+const showNameError = computed(() => nameTouched.value && !formName.value.trim())
 const polarSandbox = ref(false)
 
 
@@ -108,6 +114,8 @@ const savedConfigs = ref<PaywallConfigData[]>([])
 const configsLoading = ref(false)
 
 const editingId = ref<string | null>(null)
+const configList = useCollapsedList(savedConfigs, editingId)
+const formRoot = ref<HTMLElement | null>(null)
 const ctaMode = ref<'product' | 'pricing_table' | 'custom'>('product')
 const formName = ref('')
 const selectedProductId = ref('')
@@ -182,6 +190,7 @@ async function loadMappings() {
 
 function resetForm() {
   editingId.value = null
+  nameTouched.value = false
   formName.value = ''
   selectedProductId.value = ''
   selectedTableId.value = ''
@@ -204,6 +213,11 @@ function resetForm() {
 // The shell asks the page to start over when its nav item or breadcrumb is clicked again.
 const pageReset = usePageResetStore()
 watch(() => pageReset.tick, () => resetForm())
+
+function startNewPaywall() {
+  resetForm()
+  formRoot.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+}
 
 function startEdit(cfg: PaywallConfigData) {
   justSavedConfig.value = null
@@ -242,13 +256,14 @@ function startEdit(cfg: PaywallConfigData) {
     ctaMode.value = 'custom'
     nextTick(() => { buttonUrl.value = cfg.button_url })
   }
-  window.scrollTo({ top: 0, behavior: 'smooth' })
+  nextTick(() => formRoot.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }))
 }
 
 async function saveConfig() {
   const slug = session.activeTenantSlug
   const token = session.idToken
   if (!slug || !token) return
+  nameTouched.value = true
   if (!formName.value.trim()) return
   saving.value = true
   saveError.value = null
@@ -335,11 +350,15 @@ async function loadPolarProducts() {
   if (!slug || !token) return
   polarProductsLoading.value = true
   polarProductsError.value = null
+  polarNeedsToken.value = false
   try {
     const result = await getPolarProducts(slug, token)
     polarProducts.value = result.products ?? []
     polarSandbox.value = result.sandbox ?? false
-    if (!result.has_token) polarProductsError.value = 'No Polar token configured. Connect Polar first to load products.'
+    if (!result.has_token) {
+      polarNeedsToken.value = true
+      polarProductsError.value = 'Add your Polar API token to pick products from a list, or paste the product link below.'
+    }
   } catch {
     polarProductsError.value = 'Could not load products.'
   } finally {
@@ -549,7 +568,75 @@ const step2Config = computed(() => {
 
       <PageHeader title="Paywall configuration" description="Gate individual Ghost articles behind any payment provider. Ideal if Stripe is not available in your country, or if you want to sell articles as one-time purchases via Polar, Gumroad, or any other provider of your choice. Configure a paywall per article and paste the snippet into your Ghost HTML card." />
 
-      <div class="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
+      <!-- Saved list first, then the editor; the same order on Buy Buttons, Paywalls and Pricing Tables (PG-402). -->
+      <section class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 px-5 py-4">
+          <div>
+            <h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">Saved paywalls</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Copy the snippet per article and paste into an HTML card in Ghost. Headline, body and button update automatically when you edit, with no need to touch Ghost.</p>
+          </div>
+          <div class="flex shrink-0 items-center gap-2">
+            <span class="rounded-full bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 text-xs font-medium text-slate-600 dark:text-slate-300">{{ savedConfigs.length }}</span>
+            <UiButton variant="primary" size="sm" @click="startNewPaywall">New paywall</UiButton>
+          </div>
+        </div>
+
+        <div v-if="configsLoading" class="px-5 py-8 text-center text-sm text-slate-400 dark:text-slate-500">Loading...</div>
+        <div v-else-if="savedConfigs.length === 0" class="px-5 py-10 text-center text-sm text-slate-400 dark:text-slate-500">
+          No paywalls yet. Create your first one below.
+        </div>
+
+        <ul v-else class="divide-y divide-slate-100">
+          <li v-for="cfg in configList.visible.value" :key="cfg.id"
+            class="flex items-start gap-4 px-5 py-4"
+            :class="editingId === cfg.id ? 'bg-indigo-50 dark:bg-indigo-500/10' : ''">
+
+            <div class="mt-0.5 h-3 w-3 shrink-0 rounded-full ring-1 ring-slate-200 dark:ring-slate-700"
+              :style="{ backgroundColor: cfg.button_color || '#4f46e5' }" />
+
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">{{ cfg.name }}</p>
+              <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                {{ cfg.product_name || 'Custom URL' }}
+                <span v-if="cfg.button_url" class="text-slate-400 dark:text-slate-500">&middot; {{ cfg.button_url }}</span>
+              </p>
+            </div>
+
+            <div class="flex shrink-0 items-center gap-2 mt-0.5">
+              <button type="button"
+                class="flex items-center gap-1 rounded border border-slate-200 dark:border-slate-800 px-2 py-1 text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:border-indigo-300 hover:text-indigo-700"
+                @click="copyRowSnippet(cfg)">
+                <svg v-if="copiedRowId !== cfg.id" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                <svg v-else class="h-3 w-3 text-emerald-500" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                </svg>
+                {{ copiedRowId === cfg.id ? 'Copied' : 'Copy' }}
+              </button>
+              <button type="button"
+                class="flex items-center gap-1 rounded border border-slate-200 dark:border-slate-800 px-2 py-1 text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:border-amber-300 hover:text-amber-600"
+                @click="startEdit(cfg)">
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+                Edit
+              </button>
+              <button type="button"
+                class="flex items-center rounded border border-slate-200 dark:border-slate-800 p-1 text-slate-400 dark:text-slate-500 hover:border-red-200 hover:text-red-500"
+                :aria-label="`Delete ${cfg.name}`"
+                @click="removeConfig(cfg.id)">
+                <svg class="h-3.5 w-3.5" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            </div>
+          </li>
+        </ul>
+        <ShowMoreRow :hidden-count="configList.hiddenCount.value" :can-collapse="configList.canCollapse.value" @toggle="configList.toggle" />
+      </section>
+
+      <div ref="formRoot" class="grid scroll-mt-20 gap-6 lg:grid-cols-2 [&>*]:min-w-0">
 
         <!-- Config form -->
         <section class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 space-y-5" :class="isEditing ? 'ring-2 ring-indigo-400' : ''">
@@ -564,11 +651,14 @@ const step2Config = computed(() => {
 
           <!-- Name -->
           <div>
-            <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Name <span class="text-red-500 dark:text-rose-400">*</span> <span class="text-slate-400 dark:text-slate-500">(for your reference)</span></label>
-            <input v-model="formName" type="text" required placeholder="e.g. Barista Club, June article"
+            <label for="pw-name" class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Name <span class="text-red-600 dark:text-rose-400" aria-hidden="true">*</span> <span class="text-slate-500 dark:text-slate-400">(for your reference)</span></label>
+            <input id="pw-name" v-model="formName" type="text" required placeholder="e.g. Barista Club, June article"
+              :aria-invalid="showNameError"
+              :aria-describedby="showNameError ? 'pw-name-error' : undefined"
               class="w-full rounded-lg border px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:outline-none"
-              :class="formName.trim() ? 'border-slate-200 dark:border-slate-800 focus:border-indigo-400' : 'border-red-300 focus:border-red-400'" />
-            <p v-if="!formName.trim()" class="mt-1 text-xs text-red-500 dark:text-rose-400">Required</p>
+              :class="showNameError ? 'border-red-300 focus:border-red-400' : 'border-slate-200 dark:border-slate-800 focus:border-indigo-400'"
+              @blur="nameTouched = true" />
+            <p v-if="showNameError" id="pw-name-error" class="mt-1 text-xs text-red-600 dark:text-rose-400">Required</p>
           </div>
 
           <!-- CTA mode selector -->
@@ -604,7 +694,14 @@ const step2Config = computed(() => {
               </template>
               <template v-else>
                 <p v-if="productsLoading" class="text-xs text-slate-400 dark:text-slate-500">Loading products...</p>
-                <p v-else-if="productsError" class="text-xs text-amber-600 dark:text-amber-400">{{ productsError }}</p>
+                <p v-else-if="productsError" class="text-xs text-amber-800 dark:text-amber-300">
+                  {{ productsError }}
+                  <RouterLink
+                    v-if="selectedProvider === 'polar' && polarNeedsToken"
+                    :to="`/t/${session.activeTenantSlug}/connection/polar`"
+                    class="ml-1 font-semibold text-indigo-700 underline underline-offset-2 dark:text-indigo-300"
+                  >Open Polar settings</RouterLink>
+                </p>
                 <select v-else v-model="selectedProductId"
                   class="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none">
                   <option value="">Select a product</option>
@@ -938,69 +1035,6 @@ const step2Config = computed(() => {
 
         </div>
       </div>
-
-      <!-- Saved configs list -->
-      <section class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 px-5 py-4">
-          <div>
-            <h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">Saved paywalls</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Copy the snippet per article and paste into an HTML card in Ghost. Headline, body and button update automatically when you edit, with no need to touch Ghost.</p>
-          </div>
-          <span class="rounded-full bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 text-xs font-medium text-slate-600 dark:text-slate-300">{{ savedConfigs.length }}</span>
-        </div>
-
-        <div v-if="configsLoading" class="px-5 py-8 text-center text-sm text-slate-400 dark:text-slate-500">Loading...</div>
-        <div v-else-if="savedConfigs.length === 0" class="px-5 py-10 text-center text-sm text-slate-400 dark:text-slate-500">
-          No paywalls saved yet. Configure one above and click "Save".
-        </div>
-
-        <ul v-else class="divide-y divide-slate-100">
-          <li v-for="cfg in savedConfigs" :key="cfg.id"
-            class="flex items-start gap-4 px-5 py-4"
-            :class="editingId === cfg.id ? 'bg-indigo-50 dark:bg-indigo-500/10' : ''">
-
-            <div class="mt-0.5 h-3 w-3 shrink-0 rounded-full ring-1 ring-slate-200 dark:ring-slate-700"
-              :style="{ backgroundColor: cfg.button_color || '#4f46e5' }" />
-
-            <div class="min-w-0 flex-1">
-              <p class="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">{{ cfg.name }}</p>
-              <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
-                {{ cfg.product_name || 'Custom URL' }}
-                <span v-if="cfg.button_url" class="text-slate-400 dark:text-slate-500">&middot; {{ cfg.button_url }}</span>
-              </p>
-            </div>
-
-            <div class="flex shrink-0 items-center gap-2 mt-0.5">
-              <button type="button"
-                class="flex items-center gap-1 rounded border border-slate-200 dark:border-slate-800 px-2 py-1 text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:border-indigo-300 hover:text-indigo-700"
-                @click="copyRowSnippet(cfg)">
-                <svg v-if="copiedRowId !== cfg.id" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-                <svg v-else class="h-3 w-3 text-emerald-500" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                </svg>
-                {{ copiedRowId === cfg.id ? 'Copied' : 'Copy' }}
-              </button>
-              <button type="button"
-                class="flex items-center gap-1 rounded border border-slate-200 dark:border-slate-800 px-2 py-1 text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:border-amber-300 hover:text-amber-600"
-                @click="startEdit(cfg)">
-                <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                </svg>
-                Edit
-              </button>
-              <button type="button"
-                class="flex items-center rounded border border-slate-200 dark:border-slate-800 p-1 text-slate-400 dark:text-slate-500 hover:border-red-200 hover:text-red-500"
-                @click="removeConfig(cfg.id)">
-                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
-            </div>
-          </li>
-        </ul>
-      </section>
 
     </div>
   </AppShell>

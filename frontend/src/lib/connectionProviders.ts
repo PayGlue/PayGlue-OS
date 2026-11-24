@@ -283,3 +283,14 @@ export const PROVIDER_ORDER: ProviderKey[] = [
 
 export const isConnectionProvider = (key: string): key is ProviderKey =>
   Object.prototype.hasOwnProperty.call(CONNECTION_PROVIDERS, key)
+
+/**
+ * Where onboarding step 3 sends somebody who picked `provider` (PG-402): that
+ * provider's own connection page. Anything that is not a connection provider
+ * (Stripe, a stale key) goes to the overview instead of a page that is not
+ * there.
+ */
+export const onboardingProviderPath = (tenantSlug: string, provider: string): string =>
+  isConnectionProvider(provider)
+    ? `/t/${tenantSlug}/connection/${provider}`
+    : `/t/${tenantSlug}/connections`

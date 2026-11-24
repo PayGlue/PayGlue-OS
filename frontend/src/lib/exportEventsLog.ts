@@ -43,6 +43,7 @@ export function buildEventsLogMarkdown(events: WebhookEvent[], context: { tenant
   for (const event of events) {
     const received = new Date(event.created_at).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'medium' })
     lines.push(`## Event ${event.id} · ${event.provider} · ${event.status}`)
+    if (event.delivery_state) lines.push(`- State: ${event.delivery_state}`)
     lines.push(`- Received: ${received}`)
     lines.push(`- Attempts: ${event.attempts}`)
     if (event.last_error) lines.push(`- Error: ${event.last_error}`)

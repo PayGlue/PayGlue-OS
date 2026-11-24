@@ -154,12 +154,28 @@ export interface IntegrationHealthStatus {
   checked_at: string
 }
 
+/**
+ * PG-402: what happened to a delivery, decided once by the backend
+ * (webhooks/delivery_state.py). Every page reads this instead of `status`.
+ */
+export type DeliveryState =
+  | 'delivered'
+  | 'skipped'
+  | 'scheduled'
+  | 'in_flight'
+  | 'retrying'
+  | 'rejected'
+  | 'test'
+  | 'needs_you'
+
 export interface WebhookEvent {
   id: number
   tenant_slug: string
   provider: string
   status: 'received' | 'processing' | 'processed' | 'skipped' | 'failed' | 'dead_letter'
+  delivery_state: DeliveryState
   attempts: number
+  max_attempts?: number
   next_attempt_at: string | null
   last_error: string
   verification_failed?: boolean
@@ -170,6 +186,23 @@ export interface WebhookEvent {
   created_at: string
   updated_at: string
   dead_lettered_at: string | null
+}
+
+/** One group of deliveries that need a person, for the line under the card. */
+export interface NeedsYouGroup {
+  provider: string
+  count: number
+  /** Set when the group is a single event. */
+  attempts: number | null
+  max_attempts: number | null
+  latest_at: string
+}
+
+/** GET events/health: counts per delivery state, all providers and each one. */
+export interface DeliveryHealthSummary {
+  counts: Record<DeliveryState, number>
+  providers: Record<string, Record<DeliveryState, number>>
+  needs_you: NeedsYouGroup[]
 }
 
 export interface ReplayWebhookEventResult {

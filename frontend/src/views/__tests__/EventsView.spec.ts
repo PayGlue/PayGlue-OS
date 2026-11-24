@@ -1,7 +1,7 @@
 // Copyright (c) 2026 PayGlue by André Nünninghoff
 // Licensed under the Business Source License 1.1, see LICENSE.md
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createPinia, setActivePinia } from 'pinia'
 import EventsView from '../EventsView.vue'
@@ -27,7 +27,7 @@ const setupSession = (role: 'owner' | 'admin' | 'billing_admin' | 'support_reado
   session.activeTenantSlug = 'tenant-a'
 }
 
-const makeRouter = async () => {
+const makeRouter = async (path = '/t/tenant-a/events') => {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -41,7 +41,7 @@ const makeRouter = async () => {
       { path: '/t/:tenantSlug/billing', component: { template: '<div />' } },
     ],
   })
-  router.push('/t/tenant-a/events')
+  router.push(path)
   await router.isReady()
   return router
 }
@@ -64,15 +64,17 @@ describe('EventsView', () => {
         tenant_slug: 'tenant-a',
         provider: 'polar',
         status: 'failed',
+        delivery_state: 'needs_you',
         attempts: 3,
+        max_attempts: 5,
         next_attempt_at: null,
         last_error: 'upstream timeout',
         endpoint_path: '/t/tenant-a/webhooks/polar/[redacted]/',
         endpoint_metadata: { method: 'POST' },
         payload_snapshot: { event: 'order.paid' },
         headers_snapshot: { 'Content-Type': 'application/json' },
-        created_at: '2026-01-01T00:00:00Z',
-        updated_at: '2026-01-01T00:00:00Z',
+        created_at: '2026-01-02T00:00:00Z',
+        updated_at: '2026-01-02T00:00:00Z',
         dead_lettered_at: null,
       },
       {
@@ -80,6 +82,7 @@ describe('EventsView', () => {
         tenant_slug: 'tenant-a',
         provider: 'polar',
         status: 'processed',
+        delivery_state: 'delivered',
         attempts: 1,
         next_attempt_at: null,
         last_error: '',
@@ -127,8 +130,8 @@ describe('EventsView', () => {
 
     render(EventsView, { global: { plugins: [router] } })
 
-    await screen.findAllByText('polar')
-    await expandEvent('polar')
+    await screen.findAllByText('Polar')
+    await expandEvent('Polar')
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /replay event/i })).toBeInTheDocument()
@@ -153,10 +156,10 @@ describe('EventsView', () => {
 
     render(EventsView, { global: { plugins: [router] } })
 
-    await screen.findAllByText('polar')
+    await screen.findAllByText('Polar')
     expect(screen.getByText(/your role can inspect events but cannot trigger replays/i)).toBeInTheDocument()
 
-    await expandEvent('polar')
+    await expandEvent('Polar')
     expect(screen.queryByRole('button', { name: /replay event/i })).not.toBeInTheDocument()
 
     await fireEvent.update(screen.getByLabelText('Event type'), 'billing_profile_updated')
@@ -176,5 +179,37 @@ describe('EventsView', () => {
     expect(lastArgs?.[2]?.target_type).toBe('billing_profile')
     expect(lastArgs?.[2]?.created_at_from).toMatch(/202/)
     expect(lastArgs?.[2]?.created_at_to).toMatch(/202/)
+  })
+
+  it('opens on the needs-you filter the dashboard card links to (PG-402)', async () => {
+    setupSession('owner')
+    const router = await makeRouter('/t/tenant-a/events?state=needs_you')
+
+    render(EventsView, { global: { plugins: [router] } })
+
+    await screen.findAllByText('Polar')
+    const chips = screen.getByRole('group', { name: /filter by delivery state/i })
+    const chip = within(chips).getByRole('button', { name: /needs you/i })
+    expect(chip).toHaveAttribute('aria-pressed', 'true')
+    // Only the stuck event shows, with its state and the next step.
+    expect(screen.getAllByText('Needs you').length).toBeGreaterThan(0)
+    // "Synced" is left only on its filter chip, no row carries it.
+    expect(within(chips).getByRole('button', { name: /synced/i })).toBeInTheDocument()
+    expect(screen.getAllByText(/^\s*Synced\s*$/).length).toBe(1)
+    await expandEvent('Polar')
+    expect(screen.getByText('3 of 5')).toBeInTheDocument()
+    expect(screen.getByText(/will not try this again by itself/i)).toBeInTheDocument()
+  })
+
+  it('shows every state with the dashboard words when the filter is cleared', async () => {
+    setupSession('owner')
+    const router = await makeRouter()
+
+    render(EventsView, { global: { plugins: [router] } })
+
+    await screen.findAllByText('Polar')
+    expect(screen.getAllByText('Synced').length).toBeGreaterThan(0)
+    expect(screen.queryByText('processed')).not.toBeInTheDocument()
+    expect(screen.queryByText('failed')).not.toBeInTheDocument()
   })
 })

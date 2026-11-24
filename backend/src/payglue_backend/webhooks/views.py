@@ -38,6 +38,7 @@ from payglue_backend.webhooks import wiring
 from payglue_backend.webhooks.mapping_sync import GrantSpec, sync_grant, sync_grants, widgets_offering
 from payglue_backend.webhooks.models import BuyButton, IntegrationConfig, PaywallConfig, PricingTable, PricingTier, ProductMapping
 from payglue_backend.webhooks.models import WebhookInboundEvent
+from payglue_backend.webhooks import delivery_state
 from payglue_backend.webhooks.test_events import run_mapping_test
 from payglue_backend.webhooks.serializers import (
     IntegrationCredentialsSerializer,
@@ -1733,11 +1734,25 @@ class TenantEventListView(APIView):
 
     def get(self, request: Request, tenant_slug: str) -> Response:
         self._require_tenant_context(request, tenant_slug)
+        # Newest first by when it arrived. Ordering by id alone put copied or
+        # imported rows out of order.
         events = WebhookInboundEvent.objects.filter(tenant_slug=tenant_slug).order_by(
-            "-id"
+            "-created_at", "-id"
         )
         serializer = WebhookInboundEventSerializer(events, many=True)
         return Response(serializer.data)
+
+
+class TenantDeliveryHealthView(APIView):
+    """PG-402: counts per delivery state for the dashboard card, the
+    connections overview and the sidebar, so none of them loads every event to
+    count on its own. Same predicate as the events list's delivery_state."""
+
+    authentication_classes = [SupabaseBearerAuthentication]
+    permission_classes = [TenantReadOwnerAdminWrite]
+
+    def get(self, request: Request, tenant_slug: str) -> Response:
+        return Response(delivery_state.summary(tenant_slug))
 
 
 

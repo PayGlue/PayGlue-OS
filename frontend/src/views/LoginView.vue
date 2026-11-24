@@ -4,15 +4,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import Turnstile from 'cfturnstile-vue3'
 import loginHeroImage from '../assets/login-hero.jpg'
 import { capabilities, signInWithPassword } from '../lib/authProvider'
 import { supabase } from '../lib/supabase'
 import { usesPasswordSignIn } from '../lib/passwordSignIn'
 import { useSessionStore } from '../stores/session'
 import PayGlueLogo from '../components/PayGlueLogo.vue'
+import TurnstileCheck from '../components/TurnstileCheck.vue'
 
-const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY as string
 const route = useRoute()
 const router = useRouter()
 const session = useSessionStore()
@@ -28,6 +27,9 @@ const session = useSessionStore()
 const email = ref((route.query.email as string) || '')
 const password = ref('')
 const captchaToken = ref<string | null>(null)
+// A Turnstile token is single use, so every attempt that spent one asks for
+// a fresh one afterwards, whether it worked or not.
+const turnstile = ref<InstanceType<typeof TurnstileCheck> | null>(null)
 const isSending = ref(false)
 const sent = ref(Boolean(route.query.email))
 // PG-142: replaced clickable magic links with a 6-digit code entered on
@@ -105,6 +107,7 @@ const submit = async () => {
     },
   })
   isSending.value = false
+  turnstile.value?.reset()
   if (authError) {
     error.value = authError.message
     captchaToken.value = null
@@ -232,14 +235,10 @@ const backToEmail = () => {
               autocomplete="current-password"
               class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
             />
-            <Turnstile
+            <TurnstileCheck
               v-if="!usesPassword"
-              :sitekey="siteKey"
-              theme="light"
-              size="flexible"
-              @callback="(token: string) => { captchaToken = token }"
-              @expired="() => { captchaToken = null }"
-              @error="() => { captchaToken = null }"
+              ref="turnstile"
+              v-model="captchaToken"
             />
             <button
               type="submit"

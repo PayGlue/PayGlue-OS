@@ -133,7 +133,8 @@ body {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .pg-input::placeholder {
-  color: #94a3b8;
+  /* slate-500: 4.8:1 on white. slate-400 was 2.6:1 (PG-402). */
+  color: #64748b;
 }
 .pg-input:focus {
   outline: none;
@@ -187,4 +188,22 @@ body {
 }
 :where(html.dark .pg-shell input:not(.pg-input), html.dark .pg-shell textarea:not(.pg-input))::placeholder {
   color: #64748b;
+}
+
+/* PG-402: one visible focus ring for every control in the dashboard. Many
+   fields carry Tailwind's focus:outline-none and only shifted a border
+   colour, and the "Link to a product" switch showed nothing at all. Left
+   unlayered on purpose, so it wins over the utility layer. */
+.pg-shell :is(input, select, textarea, button, a, summary, [role="switch"]):focus-visible {
+  outline: 2px solid #4f46e5;
+  outline-offset: 2px;
+}
+.dark .pg-shell :is(input, select, textarea, button, a, summary, [role="switch"]):focus-visible,
+/* On the dark rail and drawer indigo-600 is under 3:1; indigo-300 is not. */
+.pg-shell .bg-slate-900 :is(input, select, textarea, button, a, summary, [role="switch"]):focus-visible {
+  outline-color: #a5b4fc;
+}
+/* One ring, not two: the field's own soft glow steps aside for the outline. */
+.pg-shell .pg-input:focus-visible {
+  box-shadow: none;
 }

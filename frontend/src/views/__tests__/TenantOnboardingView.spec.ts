@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TenantOnboardingView from '../TenantOnboardingView.vue'
+import { onboardingProviderPath } from '../../lib/connectionProviders'
 import { useSessionStore } from '../../stores/session'
 
 vi.mock('../../lib/api', () => ({
@@ -80,6 +81,44 @@ describe('TenantOnboardingView', () => {
       memberships: [],
     })
     session.activeTenantSlug = null
+  })
+
+  // PG-402: step 3 used to send only Polar to its connection page. Every
+  // provider a publisher can pick goes to its own page now.
+  const PICKABLE = [
+    ['polar', 'Polar'],
+    ['paypal', 'PayPal'],
+    ['gumroad', 'Gumroad'],
+    ['paddle', 'Paddle'],
+    ['kofi', 'Ko-fi'],
+    ['creem', 'Creem'],
+    ['patreon', 'Patreon'],
+    ['dodo', 'Dodo Payments'],
+    ['digistore24', 'Digistore24'],
+  ] as const
+
+  it('knows a connection page for every provider step 3 offers', () => {
+    for (const [key] of PICKABLE) {
+      expect(onboardingProviderPath('acme', key)).toBe(`/t/acme/connection/${key}`)
+    }
+    expect(onboardingProviderPath('acme', 'stripe')).toBe('/t/acme/connections')
+  })
+
+  it.each(PICKABLE)('step 3 sends %s to its own connection page', async (key, name) => {
+    const router = buildRouter()
+    router.push('/tenant/create?step=3')
+    await router.isReady()
+    const push = vi.spyOn(router, 'push').mockResolvedValue(undefined)
+
+    render(TenantOnboardingView, { global: { plugins: [router] } })
+
+    const card = screen.getAllByText(name).map((el) => el.closest('button')).find(Boolean)
+    if (!card) throw new Error(`no card for ${name}`)
+    await fireEvent.click(card)
+    await fireEvent.click(screen.getByRole('button', { name: new RegExp(`^Set up ${name}$`) }))
+
+    expect(push).toHaveBeenCalledTimes(1)
+    expect(push.mock.calls[0][0]).toMatch(new RegExp(`/connection/${key}$`))
   })
 
   it('creates an organization and moves to the Ghost connection step', async () => {

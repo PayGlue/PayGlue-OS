@@ -2,88 +2,97 @@
 // Licensed under the Business Source License 1.1, see LICENSE.md
 import { describe, it, expect } from 'vitest'
 
-import { deliveryHealth, deliveryHealthByProvider } from '../deliveryHealth'
-import type { WebhookEvent } from '../../types/api'
+import {
+  DELIVERY_LABELS,
+  DELIVERY_TONES,
+  needsYouLine,
+  overallHealth,
+  providerCounts,
+  providerHealth,
+} from '../deliveryHealth'
+import type { DeliveryHealthSummary, DeliveryState } from '../../types/api'
 
-const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString()
+const counts = (over: Partial<Record<DeliveryState, number>> = {}): Record<DeliveryState, number> => ({
+  delivered: 0,
+  skipped: 0,
+  scheduled: 0,
+  in_flight: 0,
+  retrying: 0,
+  rejected: 0,
+  test: 0,
+  needs_you: 0,
+  ...over,
+})
 
-const event = (over: Partial<WebhookEvent>): WebhookEvent =>
-  ({
-    id: 1,
-    tenant_slug: 'acme',
-    provider: 'polar',
-    status: 'processed',
-    attempts: 0,
-    next_attempt_at: null,
-    last_error: '',
-    endpoint_path: '',
-    endpoint_metadata: {},
-    payload_snapshot: {},
-    headers_snapshot: {},
-    created_at: daysAgo(1),
-    updated_at: daysAgo(1),
-    dead_lettered_at: null,
-    ...over,
-  }) as WebhookEvent
+const summary = (over: Partial<DeliveryHealthSummary> = {}): DeliveryHealthSummary => ({
+  counts: counts(),
+  providers: {},
+  needs_you: [],
+  ...over,
+})
 
-describe('deliveryHealth', () => {
-  it('ignores failures older than the window', () => {
-    // The whole point of PG-264. A webhook that failed once during setup in
-    // June kept the card amber for good, because nothing ever aged out.
-    const health = deliveryHealth([
-      event({ status: 'dead_letter', dead_lettered_at: daysAgo(40), created_at: daysAgo(40) }),
-      event({ status: 'failed', created_at: daysAgo(30) }),
-    ])
-    expect(health).toEqual({ retrying: 0, gaveUp: 0, needsAttention: false })
+describe('deliveryHealth (PG-402: words only, the backend decides)', () => {
+  it('has a word and a tone for every state', () => {
+    const states: DeliveryState[] = ['delivered', 'skipped', 'scheduled', 'in_flight', 'retrying', 'rejected', 'test', 'needs_you']
+    for (const state of states) {
+      expect(DELIVERY_LABELS[state]).toBeTruthy()
+      expect(DELIVERY_TONES[state]).toBeTruthy()
+    }
+    expect(DELIVERY_LABELS.needs_you).toBe('Needs you')
+    expect(DELIVERY_TONES.needs_you).toBe('bad')
+    expect(DELIVERY_TONES.retrying).toBe('warn')
+    // Planned period ends, rejected signatures and test purchases never ask
+    // anything of the publisher.
+    expect(DELIVERY_TONES.scheduled).toBe('neutral')
+    expect(DELIVERY_TONES.rejected).toBe('neutral')
+    expect(DELIVERY_TONES.test).toBe('neutral')
   })
 
-  it('tells a retry apart from a give-up', () => {
-    const health = deliveryHealth([
-      event({ status: 'failed' }),
-      event({ status: 'dead_letter', dead_lettered_at: daysAgo(1) }),
-    ])
-    expect(health.retrying).toBe(1)
-    expect(health.gaveUp).toBe(1)
-  })
-
-  it('asks for attention only when nobody will retry', () => {
-    // A delivery still in the ladder resolves itself, so it is worth showing
-    // and not worth a colour.
-    expect(deliveryHealth([event({ status: 'failed' })]).needsAttention).toBe(false)
+  it('names one stuck delivery by its attempts', () => {
     expect(
-      deliveryHealth([event({ status: 'dead_letter', dead_lettered_at: daysAgo(1) })])
-        .needsAttention,
-    ).toBe(true)
+      needsYouLine([{ provider: 'digistore24', count: 1, attempts: 3, max_attempts: 5, latest_at: '' }]),
+    ).toBe('Digistore24, 3 of 5 attempts, no retry scheduled')
   })
 
-  it('trusts the dead-letter timestamp even when the status lags', () => {
-    const health = deliveryHealth([event({ status: 'failed', dead_lettered_at: daysAgo(1) })])
-    expect(health).toEqual({ retrying: 0, gaveUp: 1, needsAttention: true })
+  it('lists several providers with their counts, largest first', () => {
+    expect(
+      needsYouLine([
+        { provider: 'gumroad', count: 1, attempts: 2, max_attempts: 5, latest_at: '' },
+        { provider: 'polar', count: 2, attempts: null, max_attempts: null, latest_at: '' },
+      ]),
+    ).toBe('Polar 2, Gumroad 1')
   })
 
-  it('leaves successful and skipped deliveries out of it', () => {
-    const health = deliveryHealth([
-      event({ status: 'processed' }),
-      event({ status: 'skipped' }),
-      event({ status: 'received' }),
-    ])
-    expect(health).toEqual({ retrying: 0, gaveUp: 0, needsAttention: false })
+  it('folds the same provider of several tenants into one', () => {
+    expect(
+      needsYouLine([
+        { provider: 'polar', count: 1, attempts: 2, max_attempts: 5, latest_at: '' },
+        { provider: 'polar', count: 1, attempts: 5, max_attempts: 5, latest_at: '' },
+      ]),
+    ).toBe('Polar, 2 deliveries, no retry scheduled')
   })
 
-  it('drops an unreadable date instead of counting it as recent', () => {
-    // An unparseable timestamp is not evidence of a problem, and defaulting it
-    // into the window would light the card up for nothing.
-    const health = deliveryHealth([event({ status: 'dead_letter', created_at: 'not a date' })])
-    expect(health.gaveUp).toBe(0)
+  it('says the same thing in the pill as in the card and the health list', () => {
+    const stuck = summary({
+      counts: counts({ needs_you: 1, delivered: 9 }),
+      providers: { digistore24: counts({ needs_you: 1 }) },
+    })
+    expect(overallHealth(stuck)).toEqual({ tone: 'bad', text: '1 delivery needs you' })
+    expect(providerHealth(providerCounts(stuck, 'digistore24'))).toEqual({ tone: 'bad', note: 'Needs you' })
+    expect(providerHealth(providerCounts(stuck, 'polar'))).toEqual({ tone: 'good', note: 'Connected' })
+
+    const retrying = summary({ counts: counts({ retrying: 2 }), providers: { polar: counts({ retrying: 2 }) } })
+    expect(overallHealth(retrying)).toEqual({ tone: 'warn', text: '2 deliveries retrying' })
+    expect(providerHealth(providerCounts(retrying, 'polar')).note).toBe('2 deliveries retrying')
+
+    expect(overallHealth(summary({ counts: counts({ scheduled: 3, rejected: 1, test: 1 }) }))).toEqual({
+      tone: 'good',
+      text: 'Every purchase reached Ghost',
+    })
   })
 
-  it('keeps one provider out of another provider count', () => {
-    const byProvider = deliveryHealthByProvider([
-      event({ provider: 'polar', status: 'dead_letter', dead_lettered_at: daysAgo(1) }),
-      event({ provider: 'paddle', status: 'failed' }),
-    ])
-    expect(byProvider.polar.needsAttention).toBe(true)
-    expect(byProvider.paddle.needsAttention).toBe(false)
-    expect(byProvider.paddle.retrying).toBe(1)
+  it('treats a missing summary as healthy, not as an error', () => {
+    expect(overallHealth(null).tone).toBe('good')
+    expect(providerCounts(null, 'polar').needs_you).toBe(0)
   })
 })

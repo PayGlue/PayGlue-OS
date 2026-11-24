@@ -84,6 +84,7 @@ describe('PricingTableView', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: /new table/i }))
     await fireEvent.update(screen.getByPlaceholderText('Free'), 'Starter')
+    await fireEvent.update(screen.getByPlaceholderText('Supporter'), 'Plus')
     await fireEvent.click(screen.getByRole('button', { name: /create table/i }))
 
     await waitFor(() => {
@@ -107,7 +108,7 @@ describe('PricingTableView', () => {
 // PG-320 / PG-321: the toggle is a real switch, a tier without the toggle has
 // one price with a period, and the feature icons include a cross.
 describe('PricingTableView toggle switch and icons', () => {
-  async function openEditor() {
+  async function openEditor(clickNew = true) {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -125,7 +126,7 @@ describe('PricingTableView toggle switch and icons', () => {
     await router.isReady()
     render(PricingTableView, { global: { plugins: [router] } })
     await waitFor(() => expect(screen.getByText(/no pricing tables yet/i)).toBeInTheDocument())
-    await fireEvent.click(screen.getByRole('button', { name: /new table/i }))
+    if (clickNew) await fireEvent.click(screen.getByRole('button', { name: /new table/i }))
   }
 
   beforeEach(() => {
@@ -144,19 +145,41 @@ describe('PricingTableView toggle switch and icons', () => {
     } as any)
   })
 
+  // A new table opens with a free and a paid tier; most cases here are about one tier.
+  async function onlyOneTier() {
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove tier 2' }))
+  }
+
   async function chooseTierType(name: RegExp, index = 0) {
     await fireEvent.click(screen.getAllByRole('radio', { name })[index])
   }
 
-  it('a new table starts with a free tier, and added tiers start as subscriptions', async () => {
+  it('a new table starts with a free and a paid tier, and added tiers start as subscriptions', async () => {
     await openEditor()
     expect(screen.getAllByRole('radio', { name: /^free sign-up$/i })[0]).toHaveAttribute('aria-checked', 'true')
-    await fireEvent.click(screen.getByRole('button', { name: /add tier/i }))
     expect(screen.getAllByRole('radio', { name: /^subscription$/i })[1]).toHaveAttribute('aria-checked', 'true')
+    await fireEvent.click(screen.getByRole('button', { name: /add tier/i }))
+    expect(screen.getAllByRole('radio', { name: /^subscription$/i })[2]).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('previews example values in empty fields but saves only a table whose tiers have names', async () => {
+    // The page opens straight on a new table, without clicking New table.
+    await openEditor(false)
+    await waitFor(() => {
+      const doc = screen.getByTitle('Pricing table preview').getAttribute('srcdoc') ?? ''
+      expect(doc).toContain('"name":"Free"')
+      expect(doc).toContain('"name":"Supporter"')
+      expect(doc).toContain('Members-only newsletter')
+    }, { timeout: 2000 })
+    await fireEvent.update(screen.getByPlaceholderText('Free'), 'Readers')
+    await fireEvent.click(screen.getByRole('button', { name: /create table/i }))
+    expect(await screen.findByText('Give tier 2 a name before saving.')).toBeInTheDocument()
+    expect(createPricingTable).not.toHaveBeenCalled()
   })
 
   it('asks how you sell only once a tier is a subscription', async () => {
     await openEditor()
+    await onlyOneTier()
     expect(screen.queryByRole('radio', { name: /one price per tier/i })).not.toBeInTheDocument()
     await chooseTierType(/^subscription$/i)
     expect(screen.getByRole('radio', { name: /one price per tier/i })).toBeChecked()
@@ -165,6 +188,7 @@ describe('PricingTableView toggle switch and icons', () => {
 
   it('one price per tier saves show_toggle false and a yearly-only price', async () => {
     await openEditor()
+    await onlyOneTier()
     await chooseTierType(/^subscription$/i)
     expect(screen.queryByText('Yearly price')).not.toBeInTheDocument()
 
@@ -191,6 +215,7 @@ describe('PricingTableView toggle switch and icons', () => {
       ],
     } as any)
     await openEditor()
+    await onlyOneTier()
     await chooseTierType(/^subscription$/i)
     await fireEvent.click(screen.getByRole('radio', { name: /monthly \/ yearly toggle/i }))
     expect(screen.getByText('Yearly price')).toBeInTheDocument()
@@ -217,6 +242,7 @@ describe('PricingTableView toggle switch and icons', () => {
 
   it('switching on the toggle turns one-time tiers into subscriptions and leaves free tiers alone', async () => {
     await openEditor()
+    await onlyOneTier()
     await chooseTierType(/^one-time$/i, 0)
     await fireEvent.click(screen.getByRole('button', { name: /add tier/i }))
     await chooseTierType(/^free sign-up$/i, 1)
@@ -233,24 +259,27 @@ describe('PricingTableView toggle switch and icons', () => {
 
   it('renders a live preview built from the form', async () => {
     await openEditor()
-    await fireEvent.update(screen.getByPlaceholderText('Free'), 'Supporter')
+    await fireEvent.update(screen.getByPlaceholderText('Free'), 'Gold')
     await waitFor(() => {
       const doc = screen.getByTitle('Pricing table preview').getAttribute('srcdoc') ?? ''
-      expect(doc).toContain('"name":"Supporter"')
+      expect(doc).toContain('"name":"Gold"')
       expect(doc).toContain('/pricing-table.js" data-table-id="preview"')
     }, { timeout: 2000 })
   })
 
-  it('clicking the page you are on again closes the editor', async () => {
+  it('keeps the editor open and clicking the page you are on again starts a fresh table', async () => {
     await openEditor()
     expect(screen.getByText(/new pricing table/i)).toBeInTheDocument()
+    const name = screen.getByLabelText(/internal name/i) as HTMLInputElement
+    await fireEvent.update(name, 'Draft table')
     usePageResetStore().reset()
-    await waitFor(() => expect(screen.queryByText(/new pricing table/i)).not.toBeInTheDocument())
+    await waitFor(() => expect((screen.getByLabelText(/internal name/i) as HTMLInputElement).value).toBe(''))
+    expect(screen.getByText(/new pricing table/i)).toBeInTheDocument()
   })
 
   it('offers a cross among the feature icons', async () => {
     await openEditor()
-    await fireEvent.click(screen.getByRole('button', { name: /^add$/i }))
+    await fireEvent.click(screen.getAllByRole('button', { name: /^add$/i })[0])
     expect(screen.getAllByTitle('cross').length).toBeGreaterThan(0)
   })
 })

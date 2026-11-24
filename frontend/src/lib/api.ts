@@ -13,6 +13,7 @@ import type {
   PricingTableData,
   PricingTierData,
   ProductMapping,
+  DeliveryHealthSummary,
   ReplayWebhookEventResult,
   ServicePin,
   SupportRequestSummary,
@@ -645,6 +646,24 @@ export const listWebhookEvents = async (
 ): Promise<WebhookEvent[]> => {
   try {
     const { data } = await api.get<WebhookEvent[]>(tenantPath(tenantSlug, 'events'), {
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+      },
+    })
+    return data
+  } catch (error) {
+    throw toActionableApiError(error)
+  }
+}
+
+// PG-402: the counts the dashboard card, the connections overview and the
+// sidebar show. Small on purpose, so the shell can load it on every page.
+export const getDeliveryHealth = async (
+  tenantSlug: string,
+  idToken: string,
+): Promise<DeliveryHealthSummary> => {
+  try {
+    const { data } = await api.get<DeliveryHealthSummary>(tenantPath(tenantSlug, 'events/health'), {
       headers: {
         Authorization: `Bearer ${idToken}`,
       },
