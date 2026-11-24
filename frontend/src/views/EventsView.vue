@@ -2,15 +2,19 @@
 // Licensed under the Business Source License 1.1, see LICENSE.md
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import AppShell from '../components/AppShell.vue'
 import { PageHeader, UiCard, UiButton } from '../components/ui'
 import { listAuditEvents, listWebhookEvents, replayWebhookEvent } from '../lib/api'
+import { DELIVERY_LABELS, DELIVERY_TONES, TONE_TAG, providerLabel } from '../lib/deliveryHealth'
 import { buildEventsLogMarkdown } from '../lib/exportEventsLog'
 import { useSessionStore } from '../stores/session'
-import type { AuditEvent, WebhookEvent } from '../types/api'
+import type { AuditEvent, DeliveryState, WebhookEvent } from '../types/api'
 
 const session = useSessionStore()
+const route = useRoute()
+const router = useRouter()
 const webhookEvents = ref<WebhookEvent[]>([])
 const auditEvents = ref<AuditEvent[]>([])
 const loading = ref(false)
@@ -105,20 +109,62 @@ const toggleExpand = (id: number) => {
   else expandedIds.value.add(id)
 }
 
-type StatusFilter = 'all' | 'processed' | 'failed' | 'skipped'
-const statusFilter = ref<StatusFilter>('all')
-const providerFilter = ref<string>('all')
+// PG-402: the filters are the delivery states the backend decides, the same
+// the dashboard card counts. The card links here with ?state=needs_you.
+type StatusFilter = 'all' | DeliveryState
+const ALWAYS_SHOWN: StatusFilter[] = ['all', 'delivered', 'needs_you', 'retrying', 'skipped']
+const SHOWN_WHEN_PRESENT: DeliveryState[] = ['in_flight', 'scheduled', 'rejected', 'test']
+const isFilter = (value: unknown): value is StatusFilter =>
+  typeof value === 'string' && (value === 'all' || value in DELIVERY_LABELS)
+
+const statusFilter = ref<StatusFilter>(isFilter(route.query.state) ? route.query.state : 'all')
+const providerFilter = ref<string>(typeof route.query.provider === 'string' ? route.query.provider : 'all')
 const eventTypeQuery = ref('')
+
+watch(
+  () => route.query.state,
+  (value) => { statusFilter.value = isFilter(value) ? value : 'all' },
+)
+const setStatusFilter = (value: StatusFilter) => {
+  statusFilter.value = value
+  const query = { ...route.query }
+  if (value === 'all') delete query.state
+  else query.state = value
+  router.replace({ query })
+}
+
+const countFor = (filter: StatusFilter) =>
+  filter === 'all' ? webhookEvents.value.length : webhookEvents.value.filter(e => e.delivery_state === filter).length
+
+const filterChips = computed(() => {
+  const chips: StatusFilter[] = [...ALWAYS_SHOWN]
+  for (const state of SHOWN_WHEN_PRESENT) {
+    if (countFor(state) > 0 || statusFilter.value === state) chips.push(state)
+  }
+  return chips.map((value) => ({ value, label: value === 'all' ? 'All' : DELIVERY_LABELS[value], count: countFor(value) }))
+})
+
+const filterNotes: Partial<Record<StatusFilter, string>> = {
+  needs_you: 'PayGlue will not try these again by itself. Fix the cause, then replay.',
+  retrying: 'PayGlue tries these again on its own. Nothing to do yet.',
+  skipped: 'These event types are not needed by PayGlue and are acknowledged on purpose.',
+  scheduled: 'Access that ends when a cancelled subscription runs out. PayGlue runs these on the day.',
+  rejected: 'The signature or token did not match. Check the webhook secret on the provider\'s connection page.',
+  test: 'Test purchases that did not reach Ghost. Nothing a reader paid for is missing.',
+}
 
 const availableProviders = computed(() => {
   return Array.from(new Set(webhookEvents.value.map(e => e.provider))).sort()
 })
 
+// Newest first, whatever order the rows arrived in.
+const sortedEvents = computed(() =>
+  [...webhookEvents.value].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id),
+)
+
 const filteredWebhookEvents = computed(() => {
-  let events = webhookEvents.value
-  if (statusFilter.value === 'processed') events = events.filter(e => e.status === 'processed')
-  else if (statusFilter.value === 'failed') events = events.filter(e => e.status === 'failed' || e.status === 'dead_letter')
-  else if (statusFilter.value === 'skipped') events = events.filter(e => e.status === 'skipped')
+  let events = sortedEvents.value
+  if (statusFilter.value !== 'all') events = events.filter(e => e.delivery_state === statusFilter.value)
 
   if (providerFilter.value !== 'all') events = events.filter(e => e.provider === providerFilter.value)
 
@@ -137,18 +183,42 @@ const filteredWebhookEvents = computed(() => {
   return events
 })
 
-const statusColors: Record<string, string> = {
-  processed: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300',
-  skipped: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
-  processing: 'bg-blue-100 text-blue-800 dark:bg-blue-500/15 dark:text-blue-300',
-  received: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
-  failed: 'bg-rose-100 text-rose-800 dark:bg-rose-500/15 dark:text-rose-300',
-  dead_letter: 'bg-red-200 text-red-900 dark:bg-red-500/20 dark:text-red-300',
+const stateTag = (event: WebhookEvent) => TONE_TAG[DELIVERY_TONES[event.delivery_state] ?? 'neutral']
+const rowBorder = (event: WebhookEvent) => {
+  const tone = DELIVERY_TONES[event.delivery_state]
+  if (tone === 'bad') return 'border-rose-200 dark:border-rose-500/30'
+  if (tone === 'warn') return 'border-amber-200 dark:border-amber-500/30'
+  return 'border-slate-200 dark:border-slate-800'
 }
 
+// The browser's language, not a fixed German format in an English page.
 const formatTs = (ts: string) => {
-  try { return new Date(ts).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'medium' }) }
+  try { return new Date(ts).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) }
   catch { return ts }
+}
+
+// "order.paid" reads "Order paid", "on_payment" reads "On payment".
+const readableType = (raw: string) => {
+  const text = raw.replace(/[._]+/g, ' ').trim()
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : ''
+}
+
+// One sentence on what to do about the error, in the publisher's terms.
+const nextStep = (event: WebhookEvent): string => {
+  const error = event.last_error.toLowerCase()
+  if (event.delivery_state === 'retrying') {
+    return event.next_attempt_at
+      ? `PayGlue tries again at ${formatTs(event.next_attempt_at)}. Nothing to do yet.`
+      : 'PayGlue tries again shortly. Nothing to do yet.'
+  }
+  if (error.includes('ghost')) {
+    return 'PayGlue could not reach your Ghost site. Check the Ghost URL on Connections > Ghost CMS, then replay.'
+  }
+  if (error.includes('signature') || error.includes('secret') || error.includes('token')) {
+    return `The delivery could not be verified. Check the webhook secret on Connections > ${providerLabel(event.provider)}, then have ${providerLabel(event.provider)} send it again.`
+  }
+  if (event.delivery_state === 'needs_you') return 'PayGlue will not try this again by itself. Fix the cause, then replay.'
+  return ''
 }
 
 const eventType = (event: WebhookEvent): string => {
@@ -177,7 +247,7 @@ const logCopied = ref(false)
 
 const copyEventsLog = async () => {
   const filterParts: string[] = []
-  if (statusFilter.value !== 'all') filterParts.push(`status=${statusFilter.value}`)
+  if (statusFilter.value !== 'all') filterParts.push(`state=${statusFilter.value}`)
   if (providerFilter.value !== 'all') filterParts.push(`provider=${providerFilter.value}`)
   if (eventTypeQuery.value.trim()) filterParts.push(`search="${eventTypeQuery.value.trim()}"`)
 
@@ -217,36 +287,33 @@ onMounted(async () => {
         <p v-if="!canReplay" class="mt-3 text-xs text-amber-600 dark:text-amber-400">Your role can inspect events but cannot trigger replays.</p>
         <p v-if="errorMessage" class="mt-3 text-sm text-rose-600 dark:text-rose-400">{{ errorMessage }}</p>
 
-        <!-- Status filter -->
-        <div class="mt-4 flex flex-wrap items-center gap-1.5">
+        <!-- Delivery state filter -->
+        <div class="mt-4 flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by delivery state">
           <button
-            v-for="f in ([['all', 'All'], ['processed', 'Processed'], ['failed', 'Failed'], ['skipped', 'Skipped']] as [StatusFilter, string][])"
-            :key="f[0]"
+            v-for="f in filterChips"
+            :key="f.value"
             type="button"
             class="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
-            :class="statusFilter === f[0] ? 'border-slate-900 bg-slate-900 text-white dark:border-slate-100 dark:bg-slate-100 dark:text-slate-900' : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'"
-            @click="statusFilter = f[0]"
+            :class="statusFilter === f.value ? 'border-slate-900 bg-slate-900 text-white dark:border-slate-100 dark:bg-slate-100 dark:text-slate-900' : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'"
+            :aria-pressed="statusFilter === f.value"
+            @click="setStatusFilter(f.value)"
           >
-            {{ f[1] }}
-            <span class="ml-1 opacity-60">
-              <template v-if="f[0] === 'all'">{{ webhookEvents.length }}</template>
-              <template v-else-if="f[0] === 'processed'">{{ webhookEvents.filter(e => e.status === 'processed').length }}</template>
-              <template v-else-if="f[0] === 'failed'">{{ webhookEvents.filter(e => e.status === 'failed' || e.status === 'dead_letter').length }}</template>
-              <template v-else-if="f[0] === 'skipped'">{{ webhookEvents.filter(e => e.status === 'skipped').length }}</template>
-            </span>
+            {{ f.label }}
+            <span class="ml-1 opacity-70 tabular-nums">{{ f.count }}</span>
           </button>
-          <span v-if="statusFilter === 'skipped'" class="ml-1 text-xs text-slate-400 dark:text-slate-500">These event types are not needed by PayGlue and are silently acknowledged.</span>
         </div>
+        <p v-if="filterNotes[statusFilter]" class="mt-2 text-xs text-slate-500 dark:text-slate-400">{{ filterNotes[statusFilter] }}</p>
 
         <!-- Provider + event type filter -->
         <div class="mt-2 flex flex-wrap items-center gap-2">
-          <select v-model="providerFilter" class="pg-input w-auto text-xs">
+          <select v-model="providerFilter" class="pg-input w-auto text-xs" aria-label="Provider">
             <option value="all">All providers</option>
-            <option v-for="p in availableProviders" :key="p" :value="p">{{ p }}</option>
+            <option v-for="p in availableProviders" :key="p" :value="p">{{ providerLabel(p) }}</option>
           </select>
           <input
             v-model="eventTypeQuery"
             type="text"
+            aria-label="Search event type or payload"
             placeholder="Search event type or payload, e.g. transaction.completed or a product ID"
             class="pg-input w-72 max-w-full text-xs"
           />
@@ -269,7 +336,7 @@ onMounted(async () => {
             v-for="event in filteredWebhookEvents"
             :key="event.id"
             class="overflow-hidden rounded-xl border"
-            :class="event.status === 'failed' || event.status === 'dead_letter' ? 'border-rose-200 dark:border-rose-500/30' : 'border-slate-200 dark:border-slate-800'"
+            :class="rowBorder(event)"
           >
             <!-- Header row (always visible, clickable) -->
             <button
@@ -277,12 +344,12 @@ onMounted(async () => {
               class="flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40"
               @click="toggleExpand(event.id)"
             >
-              <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold" :class="statusColors[event.status] ?? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'">
-                {{ event.status }}
+              <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold" :class="stateTag(event)">
+                {{ DELIVERY_LABELS[event.delivery_state] ?? event.status }}
               </span>
-              <span class="text-sm font-medium text-slate-900 dark:text-slate-100">{{ event.provider }}<span v-if="eventType(event)" class="text-slate-500 dark:text-slate-400"> · {{ eventType(event) }}</span></span>
+              <span class="text-sm font-medium text-slate-900 dark:text-slate-100">{{ providerLabel(event.provider) }}<span v-if="eventType(event)" class="text-slate-500 dark:text-slate-400"> · {{ readableType(eventType(event)) }}</span></span>
               <span v-if="customerEmail(event)" class="font-mono text-xs text-slate-500 dark:text-slate-400">{{ customerEmail(event) }}</span>
-              <span class="ml-auto flex shrink-0 items-center gap-3 text-xs text-slate-400 dark:text-slate-500">
+              <span class="ml-auto flex shrink-0 items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
                 <span>{{ formatTs(event.created_at) }}</span>
                 <span>{{ event.attempts }}x</span>
                 <svg class="h-4 w-4 transition-transform" :class="expandedIds.has(event.id) ? 'rotate-180' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -296,17 +363,20 @@ onMounted(async () => {
               <div v-if="event.last_error" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-3 dark:border-rose-500/30 dark:bg-rose-500/10">
                 <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-rose-600 dark:text-rose-400">Error</p>
                 <pre class="whitespace-pre-wrap break-all font-mono text-xs text-rose-800 dark:text-rose-300">{{ event.last_error }}</pre>
+                <p v-if="nextStep(event)" class="mt-2 text-sm text-rose-900 dark:text-rose-200">{{ nextStep(event) }}</p>
               </div>
 
               <div v-if="canReplayEvent(event)">
-                <UiButton variant="danger" size="sm" :disabled="replaying[event.id]" @click.stop="confirmingReplay = event">
+                <!-- Replay is recovery, not destruction: a normal button with an icon. -->
+                <UiButton variant="default" size="sm" :disabled="replaying[event.id]" @click.stop="confirmingReplay = event">
+                  <svg class="mr-1.5 h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7M4 4v4h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                   {{ replaying[event.id] ? 'Replaying...' : 'Replay event' }}
                 </UiButton>
               </div>
 
               <div class="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
                 <div><span class="text-slate-400 dark:text-slate-500">Event ID</span> <span class="font-mono text-slate-700 dark:text-slate-300">{{ event.id }}</span></div>
-                <div><span class="text-slate-400 dark:text-slate-500">Attempts</span> <span class="text-slate-700 dark:text-slate-300">{{ event.attempts }}</span></div>
+                <div><span class="text-slate-500 dark:text-slate-400">Attempts</span> <span class="text-slate-700 dark:text-slate-300">{{ event.max_attempts ? `${event.attempts} of ${event.max_attempts}` : event.attempts }}</span></div>
                 <div v-if="event.next_attempt_at"><span class="text-slate-400 dark:text-slate-500">Next retry</span> <span class="text-slate-700 dark:text-slate-300">{{ formatTs(event.next_attempt_at) }}</span></div>
                 <div v-if="event.dead_lettered_at"><span class="text-slate-400 dark:text-slate-500">Dead-lettered</span> <span class="text-slate-700 dark:text-slate-300">{{ formatTs(event.dead_lettered_at) }}</span></div>
                 <div><span class="text-slate-400 dark:text-slate-500">Received</span> <span class="text-slate-700 dark:text-slate-300">{{ formatTs(event.created_at) }}</span></div>
@@ -371,7 +441,7 @@ onMounted(async () => {
       <div class="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
         <h2 class="text-base font-semibold text-slate-900 dark:text-slate-100">Replay this event?</h2>
         <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          {{ confirmingReplay.provider }} · {{ eventType(confirmingReplay) }} · event {{ confirmingReplay.id }}
+          {{ providerLabel(confirmingReplay.provider) }} · {{ readableType(eventType(confirmingReplay)) }} · event {{ confirmingReplay.id }}
         </p>
 
         <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-700 dark:bg-slate-800/50">
@@ -400,7 +470,7 @@ onMounted(async () => {
 
         <div class="mt-6 flex justify-end gap-3">
           <UiButton variant="ghost" size="sm" @click="confirmingReplay = null">Cancel</UiButton>
-          <UiButton variant="danger" size="sm" @click="replay(confirmingReplay)">Replay event</UiButton>
+          <UiButton variant="primary" size="sm" @click="replay(confirmingReplay)">Replay event</UiButton>
         </div>
       </div>
     </div>

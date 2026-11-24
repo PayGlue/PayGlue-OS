@@ -13,6 +13,7 @@ import PayGlueLogo from '../components/PayGlueLogo.vue'
 import UpgradeBanner from '../components/UpgradeBanner.vue'
 import { appDisplayHost } from '../lib/publicUrls'
 import { PROVIDER_BRAND } from '../lib/providers'
+import { onboardingProviderPath } from '../lib/connectionProviders'
 
 const appHost = appDisplayHost()
 const session = useSessionStore()
@@ -279,20 +280,14 @@ const providers: OnboardingProvider[] = [
 
 const selectedProvider = ref<string | null>(null)
 
+// PG-402: every provider goes on to its own connection page. Only Polar did,
+// everyone else landed on the thank-you page or the overview and had to find
+// the provider they had just picked again.
 const goToDashboard = () => {
-  if (selectedProvider.value) {
-    localStorage.setItem(`payglue:provider:${slug.value}`, selectedProvider.value)
-  }
-  if (selectedProvider.value === 'polar') {
-    router.push(`/t/${slug.value}/connection/polar`)
-    return
-  }
-  const tyKey = `pg_ty_${slug.value}`
-  if (!localStorage.getItem(tyKey)) {
-    router.push(`/t/${slug.value}/thank-you`)
-  } else {
-    router.push(`/t/${slug.value}/integrations`)
-  }
+  const provider = selectedProvider.value
+  if (!provider) return
+  localStorage.setItem(`payglue:provider:${slug.value}`, provider)
+  router.push(onboardingProviderPath(slug.value, provider))
 }
 
 const skipProvider = () => router.push(`/t/${slug.value}/dashboard`)

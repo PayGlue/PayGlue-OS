@@ -61,6 +61,32 @@ def _failed_verification(error: Exception, event: WebhookInboundEvent) -> bool:
     return isinstance(error, MissingCredentialsError) and error.provider_key == event.provider
 
 
+def _mark_test_purchase(event: WebhookInboundEvent) -> None:
+    """PG-402: remember that a delivery that failed for good was a test-mode
+    purchase, so it is not counted among the ones a publisher has to act on.
+
+    The parsed event knows (is_test), the stored row does not, and adding a
+    column is not worth it for this. Best effort: a payload that cannot be
+    parsed simply stays unmarked.
+    """
+    from payglue_backend.webhooks.delivery_state import TEST_MARKER
+
+    try:
+        adapter = wiring.get_payment_adapter(event.provider)
+        parsed = adapter.parse_event(
+            bytes(event.payload_raw),
+            event.headers_snapshot,
+            TenantContext(tenant_slug=event.tenant_slug),
+        )
+    except Exception:  # noqa: BLE001 - only a label; the failure itself is recorded
+        return
+    if getattr(parsed, "is_test", False) is not True:
+        return
+    metadata = dict(event.endpoint_metadata) if isinstance(event.endpoint_metadata, dict) else {}
+    metadata[TEST_MARKER] = True
+    WebhookInboundEvent.objects.filter(id=event.id).update(endpoint_metadata=metadata)
+
+
 def _exponential_backoff_seconds(attempt_number: int) -> int:
     base_seconds = 5
     max_seconds = 300
@@ -272,6 +298,7 @@ def _process_inbound_webhook_event(
             updated_at=error_now,
         )
         if updated:
+            _mark_test_purchase(event)
             # Terminal: no retry is coming. The creator hears about it now,
             # not at the nightly run (PG-319). Never raises.
             delivery_alerts.record_delivery_failure(event, exc)

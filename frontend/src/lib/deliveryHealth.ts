@@ -1,72 +1,148 @@
 // Copyright (c) 2026 PayGlue by André Nünninghoff
 // Licensed under the Business Source License 1.1, see LICENSE.md
 /**
- * How healthy webhook delivery is, as the dashboard should describe it.
+ * How the dashboard words a delivery state. Words and colours only.
  *
- * Both the dashboard tile and the connections overview used to count every
- * failed and dead-lettered event ever recorded. Nothing aged out, so once a
- * provider had failed a single delivery during setup it wore a warning
- * forever. A warning that is always on is not a warning: after the sixth amber
- * dot nobody sees the seventh, and that is the one that means something.
- *
- * Two corrections live here. Only recent events count, and a delivery that is
- * still being retried is told apart from one the system has given up on. The
- * first is the difference between a signal and a decoration; the second is the
- * difference between "wait" and "do something".
+ * PG-402: this file used to classify events itself, and so did the dashboard
+ * pill, the activity feed, the events page and the connections overview, each
+ * a little differently. One Digistore24 delivery read "All systems healthy",
+ * "0 All delivered", "1 retrying" and a red "Delivery failed" on one screen.
+ * The backend decides the state now (webhooks/delivery_state.py) and every
+ * page reads `delivery_state` or the events/health summary. What is left here
+ * is how to say it, so the same state is the same word everywhere.
  */
-import type { WebhookEvent } from '../types/api'
+import type { DeliveryHealthSummary, DeliveryState, NeedsYouGroup } from '../types/api'
 
-/** Long enough to cover a weekend outage, short enough to fall quiet again. */
-export const ATTENTION_WINDOW_DAYS = 7
+export type Tone = 'good' | 'warn' | 'bad' | 'neutral'
 
-export interface DeliveryHealth {
-  /** Failed, but still inside the retry ladder. Usually resolves itself. */
-  retrying: number
-  /** Attempts exhausted. Nothing happens now unless a human replays it. */
-  gaveUp: number
-  /** True when somebody has to act, which is the only thing worth a colour. */
-  needsAttention: boolean
+export const DELIVERY_LABELS: Record<DeliveryState, string> = {
+  delivered: 'Synced',
+  skipped: 'Skipped',
+  scheduled: 'Scheduled',
+  in_flight: 'Processing',
+  retrying: 'Retrying',
+  rejected: 'Rejected',
+  test: 'Test purchase',
+  needs_you: 'Needs you',
 }
 
-const isRecent = (iso: string, days: number): boolean => {
-  const at = Date.parse(iso)
-  // An unparseable date is not evidence of a problem, so it drops out rather
-  // than counting as recent and lighting the card up for no reason.
-  if (Number.isNaN(at)) return false
-  return Date.now() - at <= days * 24 * 60 * 60 * 1000
+export const DELIVERY_TONES: Record<DeliveryState, Tone> = {
+  delivered: 'good',
+  skipped: 'neutral',
+  scheduled: 'neutral',
+  in_flight: 'neutral',
+  retrying: 'warn',
+  rejected: 'neutral',
+  test: 'neutral',
+  needs_you: 'bad',
 }
+
+/** Tag classes per tone, for the small pills in lists. */
+export const TONE_TAG: Record<Tone, string> = {
+  good: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
+  warn: 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
+  bad: 'bg-rose-50 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300',
+  neutral: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+}
+
+export const TONE_DOT: Record<Tone, string> = {
+  good: 'bg-emerald-500',
+  warn: 'bg-amber-500',
+  bad: 'bg-rose-500',
+  neutral: 'bg-slate-300 dark:bg-slate-600',
+}
+
+export const PROVIDER_LABELS: Record<string, string> = {
+  polar: 'Polar',
+  lemonsqueezy: 'Lemon Squeezy',
+  paypal: 'PayPal',
+  gumroad: 'Gumroad',
+  paddle: 'Paddle',
+  kofi: 'Ko-fi',
+  creem: 'Creem',
+  patreon: 'Patreon',
+  dodo: 'Dodo Payments',
+  digistore24: 'Digistore24',
+  stripe: 'Stripe',
+}
+
+export const providerLabel = (key: string): string => PROVIDER_LABELS[key] ?? key
+
+const EMPTY: Record<DeliveryState, number> = {
+  delivered: 0,
+  skipped: 0,
+  scheduled: 0,
+  in_flight: 0,
+  retrying: 0,
+  rejected: 0,
+  test: 0,
+  needs_you: 0,
+}
+
+/** The counts for one provider, zeros when it has no events. */
+export const providerCounts = (
+  summary: DeliveryHealthSummary | null,
+  provider: string,
+): Record<DeliveryState, number> => ({ ...EMPTY, ...(summary?.providers[provider] ?? {}) })
+
+export const totalCounts = (summary: DeliveryHealthSummary | null): Record<DeliveryState, number> => ({
+  ...EMPTY,
+  ...(summary?.counts ?? {}),
+})
 
 /**
- * Classify a set of events for one provider, or for all of them at once.
+ * The line under the "needs you" count. One provider names what happened to
+ * it; several are listed with their counts.
+ *
+ *   "Digistore24, 3 of 5 attempts, no retry scheduled"
+ *   "Digistore24, 2 deliveries, no retry scheduled"
+ *   "Polar 2, Gumroad 1"
  */
-export const deliveryHealth = (
-  events: WebhookEvent[],
-  days: number = ATTENTION_WINDOW_DAYS,
-): DeliveryHealth => {
-  let retrying = 0
-  let gaveUp = 0
-  for (const event of events) {
-    if (!isRecent(event.created_at, days)) continue
-    // dead_lettered_at is the honest marker: the status field can say
-    // "dead_letter" while the timestamp is what the retry worker actually sets.
-    if (event.status === 'dead_letter' || event.dead_lettered_at !== null) gaveUp++
-    else if (event.status === 'failed') retrying++
+export const needsYouLine = (groups: NeedsYouGroup[]): string => {
+  const byProvider = new Map<string, NeedsYouGroup>()
+  for (const group of groups) {
+    const known = byProvider.get(group.provider)
+    if (known) {
+      byProvider.set(group.provider, { ...known, count: known.count + group.count, attempts: null, max_attempts: null })
+    } else {
+      byProvider.set(group.provider, { ...group })
+    }
   }
-  return { retrying, gaveUp, needsAttention: gaveUp > 0 }
+  const merged = [...byProvider.values()]
+  if (merged.length === 0) return ''
+  if (merged.length === 1) {
+    const only = merged[0]
+    const name = providerLabel(only.provider)
+    if (only.count === 1 && only.attempts != null && only.max_attempts != null) {
+      return `${name}, ${only.attempts} of ${only.max_attempts} attempts, no retry scheduled`
+    }
+    return `${name}, ${only.count} deliveries, no retry scheduled`
+  }
+  return merged
+    .sort((a, b) => b.count - a.count)
+    .map((group) => `${providerLabel(group.provider)} ${group.count}`)
+    .join(', ')
 }
 
-/** Group the same classification by provider, for the connections overview. */
-export const deliveryHealthByProvider = (
-  events: WebhookEvent[],
-  days: number = ATTENTION_WINDOW_DAYS,
-): Record<string, DeliveryHealth> => {
-  const byProvider: Record<string, WebhookEvent[]> = {}
-  for (const event of events) {
-    ;(byProvider[event.provider] ??= []).push(event)
+export const deliveries = (n: number) => `${n} ${n === 1 ? 'delivery' : 'deliveries'}`
+
+/** The short status of one connected provider, as health lists show it. */
+export const providerHealth = (
+  counts: Record<DeliveryState, number>,
+): { tone: Tone; note: string } => {
+  if (counts.needs_you > 0) return { tone: 'bad', note: counts.needs_you === 1 ? 'Needs you' : `${counts.needs_you} need you` }
+  if (counts.retrying > 0) return { tone: 'warn', note: `${deliveries(counts.retrying)} retrying` }
+  return { tone: 'good', note: 'Connected' }
+}
+
+/** The status pill at the top of the dashboard. */
+export const overallHealth = (
+  summary: DeliveryHealthSummary | null,
+): { tone: Tone; text: string } => {
+  const counts = totalCounts(summary)
+  if (counts.needs_you > 0) {
+    return { tone: 'bad', text: `${deliveries(counts.needs_you)} ${counts.needs_you === 1 ? 'needs' : 'need'} you` }
   }
-  const out: Record<string, DeliveryHealth> = {}
-  for (const [provider, list] of Object.entries(byProvider)) {
-    out[provider] = deliveryHealth(list, days)
-  }
-  return out
+  if (counts.retrying > 0) return { tone: 'warn', text: `${deliveries(counts.retrying)} retrying` }
+  return { tone: 'good', text: 'Every purchase reached Ghost' }
 }

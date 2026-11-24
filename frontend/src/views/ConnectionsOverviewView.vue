@@ -6,11 +6,11 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import AppShell from '../components/AppShell.vue'
 import { PageHeader, StatusPill, ProviderLogo } from '../components/ui'
-import { getGhostStripeStatus, getIntegrationConfig, listMappings, listWebhookEvents } from '../lib/api'
+import { getDeliveryHealth, getGhostStripeStatus, getIntegrationConfig, listMappings } from '../lib/api'
 import { CONNECTION_PROVIDERS, PROVIDER_ORDER, type ProviderKey } from '../lib/connectionProviders'
-import { deliveryHealthByProvider } from '../lib/deliveryHealth'
+import { deliveries, providerCounts } from '../lib/deliveryHealth'
 import { useSessionStore } from '../stores/session'
-import type { ProductMapping, WebhookEvent } from '../types/api'
+import type { DeliveryHealthSummary, ProductMapping } from '../types/api'
 
 const session = useSessionStore()
 const router = useRouter()
@@ -19,7 +19,7 @@ const loading = ref(false)
 const cmsEnabled = ref(false)
 const enabled = ref<Record<string, boolean>>({})
 const mappings = ref<ProductMapping[]>([])
-const events = ref<WebhookEvent[]>([])
+const health = ref<DeliveryHealthSummary | null>(null)
 const stripeConnected = ref<boolean | null>(null)
 
 const context = () => {
@@ -34,12 +34,12 @@ const load = async () => {
     const [cmsRes, mapRes, evRes, ...provRes] = await Promise.allSettled([
       getIntegrationConfig(tenantSlug, token, 'cms'),
       listMappings(tenantSlug, token),
-      listWebhookEvents(tenantSlug, token),
+      getDeliveryHealth(tenantSlug, token),
       ...PROVIDER_ORDER.map((key) => getIntegrationConfig(tenantSlug, token, key)),
     ])
     if (cmsRes.status === 'fulfilled') cmsEnabled.value = cmsRes.value.enabled
     if (mapRes.status === 'fulfilled') mappings.value = mapRes.value
-    if (evRes.status === 'fulfilled') events.value = evRes.value
+    if (evRes.status === 'fulfilled') health.value = evRes.value
     const on: Record<string, boolean> = {}
     PROVIDER_ORDER.forEach((key, i) => {
       const r = provRes[i]
@@ -58,10 +58,8 @@ const load = async () => {
   }
 }
 
-// PG-264: recent deliveries only, and a retry told apart from a give-up.
-// Counting every failure ever recorded meant a provider that hiccuped once
-// during setup wore a warning for good.
-const healthByProvider = computed(() => deliveryHealthByProvider(events.value))
+// PG-402: the counts come from the backend's delivery state, the same the
+// dashboard card and the sidebar show.
 
 const mappingsByProvider = computed(() => {
   const counts: Record<string, number> = {}
@@ -83,7 +81,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 const cards = computed<Card[]>(() =>
   PROVIDER_ORDER.map((key) => {
     const on = enabled.value[key]
-    const health = healthByProvider.value[key] ?? { retrying: 0, gaveUp: 0, needsAttention: false }
+    const counts = providerCounts(health.value, key)
     const maps = mappingsByProvider.value[key] ?? 0
     let state: Card['state'] = 'off'
     let sub = 'Not set up yet'
@@ -92,12 +90,12 @@ const cards = computed<Card[]>(() =>
       // connected, whatever a single delivery did afterwards, because a
       // webhook can fail on an unmapped product while the connection is
       // perfectly healthy. Only a delivery nobody will retry is worth a colour.
-      state = health.needsAttention ? 'attention' : 'connected'
+      state = counts.needs_you > 0 ? 'attention' : 'connected'
       const mapped = maps > 0 ? plural(maps, 'active mapping') : 'Connected'
-      if (health.gaveUp > 0) {
-        sub = `${mapped} · ${health.gaveUp} failed, no retry left`
-      } else if (health.retrying > 0) {
-        sub = `${mapped} · ${plural(health.retrying, 'delivery')} retrying`
+      if (counts.needs_you > 0) {
+        sub = `${mapped} · ${deliveries(counts.needs_you)} ${counts.needs_you === 1 ? 'needs' : 'need'} you`
+      } else if (counts.retrying > 0) {
+        sub = `${mapped} · ${deliveries(counts.retrying)} retrying`
       } else {
         sub = mapped
       }
@@ -107,8 +105,8 @@ const cards = computed<Card[]>(() =>
 )
 
 const goDetail = (key: string) => router.push(`/t/${session.activeTenantSlug}/connection/${key}`)
-const stateTone = (s: Card['state']) => (s === 'connected' ? 'good' : s === 'attention' ? 'warn' : 'neutral')
-const stateLabel = (s: Card['state']) => (s === 'connected' ? 'Connected' : s === 'attention' ? 'Needs attention' : 'Not connected')
+const stateTone = (s: Card['state']) => (s === 'connected' ? 'good' : s === 'attention' ? 'bad' : 'neutral')
+const stateLabel = (s: Card['state']) => (s === 'connected' ? 'Connected' : s === 'attention' ? 'Needs you' : 'Not connected')
 
 onMounted(load)
 </script>
@@ -155,8 +153,8 @@ onMounted(load)
               </div>
             </div>
             <div class="flex items-center justify-between border-t border-slate-100 pt-3 dark:border-slate-800">
-              <StatusPill :tone="stripeConnected === true ? 'good' : stripeConnected === false ? 'warn' : 'neutral'" dot>
-                {{ stripeConnected === true ? 'Connected in Ghost' : stripeConnected === false ? 'Not in Ghost' : 'Disabled' }}
+              <StatusPill :tone="stripeConnected === true ? 'good' : 'neutral'" dot>
+                {{ stripeConnected === true ? 'Connected in Ghost' : stripeConnected === false ? 'Not in Ghost' : 'Connect Ghost first' }}
               </StatusPill>
               <span class="text-xs font-semibold text-indigo-600 dark:text-indigo-400">Open →</span>
             </div>

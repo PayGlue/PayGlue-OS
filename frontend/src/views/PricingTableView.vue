@@ -2,11 +2,13 @@
 // Licensed under the Business Source License 1.1, see LICENSE.md
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import AppShell from '../components/AppShell.vue'
-import { PageHeader, ProviderPicker, UiButton } from '../components/ui'
+import { PageHeader, ProviderPicker, ShowMoreRow, UiButton } from '../components/ui'
+import { useCollapsedList } from '../lib/collapsedList'
 import UpgradeBanner from '../components/UpgradeBanner.vue'
 import PricingTablePreview from '../components/PricingTablePreview.vue'
+import { tierExample, unnamedTiers, withExample } from '../lib/pricingExamples'
 import { useSessionStore } from '../stores/session'
 import { usePageResetStore } from '../stores/pageReset'
 import { isPlanLimitError, planKeyFromError } from '../lib/planUpgrade'
@@ -91,14 +93,16 @@ function defaultTier(partial: Partial<LocalTier> = {}): LocalTier {
 
 const tables = ref<PricingTableData[]>([])
 const loading = ref(false)
-const editorOpen = ref(false)
 const editingId = ref<string | null>(null)
+// The editor is always open below the saved list, as on Buy Buttons and Paywalls (PG-402).
+const tableList = useCollapsedList(tables, editingId)
+const formRoot = ref<HTMLElement | null>(null)
 
 const formName = ref('')
 const formTemplate = ref<'classic' | 'minimal' | 'bold'>('classic')
 const formAccentColor = ref('#4f46e5')
 const formCurrency = ref<'EUR' | 'USD' | 'GBP' | 'CHF'>('EUR')
-const formTiers = ref<LocalTier[]>([defaultTier({ cta_type: 'free_signup', cta_label: 'Sign up free' })])
+const formTiers = ref<LocalTier[]>(starterTiers())
 // PG-320: the toggle used to switch itself on whenever a tier was a
 // subscription, with no way to turn it off. A creator with separate monthly
 // and yearly products wants two columns, not one column with a switch. The
@@ -422,6 +426,14 @@ function setTierProvider(tier: LocalTier, provider: LocalTier['selectedProvider'
   tier.existingMappingIdYearly = null
 }
 
+// A new table opens with a free tier and a paid one, so it reads as a pricing table at once.
+function starterTiers(): LocalTier[] {
+  return [
+    defaultTier({ cta_type: 'free_signup', cta_label: 'Sign up free' }),
+    defaultTier({ cta_type: 'subscription', cta_label: 'Subscribe' }),
+  ]
+}
+
 function resetForm() {
   editingId.value = null
   formName.value = ''
@@ -429,11 +441,9 @@ function resetForm() {
   formAccentColor.value = '#4f46e5'
   formCurrency.value = 'EUR'
   formToggleEnabled.value = false
-  // A table almost always opens with the free tier; the paid ones come after it.
-  formTiers.value = [defaultTier({ cta_type: 'free_signup', cta_label: 'Sign up free' })]
+  formTiers.value = starterTiers()
   saveError.value = null
   justSaved.value = null
-  editorOpen.value = false
 
   overlayLabel.value = 'View plans'
   overlayBgColor.value = '#4f46e5'
@@ -443,13 +453,11 @@ function resetForm() {
 
 // The shell asks the page to start over when its nav item or breadcrumb is clicked again.
 const pageReset = usePageResetStore()
-watch(() => pageReset.tick, () => { if (editorOpen.value) resetForm() })
+watch(() => pageReset.tick, () => resetForm())
 
 function openNew() {
   resetForm()
-  editorOpen.value = true
-  saveError.value = null
-  justSaved.value = null
+  formRoot.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
 }
 
 function startEdit(table: PricingTableData) {
@@ -496,9 +504,9 @@ function startEdit(table: PricingTableData) {
       features: (t.features ?? []).map(f => ({ ...f })),
     })
   })
-  if (formTiers.value.length === 0) formTiers.value = [defaultTier({ cta_type: 'free_signup', cta_label: 'Sign up free' })]
+  if (formTiers.value.length === 0) formTiers.value = starterTiers()
   saveError.value = null
-  editorOpen.value = true
+  nextTick(() => formRoot.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }))
 }
 
 function addTier() {
@@ -590,10 +598,11 @@ function buildPreviewConfig(): Record<string, unknown> {
     show_toggle: formShowToggle.value,
     accent_color: formAccentColor.value || '#4f46e5',
     currency: formCurrency.value,
-    tiers: formTiers.value.map((t, i) => ({
+    tiers: formTiers.value.map((t, i) => {
+      const tier = {
       id: String(i),
       position: i,
-      name: t.name || 'Tier',
+      name: t.name,
       description: t.description,
       price_monthly: t.price_monthly,
       price_yearly: t.price_yearly,
@@ -605,7 +614,10 @@ function buildPreviewConfig(): Record<string, unknown> {
       cta_url: t.cta_url,
       cta_url_yearly: (formShowToggle.value && t.cta_type === 'subscription') ? t.cta_url_yearly : '',
       features: t.features,
-    })),
+      }
+      // A new table previews example values in its empty fields; a saved one shows only what it holds.
+      return editingId.value ? { ...tier, name: tier.name || 'Tier' } : withExample(tier, i)
+    }),
   }
 }
 let previewTimer: ReturnType<typeof setTimeout> | null = null
@@ -620,6 +632,14 @@ watch(
 
 async function save() {
   if (!session.activeTenantSlug || !session.idToken) return
+  // The preview fills empty names with examples; never save a table that looks different live.
+  const unnamed = unnamedTiers(formTiers.value)
+  if (unnamed.length) {
+    saveError.value = unnamed.length === 1
+      ? `Give tier ${unnamed[0]} a name before saving.`
+      : `Give tiers ${unnamed.join(' and ')} a name before saving.`
+    return
+  }
   saving.value = true
   saveError.value = null
   try {
@@ -791,28 +811,73 @@ onMounted(async () => {
   <AppShell>
     <div class="space-y-5">
 
-      <PageHeader title="Pricing Tables" description="Build a pricing table with up to 3 tiers and paste the embed snippet into any Ghost HTML card.">
-        <template #actions>
-          <UiButton variant="primary" size="sm" @click="openNew">
-            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-            </svg>
-            New table
-          </UiButton>
-        </template>
-      </PageHeader>
+      <PageHeader title="Pricing Tables" description="Build a pricing table with up to 3 tiers and paste the embed snippet into any Ghost HTML card." />
 
-      <!-- Empty state (only when no editor open and no tables) -->
-      <section v-if="!loading && !editorOpen && tables.length === 0" class="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-10 text-center">
-        <svg class="mx-auto h-10 w-10 text-slate-300" fill="none" stroke="currentColor" stroke-width="1.25" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0112 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375z" />
-        </svg>
-        <p class="mt-3 text-sm font-medium text-slate-500 dark:text-slate-400">No pricing tables yet</p>
-        <p class="mt-1 text-xs text-slate-400 dark:text-slate-500">Click "New table" to create your first one.</p>
+      <!-- Saved list first, then the editor; the same order on Buy Buttons, Paywalls and Pricing Tables (PG-402). -->
+      <section class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 px-5 py-4">
+          <div>
+            <h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">Saved tables</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Click Edit to get the embed code again or update the table. Changes apply everywhere the table is embedded.</p>
+          </div>
+          <div class="flex shrink-0 items-center gap-2">
+            <span class="rounded-full bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 text-xs font-medium text-slate-600 dark:text-slate-300">{{ tables.length }}</span>
+            <UiButton variant="primary" size="sm" @click="openNew">New table</UiButton>
+          </div>
+        </div>
+
+        <div v-if="loading" class="px-5 py-8 text-center text-sm text-slate-400 dark:text-slate-500">Loading...</div>
+        <div v-else-if="tables.length === 0" class="px-5 py-10 text-center text-sm text-slate-400 dark:text-slate-500">
+          No pricing tables yet. Create your first one below.
+        </div>
+
+        <ul v-else class="divide-y divide-slate-100">
+          <li
+            v-for="table in tableList.visible.value"
+            :key="table.id"
+            class="flex items-center gap-2 px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+            :class="editingId === table.id ? 'bg-indigo-50/60 dark:bg-indigo-500/10' : ''"
+          >
+            <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 dark:bg-indigo-500/10 text-indigo-500">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0112 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375z" />
+              </svg>
+            </div>
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-sm font-medium text-slate-900 dark:text-slate-100">{{ table.name }}</p>
+              <p class="text-xs text-slate-400 dark:text-slate-500 capitalize">{{ table.template }} &middot; {{ table.tiers.length }} tier{{ table.tiers.length !== 1 ? 's' : '' }}</p>
+            </div>
+            <button
+              type="button"
+              @click="startEdit(table)"
+              class="shrink-0 flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 px-2.5 py-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
+              :class="editingId === table.id ? 'border-indigo-300 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400' : ''"
+              title="Edit table"
+            >
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
+              </svg>
+              {{ editingId === table.id ? 'Editing' : 'Edit' }}
+            </button>
+            <button
+              type="button"
+              :disabled="deletingId === table.id"
+              @click.stop="deleteTable(table.id)"
+              class="shrink-0 rounded p-1.5 text-slate-400 dark:text-slate-500 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-50 transition-colors"
+              title="Delete table"
+              :aria-label="`Delete ${table.name}`"
+            >
+              <svg class="h-4 w-4" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+              </svg>
+            </button>
+          </li>
+        </ul>
+        <ShowMoreRow :hidden-count="tableList.hiddenCount.value" :can-collapse="tableList.canCollapse.value" @toggle="tableList.toggle" />
       </section>
 
       <!-- Editor -->
-      <section v-if="editorOpen" class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <section ref="formRoot" class="scroll-mt-20 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div class="border-b border-slate-100 dark:border-slate-800 px-5 py-3.5">
           <p class="text-sm font-semibold text-slate-900 dark:text-slate-100">{{ isEditing ? 'Edit table' : 'New pricing table' }}</p>
         </div>
@@ -821,8 +886,9 @@ onMounted(async () => {
 
           <!-- Internal name -->
           <div>
-            <label class="block text-xs font-medium text-slate-700 dark:text-slate-200 mb-1.5">Internal name</label>
+            <label for="pt-name" class="block text-xs font-medium text-slate-700 dark:text-slate-200 mb-1.5">Internal name</label>
             <input
+              id="pt-name"
               v-model="formName"
               type="text"
               placeholder="e.g. Main pricing page"
@@ -864,6 +930,7 @@ onMounted(async () => {
                 <input
                   v-model="formAccentColor"
                   type="text"
+                  aria-label="Accent color as hex"
                   maxlength="7"
                   class="w-24 rounded border border-slate-300 dark:border-slate-700 px-2 py-1 text-xs font-mono text-slate-700 dark:text-slate-200 focus:border-indigo-400 focus:outline-none bg-white dark:bg-slate-900"
                   placeholder="#4f46e5"
@@ -871,8 +938,9 @@ onMounted(async () => {
               </div>
             </div>
             <div class="flex items-center gap-2.5">
-              <label class="text-xs font-medium text-slate-500 dark:text-slate-400">Currency</label>
+              <label for="pt-currency" class="text-xs font-medium text-slate-500 dark:text-slate-400">Currency</label>
               <select
+                id="pt-currency"
                 v-model="formCurrency"
                 class="rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm bg-white dark:bg-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               >
@@ -931,7 +999,7 @@ onMounted(async () => {
           <div class="space-y-1.5">
             <div class="flex items-center justify-between">
               <p class="text-xs font-medium text-slate-700 dark:text-slate-200">Preview</p>
-              <p class="text-[11px] text-slate-400 dark:text-slate-500">Updates as you type. Buttons are inactive here.</p>
+              <p class="text-[11px] text-slate-400 dark:text-slate-500">Updates as you type. Empty fields show examples until you fill them. Buttons are inactive here.</p>
             </div>
             <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 p-2">
               <PricingTablePreview :config="previewConfig" />
@@ -969,6 +1037,7 @@ onMounted(async () => {
                   @click="removeTier(idx)"
                   class="text-slate-400 dark:text-slate-500 hover:text-rose-500 transition-colors"
                   title="Remove tier"
+                  :aria-label="`Remove tier ${idx + 1}`"
                 >
                   <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1002,12 +1071,12 @@ onMounted(async () => {
               <!-- Name, description, highlight -->
               <div class="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3 items-start">
                 <div>
-                  <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Name</label>
-                  <input v-model="tier.name" type="text" placeholder="Free" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900" />
+                  <label :for="`tier-${idx}-name`" class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Name</label>
+                  <input :id="`tier-${idx}-name`" v-model="tier.name" type="text" :placeholder="tierExample(idx).name" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900" />
                 </div>
                 <div>
-                  <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Description</label>
-                  <input v-model="tier.description" type="text" placeholder="For everyone" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900" />
+                  <label :for="`tier-${idx}-description`" class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Description</label>
+                  <input :id="`tier-${idx}-description`" v-model="tier.description" type="text" :placeholder="tierExample(idx).description" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900" />
                 </div>
                 <div class="md:pt-[19px]">
                   <div class="flex items-center gap-2">
@@ -1051,7 +1120,7 @@ onMounted(async () => {
                       :value="singlePrice(tier)"
                       @input="setSinglePrice(tier, ($event.target as HTMLInputElement).value)"
                       type="text"
-                      placeholder="€0"
+                      :placeholder="tierExample(idx).price"
                       aria-label="Price"
                       class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
                     />
@@ -1070,7 +1139,7 @@ onMounted(async () => {
                   <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">
                     {{ tier.cta_type === 'one_time' ? 'Price' : tier.cta_type === 'free_signup' ? 'Display price' : (formShowToggle ? 'Monthly price' : 'Price') }}
                   </label>
-                  <input v-model="tier.price_monthly" type="text" placeholder="€0" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900" />
+                  <input v-model="tier.price_monthly" type="text" :placeholder="tierExample(idx).price" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900" />
                   <!-- A toggled table shows this tier's one price in both views; say so, or the
                        missing yearly field reads as a bug (staging feedback, 14.09.). -->
                   <p v-if="formShowToggle && (tier.cta_type === 'one_time' || tier.cta_type === 'free_signup')" class="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
@@ -1088,7 +1157,7 @@ onMounted(async () => {
                     @input="tier.trial_days = ($event.target as HTMLInputElement).value ? parseInt(($event.target as HTMLInputElement).value) : null"
                     type="number"
                     min="0"
-                    placeholder="—"
+                    placeholder="None"
                     class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
                   />
                 </div>
@@ -1121,6 +1190,7 @@ onMounted(async () => {
                   <template v-else>
                     <select
                       :value="tier.selectedProductId"
+                      aria-label="Product"
                       @change="onProductSelect(tier, ($event.target as HTMLSelectElement).value)"
                       class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
                       :disabled="productsLoadingForProvider(tier.selectedProvider)"
@@ -1213,7 +1283,7 @@ onMounted(async () => {
                         <input type="radio" :value="false" v-model="tier.mappingGhostSubscribed" class="accent-indigo-600 h-3 w-3" /> No
                       </label>
                     </div>
-                    <select v-model="tier.mappingEmailType" class="w-full rounded border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 py-1 text-[10px] text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none">
+                    <select v-model="tier.mappingEmailType" aria-label="Ghost email" class="w-full rounded border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2 py-1 text-[10px] text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none">
                       <option value="signin">Magic Link (recommended)</option>
                       <option value="signup">Account confirmation</option>
                       <option value="subscribe">Newsletter opt-in</option>
@@ -1266,6 +1336,8 @@ onMounted(async () => {
                       v-for="ico in ICON_OPTIONS"
                       :key="ico.value"
                       type="button"
+                      :aria-label="`Feature ${fi + 1} icon: ${ico.value}`"
+                      :aria-pressed="feat.icon === ico.value"
                       @click="setFeatureIcon(tier, fi, ico.value)"
                       class="w-7 h-6 rounded text-center text-sm leading-none transition-colors"
                       :class="feat.icon === ico.value ? 'bg-indigo-100 text-indigo-700 dark:text-indigo-300 font-bold' : 'text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'"
@@ -1275,15 +1347,17 @@ onMounted(async () => {
                   <input
                     v-model="feat.text"
                     type="text"
-                    placeholder="Feature description"
+                    :aria-label="`Feature ${fi + 1}`"
+                    :placeholder="tierExample(idx).features[fi] ?? 'Feature description'"
                     class="flex-1 rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
                   />
                   <button
                     type="button"
+                    :aria-label="`Remove feature ${fi + 1}`"
                     @click="removeFeature(tier, fi)"
-                    class="shrink-0 text-slate-300 hover:text-rose-400 transition-colors"
+                    class="shrink-0 rounded p-0.5 text-slate-500 hover:text-rose-600 transition-colors dark:text-slate-400"
                   >
-                    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </button>
@@ -1311,6 +1385,7 @@ onMounted(async () => {
               {{ saving ? 'Saving...' : isEditing ? 'Save changes' : 'Create table' }}
             </button>
             <button
+              v-if="isEditing"
               type="button"
               @click="resetForm"
               class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
@@ -1323,7 +1398,7 @@ onMounted(async () => {
       </section>
 
       <!-- Embed options (after save) -->
-      <section v-if="(justSaved || editingId) && editorOpen" class="space-y-4">
+      <section v-if="justSaved || editingId" class="space-y-4">
 
         <!-- Success header -->
         <div class="flex items-center gap-2 px-1">
@@ -1365,6 +1440,7 @@ onMounted(async () => {
             <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Button label</label>
             <input
               v-model="overlayLabel"
+              aria-label="Button text"
               type="text"
               placeholder="View plans"
               class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900"
@@ -1375,13 +1451,13 @@ onMounted(async () => {
             <div>
               <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Button color</label>
               <div class="flex items-center gap-1.5">
-                <input v-model="overlayBgColor" type="color" class="h-8 w-8 cursor-pointer rounded border border-slate-300 dark:border-slate-700 p-0.5 bg-white shrink-0" />
-                <input v-model="overlayBgColor" type="text" maxlength="7" class="w-full rounded border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-xs font-mono text-slate-700 dark:text-slate-200 focus:border-indigo-400 focus:outline-none bg-white dark:bg-slate-900" placeholder="#4f46e5" />
+                <input v-model="overlayBgColor" type="color" aria-label="Pick the button color" class="h-8 w-8 cursor-pointer rounded border border-slate-300 dark:border-slate-700 p-0.5 bg-white shrink-0" />
+                <input v-model="overlayBgColor" type="text" aria-label="Button color as hex" maxlength="7" class="w-full rounded border border-slate-300 dark:border-slate-700 px-2 py-1.5 text-xs font-mono text-slate-700 dark:text-slate-200 focus:border-indigo-400 focus:outline-none bg-white dark:bg-slate-900" placeholder="#4f46e5" />
               </div>
             </div>
             <div>
               <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Corners</label>
-              <select v-model="overlayRadius" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900">
+              <select v-model="overlayRadius" aria-label="Corners" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900">
                 <option value="md">Rounded</option>
                 <option value="full">Pill</option>
                 <option value="none">Flat</option>
@@ -1389,7 +1465,7 @@ onMounted(async () => {
             </div>
             <div>
               <label class="block text-[11px] font-medium text-slate-600 dark:text-slate-300 mb-1">Alignment</label>
-              <select v-model="overlayAlign" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900">
+              <select v-model="overlayAlign" aria-label="Alignment" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-slate-900">
                 <option value="left">Left</option>
                 <option value="center">Center</option>
                 <option value="right">Right</option>
@@ -1411,54 +1487,6 @@ onMounted(async () => {
           <pre class="overflow-x-auto rounded-lg bg-slate-900 p-3 text-xs text-slate-100"><code>{{ overlaySnippet }}</code></pre>
         </div>
 
-      </section>
-
-      <!-- Saved tables list (below editor) -->
-      <section v-if="tables.length > 0" class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div class="border-b border-slate-100 dark:border-slate-800 px-5 py-3">
-          <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Saved tables</p>
-        </div>
-        <ul class="divide-y divide-slate-100">
-          <li
-            v-for="table in tables"
-            :key="table.id"
-            class="flex items-center gap-2 px-5 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
-            :class="editingId === table.id ? 'bg-indigo-50/60 dark:bg-indigo-500/10' : ''"
-          >
-            <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 dark:bg-indigo-500/10 text-indigo-500">
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0112 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375z" />
-              </svg>
-            </div>
-            <div class="min-w-0 flex-1">
-              <p class="truncate text-sm font-medium text-slate-900 dark:text-slate-100">{{ table.name }}</p>
-              <p class="text-xs text-slate-400 dark:text-slate-500 capitalize">{{ table.template }} &middot; {{ table.tiers.length }} tier{{ table.tiers.length !== 1 ? 's' : '' }}</p>
-            </div>
-            <button
-              type="button"
-              @click="startEdit(table)"
-              class="shrink-0 flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 px-2.5 py-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
-              :class="editingId === table.id ? 'border-indigo-300 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400' : ''"
-              title="Edit table"
-            >
-              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
-              </svg>
-              {{ editingId === table.id ? 'Editing' : 'Edit' }}
-            </button>
-            <button
-              type="button"
-              :disabled="deletingId === table.id"
-              @click.stop="deleteTable(table.id)"
-              class="shrink-0 rounded p-1.5 text-slate-400 dark:text-slate-500 hover:bg-rose-50 hover:text-rose-500 disabled:opacity-50 transition-colors"
-              title="Delete table"
-            >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-              </svg>
-            </button>
-          </li>
-        </ul>
       </section>
 
     </div>

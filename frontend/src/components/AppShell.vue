@@ -10,9 +10,10 @@ import GracePeriodBanner from './GracePeriodBanner.vue'
 import ShellExtras from './ShellExtras.vue'
 import { useSessionStore } from '../stores/session'
 import { usePageResetStore } from '../stores/pageReset'
-import { checkHeaderScript, getChangelogForBell, getGhostStripeStatus, getIntegrationConfig } from '../lib/api'
+import { checkHeaderScript, getChangelogForBell, getDeliveryHealth, getGhostStripeStatus, getIntegrationConfig } from '../lib/api'
+import { providerCounts } from '../lib/deliveryHealth'
 import { changelogHref, linkTarget, roadmapHref, statusHref } from '../lib/shellLinks'
-import type { ChangelogBellEntry } from '../types/api'
+import type { ChangelogBellEntry, DeliveryHealthSummary } from '../types/api'
 import { useHeaderScriptStatus } from '../composables/useHeaderScriptStatus'
 import { useTheme } from '../composables/useTheme'
 import { supportEmail } from '../lib/publicUrls'
@@ -133,7 +134,7 @@ const PROVIDERS = [
 ]
 
 const pageTitles: Record<string, { title: string; description: string }> = {
-  dashboard: { title: 'Dashboard', description: 'Track tenant operations, replay health, and team activity.' },
+  dashboard: { title: 'Dashboard', description: 'Did every paying reader get access?' },
   'connections-overview': { title: 'Connections', description: 'Connect Ghost and your payment providers.' },
   'connection-ghost': { title: 'Ghost CMS', description: 'Connect your Ghost instance and validate the Admin API.' },
   'connection-polar': { title: 'Polar', description: 'Connect Polar webhooks for automatic member sync.' },
@@ -145,14 +146,14 @@ const pageTitles: Record<string, { title: string; description: string }> = {
   'connection-dodo': { title: 'Dodo Payments', description: 'Connect Dodo Payments webhooks for automatic member sync.' },
   'connection-digistore24': { title: 'Digistore24', description: 'Connect Digistore24 for automatic member sync.' },
   'connection-patreon': { title: 'Patreon', description: 'Connect Patreon so active pledges grant Ghost access automatically.' },
-  events: { title: 'Webhook Events', description: 'Inspect webhook pipelines and replay outcomes.' },
+  events: { title: 'Webhook Events', description: 'Every purchase PayGlue received, newest first.' },
   mappings: { title: 'Product Mapping', description: 'Overview of all configured product-to-Ghost action mappings.' },
-  billing: { title: 'Billing', description: 'Maintain billing profile and invoicing context.' },
+  billing: { title: 'Billing', description: 'Your PayGlue plan and invoices.' },
   plans: { title: 'Plans & Pricing', description: 'Compare plans and upgrade or downgrade your subscription.' },
-  team: { title: 'Team', description: 'Manage members, roles, and tenant permissions.' },
+  team: { title: 'Team', description: 'Who can work on this publication.' },
   organization: { title: 'Publication', description: 'Manage your publication identifier and danger zone.' },
-  support: { title: 'Support', description: 'Get help from PayGlue support and manage support access.' },
-  documents: { title: 'Documents', description: 'Download PayGlue legal and compliance documents.' },
+  support: { title: 'Support', description: 'Ask us anything about your setup.' },
+  documents: { title: 'Documents', description: 'Our contracts and legal papers to download.' },
   affiliate: { title: 'Affiliate', description: 'Earn 40% on everyone you bring to PayGlue.' },
   preferences: { title: 'Preferences', description: 'Account and workspace preferences.' },
   installation: { title: 'Installation', description: 'Copy embed snippets and validate hosted pricing render.' },
@@ -205,9 +206,10 @@ const loadHeaderScriptStatus = async () => {
   }
 }
 
-// Light per-provider connection status for the small green/grey dots in the
-// Connections sub-nav: connected vs not connected only (provider configs, no
-// webhook-event data -- deliberately cheap).
+// Per-provider status for the small dots in the Connections sub-nav: connected
+// or not from the provider configs, and since PG-402 the delivery state from
+// the small events/health summary, so a provider whose purchase needs you is
+// marked here in the same words as on the dashboard. Still no event list.
 const STATUS_PROVIDERS = ['polar', 'paypal', 'gumroad', 'paddle', 'kofi', 'creem', 'patreon', 'dodo', 'digistore24'] as const
 const providerEnabled = ref<Record<string, boolean>>({})
 const loadProviderStatuses = async () => {
@@ -226,6 +228,33 @@ const loadProviderStatuses = async () => {
   } catch {
     // ignore -- dots just stay grey if statuses can't be loaded
   }
+  try {
+    deliveryHealthSummary.value = await getDeliveryHealth(slug, token)
+  } catch {
+    // ignore -- without the summary the dots only say connected or not
+  }
+}
+const deliveryHealthSummary = ref<DeliveryHealthSummary | null>(null)
+
+type Dot = 'good' | 'muted' | 'warn' | 'bad'
+const DOT_CLASS: Record<Dot, string> = {
+  good: 'bg-emerald-500',
+  muted: 'bg-slate-600',
+  warn: 'bg-amber-400',
+  bad: 'bg-rose-500',
+}
+const DOT_LABEL: Record<Dot, string> = {
+  good: 'Connected',
+  muted: 'Not connected',
+  warn: 'Retrying',
+  bad: 'Needs you',
+}
+const providerDot = (key: string): Dot => {
+  if (!providerEnabled.value[key]) return 'muted'
+  const counts = providerCounts(deliveryHealthSummary.value, key)
+  if (counts.needs_you > 0) return 'bad'
+  if (counts.retrying > 0) return 'warn'
+  return 'good'
 }
 
 onMounted(loadStripeStatus)
@@ -265,7 +294,7 @@ const activeSectionKey = computed(() => {
   if (p.includes('/connection')) return 'connections'
   if (p.includes('/events') || p.includes('/mappings')) return 'analytics'
   if (p.includes('/installation') || p.includes('/buttons') || p.includes('/paywall') || p.includes('/pricing')) return 'installation'
-  if (p.includes('/team') || p.includes('/billing') || p.includes('/plans') || p.includes('/preferences') || p.includes('/organization') || p.includes('/support') || p.includes('/documents')) return 'settings'
+  if (p.includes('/team') || p.includes('/billing') || p.includes('/plans') || p.includes('/affiliate') || p.includes('/preferences') || p.includes('/organization') || p.includes('/support') || p.includes('/documents')) return 'settings'
   return 'dashboard'
 })
 
@@ -274,7 +303,7 @@ const activeSectionLabel = computed(() =>
 )
 
 // ---- Tabs: the sub-navigation for whichever section is active -----------
-type TabItem = { label: string; to: string; badge?: 'on' | 'off' | 'soon' | 'planned' | null; dot?: 'good' | 'muted' | null; disabled?: boolean }
+type TabItem = { label: string; to: string; badge?: 'on' | 'off' | 'soon' | 'planned' | null; dot?: Dot | null; disabled?: boolean }
 
 const connectionTabs = computed<TabItem[]>(() => {
   const slug = session.activeTenantSlug
@@ -287,8 +316,9 @@ const connectionTabs = computed<TabItem[]>(() => {
     if (p.status === 'available' || p.key === 'stripe') {
       let badge: TabItem['badge'] = null
       if (p.key === 'stripe') badge = stripeConnected.value === true ? 'on' : stripeConnected.value === false ? 'off' : null
-      // Green/grey dot: connected vs not (Stripe keeps its own on/off badge).
-      const dot: TabItem['dot'] = p.key === 'stripe' ? null : providerEnabled.value[p.key] ? 'good' : 'muted'
+      // Dot: connected, not connected, retrying or needs you (Stripe keeps its
+      // own on/off badge).
+      const dot: TabItem['dot'] = p.key === 'stripe' ? null : providerDot(p.key)
       tabs.push({ label: p.name, to: `/t/${slug}/connection/${p.key}`, badge, dot })
     } else {
       tabs.push({ label: p.name, to: '', disabled: true, badge: p.status === 'deployment' ? 'soon' : 'planned' })
@@ -296,6 +326,12 @@ const connectionTabs = computed<TabItem[]>(() => {
   }
   return tabs
 })
+
+// The rail uses the words the pages use (PG-402). Neither state is a fault:
+// PayGlue works without Stripe in Ghost, and the header script is optional
+// until a paywall goes live. So no amber, just grey.
+const BADGE_ON: Record<string, string> = { Stripe: 'In Ghost', 'Header Script': 'Installed' }
+const BADGE_OFF: Record<string, string> = { Stripe: 'Not in Ghost', 'Header Script': 'Not installed' }
 
 const installationTabs = computed<TabItem[]>(() => {
   const slug = session.activeTenantSlug
@@ -404,6 +440,12 @@ const onGlobalKeydown = (e: KeyboardEvent) => {
 onMounted(() => window.addEventListener('keydown', onGlobalKeydown))
 onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown))
 
+// Pages that bring their own heading and description already say it once.
+// The phone header shows the sentence only where the page itself has none,
+// instead of the same statement twice (PG-402).
+const PAGES_WITHOUT_OWN_HEADING = new Set(['dashboard', 'documents', 'support'])
+const showMobileDescription = computed(() => PAGES_WITHOUT_OWN_HEADING.has(String(route.name ?? '')))
+
 const pageMeta = computed(() => {
   const key = String(route.name ?? '')
   return pageTitles[key] ?? { title: 'Control panel', description: 'Manage tenant configuration and operations.' }
@@ -454,7 +496,9 @@ watch(
     <div class="flex min-h-screen">
 
       <!-- Desktop rail -->
-      <aside class="hidden w-64 shrink-0 flex-col border-r border-slate-800/60 bg-slate-900 py-5 md:flex">
+      <!-- Sticky with its own height, so navigation, search and the bell stay
+           in view on long pages; only the nav inside scrolls (PG-402). -->
+      <aside class="hidden w-64 shrink-0 flex-col border-r border-slate-800/60 bg-slate-900 py-5 md:sticky md:top-0 md:flex md:h-screen">
         <div class="mb-5 px-4" title="PayGlue">
           <PayGlueLogo size="md" theme="dark" />
         </div>
@@ -522,26 +566,27 @@ watch(
             </RouterLink>
 
             <div v-else>
-              <button
-                type="button"
-                class="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-[13.5px] font-medium transition-colors"
+              <!-- The label opens the group's first page, the chevron only folds it. -->
+              <div
+                class="flex w-full items-center gap-1 rounded-lg text-[13.5px] font-medium transition-colors"
                 :class="activeSectionKey === s.key ? 'text-white' : 'text-slate-100 hover:bg-slate-800'"
-                @click="toggleGroup(s.key)"
               >
-                <span class="flex items-center gap-3">
-                  <svg class="h-[18px] w-[18px] shrink-0" :class="activeSectionKey === s.key ? 'opacity-100' : 'opacity-70'" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+                <button type="button" class="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2.5 text-left" @click="goToSection(s.key)">
+                  <svg class="h-[18px] w-[18px] shrink-0" :class="activeSectionKey === s.key ? 'opacity-100' : 'opacity-70'" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" :d="s.icon" />
                   </svg>
                   {{ s.label }}
-                </span>
-                <span
-                  class="grid h-5 w-5 shrink-0 place-items-center rounded-md border transition-colors"
-                  :class="expandedGroups[s.key] ? 'border-slate-600 text-slate-200' : 'border-slate-700 text-slate-500'"
+                </button>
+                <button
+                  type="button"
+                  class="grid h-8 w-8 shrink-0 place-items-center rounded-md text-slate-400 transition-colors hover:text-slate-100"
+                  :aria-expanded="!!expandedGroups[s.key]"
+                  :aria-label="`${expandedGroups[s.key] ? 'Hide' : 'Show'} ${s.label} pages`"
+                  @click="toggleGroup(s.key)"
                 >
-                  <svg v-if="!expandedGroups[s.key]" class="h-2.5 w-2.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 5v14M5 12h14" /></svg>
-                  <svg v-else class="h-2.5 w-2.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" d="M5 12h14" /></svg>
-                </span>
-              </button>
+                  <svg class="h-4 w-4 transition-transform" :class="expandedGroups[s.key] ? 'rotate-90' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6" /></svg>
+                </button>
+              </div>
 
               <div v-if="expandedGroups[s.key]" class="ml-[25px] mt-1 flex flex-col gap-0.5 border-l border-slate-800 py-0.5 pl-3.5">
                 <template v-for="tab in tabsForSection(s.key)" :key="tab.label">
@@ -552,10 +597,11 @@ watch(
                     :class="isActive(tab.to) ? 'bg-slate-800 font-medium text-white' : 'text-slate-400 hover:text-slate-100'"
                     @click="onNavClick(tab.to)"
                   >
-                    <span v-if="tab.dot" class="h-1.5 w-1.5 shrink-0 rounded-full" :class="tab.dot === 'good' ? 'bg-emerald-500' : 'bg-slate-600'" :title="tab.dot === 'good' ? 'Connected' : 'Not connected'"></span>
+                    <span v-if="tab.dot" class="h-1.5 w-1.5 shrink-0 rounded-full" :class="DOT_CLASS[tab.dot]" :title="DOT_LABEL[tab.dot]" aria-hidden="true"></span>
+                    <span v-if="tab.dot" class="sr-only">, {{ DOT_LABEL[tab.dot] }}</span>
                     {{ tab.label }}
-                    <span v-if="tab.badge === 'on'" class="ml-auto rounded-full bg-emerald-900/50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">Active</span>
-                    <span v-else-if="tab.badge === 'off'" class="ml-auto rounded-full bg-amber-900/50 px-1.5 py-0.5 text-[10px] font-medium text-amber-400">Disabled</span>
+                    <span v-if="tab.badge === 'on'" class="ml-auto rounded-full bg-emerald-900/50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">{{ BADGE_ON[tab.label] ?? 'Active' }}</span>
+                    <span v-else-if="tab.badge === 'off'" class="ml-auto rounded-full bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">{{ BADGE_OFF[tab.label] ?? 'Off' }}</span>
                   </RouterLink>
                   <div v-else class="flex items-center gap-2 px-2.5 py-1.5 text-[13px]">
                     <span class="text-slate-600">{{ tab.label }}</span>
@@ -790,7 +836,9 @@ watch(
           <div class="flex items-center justify-between gap-4 px-4 py-3 md:hidden">
             <div class="flex items-center gap-3">
               <button
+                type="button"
                 class="grid h-9 w-9 place-items-center rounded-md border border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                aria-label="Open menu"
                 @click="mobileSidebarOpen = true"
               >
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -799,7 +847,7 @@ watch(
               </button>
               <div>
                 <p class="text-sm font-semibold text-slate-900 dark:text-slate-100">{{ pageMeta.title }}</p>
-                <p class="text-xs text-slate-500 dark:text-slate-400">{{ pageMeta.description }}</p>
+                <p v-if="showMobileDescription" class="text-xs text-slate-500 dark:text-slate-400">{{ pageMeta.description }}</p>
               </div>
             </div>
             <button
@@ -944,25 +992,22 @@ watch(
                 </RouterLink>
 
                 <div v-else>
+                  <!-- In the drawer the whole row folds the group, so a tap does
+                       not close the drawer before the pages can be picked. -->
                   <button
                     type="button"
                     class="flex w-full items-center justify-between gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors"
                     :class="activeSectionKey === s.key ? 'text-white' : 'text-slate-100 hover:bg-slate-800'"
+                    :aria-expanded="!!expandedGroups[s.key]"
                     @click="toggleGroup(s.key)"
                   >
                     <span class="flex items-center gap-3">
-                      <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24">
+                      <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.75" viewBox="0 0 24 24" aria-hidden="true">
                         <path stroke-linecap="round" stroke-linejoin="round" :d="s.icon" />
                       </svg>
                       {{ s.label }}
                     </span>
-                    <span
-                      class="grid h-5 w-5 shrink-0 place-items-center rounded-md border transition-colors"
-                      :class="expandedGroups[s.key] ? 'border-slate-600 text-slate-200' : 'border-slate-700 text-slate-500'"
-                    >
-                      <svg v-if="!expandedGroups[s.key]" class="h-2.5 w-2.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 5v14M5 12h14" /></svg>
-                      <svg v-else class="h-2.5 w-2.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" d="M5 12h14" /></svg>
-                    </span>
+                    <svg class="h-4 w-4 shrink-0 text-slate-400 transition-transform" :class="expandedGroups[s.key] ? 'rotate-90' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6" /></svg>
                   </button>
 
                   <div v-if="expandedGroups[s.key]" class="ml-[23px] mt-0.5 flex flex-col gap-0.5 border-l border-slate-800 py-0.5 pl-3.5">
@@ -974,10 +1019,11 @@ watch(
                         :class="isActive(tab.to) ? 'bg-slate-800 font-medium text-white' : 'text-slate-400 hover:text-slate-100'"
                         @click="mobileSidebarOpen = false"
                       >
-                        <span v-if="tab.dot" class="h-1.5 w-1.5 shrink-0 rounded-full" :class="tab.dot === 'good' ? 'bg-emerald-500' : 'bg-slate-600'"></span>
+                        <span v-if="tab.dot" class="h-1.5 w-1.5 shrink-0 rounded-full" :class="DOT_CLASS[tab.dot]" :title="DOT_LABEL[tab.dot]" aria-hidden="true"></span>
+                        <span v-if="tab.dot" class="sr-only">, {{ DOT_LABEL[tab.dot] }}</span>
                         {{ tab.label }}
-                        <span v-if="tab.badge === 'on'" class="ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-emerald-900/50 text-emerald-400">Active</span>
-                        <span v-else-if="tab.badge === 'off'" class="ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-amber-900/50 text-amber-400">Disabled</span>
+                        <span v-if="tab.badge === 'on'" class="ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-emerald-900/50 text-emerald-400">{{ BADGE_ON[tab.label] ?? 'Active' }}</span>
+                        <span v-else-if="tab.badge === 'off'" class="ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-slate-800 text-slate-400">{{ BADGE_OFF[tab.label] ?? 'Off' }}</span>
                       </RouterLink>
                       <div v-else class="flex items-center gap-2 px-2.5 py-1.5">
                         <span class="text-sm text-slate-600">{{ tab.label }}</span>

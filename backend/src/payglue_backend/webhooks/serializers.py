@@ -79,6 +79,10 @@ class IntegrationCredentialsSerializer(serializers.Serializer):
 
 
 class WebhookInboundEventSerializer(serializers.ModelSerializer):
+    # PG-402: the one delivery state every page shows, worked out in
+    # webhooks/delivery_state.py instead of from `status` in each view.
+    delivery_state = serializers.CharField(read_only=True)
+
     class Meta:
         model = WebhookInboundEvent
         fields = [
@@ -101,4 +105,5 @@ class WebhookInboundEventSerializer(serializers.ModelSerializer):
             "failed_at",
             "dead_lettered_at",
             "updated_at",
+            "delivery_state",
         ]

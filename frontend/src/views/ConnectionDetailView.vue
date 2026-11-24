@@ -6,7 +6,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import AppShell from '../components/AppShell.vue'
 import CopyButton from '../components/CopyButton.vue'
 import UpgradeBanner from '../components/UpgradeBanner.vue'
-import { PageHeader, UiCard, UiButton, FormField, ProviderLogo } from '../components/ui'
+import { PageHeader, UiCard, UiButton, FormField, ProviderLogo, StatusPill } from '../components/ui'
 import { webhookUrl as buildWebhookUrl } from '../lib/publicUrls'
 import {
   ApiHttpError,
@@ -36,6 +36,9 @@ const errorMessage = ref<string | null>(null)
 const errorMessagePlan = ref<string | null>(null)
 const saving = ref(false)
 const saved = ref(false)
+// A fresh form starts neutral. Rose only once a save has actually failed,
+// not before anybody has typed anything (PG-402).
+const saveFailed = ref(false)
 const healthChecking = ref(false)
 const latestHealth = ref<IntegrationHealthStatus | undefined>()
 const webhookRegistrationMessage = ref<string | null>(null)
@@ -213,14 +216,23 @@ const save = async () => {
       if (field.detect === 'enabled') stored[field.key] = true
     }
     saved.value = true
+    saveFailed.value = false
     setTimeout(() => { saved.value = false }, 3000)
   } catch (e) {
+    saveFailed.value = true
     errorMessage.value = e instanceof Error ? e.message : 'Unable to save.'
     errorMessagePlan.value = isPlanLimitError(e) ? planKeyFromError(e) : null
   } finally {
     saving.value = false
   }
 }
+
+const NUMBER_WORDS = ['', 'one', 'two', 'three', 'four', 'five']
+const freshFormHint = computed(() => {
+  const required = meta.value.fields.filter((field) => !field.optional).length
+  if (required <= 1) return 'Not connected yet. Fill in the field and save.'
+  return `Not connected yet. Fill in the ${NUMBER_WORDS[required] ?? required} fields and save.`
+})
 
 const runHealthCheck = async () => {
   if (!canWrite.value) return
@@ -355,6 +367,12 @@ watch(() => props.provider, () => {
         <!-- Left: credential form -->
         <UiCard class="lg:col-span-2">
           <div class="space-y-4">
+            <!-- Status in the card's head, where it is seen first, instead of
+                 under the last field (PG-402). -->
+            <div class="flex items-center justify-between gap-3 border-b border-slate-100 pb-3 dark:border-slate-800">
+              <h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">{{ meta.name }}</h2>
+              <StatusPill :tone="config.enabled ? 'good' : 'neutral'" dot>{{ config.enabled ? 'Connected' : 'Not connected yet' }}</StatusPill>
+            </div>
             <!-- Webhook URL -->
             <FormField label="Webhook URL" :hint="meta.registersWebhooks ? undefined : (meta.webhookUrlHint ?? WEBHOOK_URL_HINT)">
               <div v-if="webhookUrl" class="flex gap-2">
@@ -362,17 +380,22 @@ watch(() => props.provider, () => {
                 <!-- PayGlue registers the address itself, so there is nothing to copy. -->
                 <CopyButton v-if="!meta.registersWebhooks" :text="webhookUrl" />
               </div>
+              <!-- The hint has its own v-if. Chained to the states below, a loaded
+                   URL on a provider without the hint fell through to the loading
+                   line and showed it forever (PG-402). -->
               <p
                 v-if="webhookUrl && meta.registersWebhooks"
                 class="mt-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:border-indigo-900/50 dark:bg-indigo-950/40 dark:text-indigo-200"
               >
                 {{ meta.webhookUrlHint }}
               </p>
-              <div v-else-if="session.webhookSecretError" class="flex items-center gap-3">
-                <p class="text-sm text-rose-600 dark:text-rose-400">Could not load your webhook key. The URL is incomplete without it, so please retry before copying.</p>
-                <UiButton size="sm" variant="default" class="shrink-0" @click="loadWebhookSecret">Retry</UiButton>
-              </div>
-              <p v-else class="text-sm text-slate-500 dark:text-slate-400">Loading your webhook URL...</p>
+              <template v-if="!webhookUrl">
+                <div v-if="session.webhookSecretError" class="flex items-center gap-3">
+                  <p class="text-sm text-rose-600 dark:text-rose-400">Could not load your webhook key. The URL is incomplete without it, so please retry before copying.</p>
+                  <UiButton size="sm" variant="default" class="shrink-0" @click="loadWebhookSecret">Retry</UiButton>
+                </div>
+                <p v-else class="text-sm text-slate-500 dark:text-slate-400">Loading your webhook URL...</p>
+              </template>
             </FormField>
 
             <!-- Credential fields -->
@@ -397,11 +420,11 @@ watch(() => props.provider, () => {
                 class="pg-input pg-mono"
               />
             </FormField>
-            <!-- Status -->
-            <div class="flex items-center gap-1.5 text-xs">
-              <span class="inline-block h-2 w-2 rounded-full" :class="config.enabled ? 'bg-emerald-500' : 'bg-rose-500'"></span>
-              <span v-if="config.enabled" class="font-medium text-emerald-600 dark:text-emerald-400">Connected</span>
-              <span v-else class="font-medium text-rose-600 dark:text-rose-400">{{ meta.notConnectedMsg }}</span>
+            <!-- Not connected yet: neutral until a save has failed. -->
+            <div v-if="!config.enabled" class="flex items-center gap-1.5 text-xs" role="status">
+              <span class="inline-block h-2 w-2 rounded-full" :class="saveFailed ? 'bg-rose-500' : 'bg-slate-300 dark:bg-slate-600'"></span>
+              <span v-if="saveFailed" class="font-medium text-rose-700 dark:text-rose-400">{{ meta.notConnectedMsg }}</span>
+              <span v-else class="text-slate-600 dark:text-slate-300">{{ freshFormHint }}</span>
             </div>
 
             <p v-if="disconnectedMessage" class="text-xs text-slate-600 dark:text-slate-300">{{ disconnectedMessage }}</p>
@@ -410,7 +433,13 @@ watch(() => props.provider, () => {
 
             <!-- Actions -->
             <div class="flex flex-wrap gap-2 pt-1">
-              <UiButton variant="default" :disabled="!canWrite || healthChecking" @click="runHealthCheck">
+              <!-- A health check on an empty form can only fail. -->
+              <UiButton
+                variant="default"
+                :disabled="!canWrite || healthChecking || !config.enabled"
+                :title="config.enabled ? undefined : 'Save credentials first'"
+                @click="runHealthCheck"
+              >
                 {{ healthChecking ? 'Checking...' : 'Run health check' }}
               </UiButton>
               <UiButton v-if="config.enabled" variant="accent" :to="`/t/${session.activeTenantSlug}/mappings`">

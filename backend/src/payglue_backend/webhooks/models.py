@@ -63,6 +63,47 @@ class WebhookInboundEvent(models.Model):
     dead_lettered_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def __str__(self) -> str:
+        from django.utils import timezone
+
+        from payglue_backend.webhooks.delivery_alerts import provider_display_name
+
+        parts = [provider_display_name(self.provider)]
+        if self.raw_event_type:
+            parts.append(self.raw_event_type)
+        parts.append(self.tenant_slug)
+        if self.created_at:
+            parts.append(timezone.localtime(self.created_at).strftime("%-d %b %H:%M"))
+        return " · ".join(parts)
+
+    @property
+    def raw_event_type(self) -> str:
+        """The provider's own name for the event, as far as the stored snapshot
+        carries one. Gumroad sends none."""
+        snapshot = self.payload_snapshot if isinstance(self.payload_snapshot, dict) else {}
+        if self.provider == "kofi" and isinstance(snapshot.get("data"), str):
+            import json
+
+            try:
+                data = json.loads(snapshot["data"])
+            except ValueError:
+                return ""
+            value = data.get("type") if isinstance(data, dict) else None
+            return value if isinstance(value, str) else ""
+        for key in ("type", "event_type", "event"):
+            value = snapshot.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return ""
+
+    @property
+    def delivery_state(self) -> str:
+        """delivered, retrying, needs_you, ... (PG-402). The one place every
+        page reads it from; see webhooks/delivery_state.py."""
+        from payglue_backend.webhooks.delivery_state import classify
+
+        return classify(self)
+
     class Meta:
         indexes = [
             models.Index(fields=["tenant_slug", "provider", "status"], name="webhooks_we_tenant__6d43d2_idx"),

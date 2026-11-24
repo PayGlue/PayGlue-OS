@@ -49,7 +49,13 @@ const props = defineProps<{
 
 // Not a `withDefaults` factory: the compiler hoists `defineProps` out of
 // setup(), so a default referencing a local constant is rejected outright.
-const keys = computed(() => props.providers ?? PAYMENT_PROVIDERS)
+const allKeys = computed(() => props.providers ?? PAYMENT_PROVIDERS)
+// Connected providers first, in their usual order, then the rest (PG-402).
+// Stable: until the statuses load, the order stays as it was.
+const keys = computed(() => {
+  const list = allKeys.value
+  return [...list.filter(key => connected.value[key] !== false), ...list.filter(key => connected.value[key] === false)]
+})
 
 const emit = defineEmits<{ 'update:modelValue': [string] }>()
 
@@ -66,7 +72,7 @@ const RETIRED: Record<string, string> = {
   lemonsqueezy: 'This was set up with Lemon Squeezy, which PayGlue no longer supports because Lemon Squeezy is closing. Pick another provider and product below.',
 }
 const retiredNotice = computed(() =>
-  props.modelValue && !keys.value.includes(props.modelValue) ? RETIRED[props.modelValue] ?? null : null,
+  props.modelValue && !allKeys.value.includes(props.modelValue) ? RETIRED[props.modelValue] ?? null : null,
 )
 
 onMounted(async () => {
@@ -78,10 +84,10 @@ onMounted(async () => {
   // swallowed on purpose. Not knowing whether a provider is connected must
   // never stop somebody from choosing one.
   const results = await Promise.allSettled(
-    keys.value.map(key => getIntegrationConfig(slug, token, key as ProviderKey)),
+    allKeys.value.map(key => getIntegrationConfig(slug, token, key as ProviderKey)),
   )
   const next: Record<string, boolean> = {}
-  keys.value.forEach((key, i) => {
+  allKeys.value.forEach((key, i) => {
     const r = results[i]
     next[key] = r.status === 'fulfilled' && Boolean(r.value.enabled)
   })
@@ -101,18 +107,24 @@ onMounted(async () => {
       v-for="key in keys"
       :key="key"
       type="button"
-      class="flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors"
-      :class="[
+      class="flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+      :class="
         modelValue === key
           ? 'border-2 border-indigo-500 bg-white dark:bg-slate-800'
-          : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600',
-        connected[key] === false && modelValue !== key ? 'opacity-55' : '',
-      ]"
+          : connected[key] === false
+            ? 'border-dashed border-slate-300 bg-white hover:border-slate-400 dark:border-slate-600 dark:bg-slate-800/60 dark:hover:border-slate-500'
+            : 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600'
+      "
       :aria-pressed="modelValue === key"
       @click="emit('update:modelValue', key)"
     >
       <ProviderLogo :provider="key" size="sm" />
-      <span class="truncate text-sm text-slate-700 dark:text-slate-200">{{ name(key) }}</span>
+      <!-- Name above the status, so the name is never the part that gets cut
+           off, and the tile stays fully readable (PG-402). -->
+      <span class="flex min-w-0 flex-col">
+        <span class="truncate text-sm text-slate-700 dark:text-slate-200">{{ name(key) }}</span>
+        <span v-if="connected[key] === false && modelValue !== key" class="text-[11px] leading-tight text-slate-500 dark:text-slate-400">Not connected</span>
+      </span>
       <svg
         v-if="modelValue === key"
         class="ml-auto h-4 w-4 shrink-0 text-indigo-500"
@@ -126,10 +138,6 @@ onMounted(async () => {
           clip-rule="evenodd"
         />
       </svg>
-      <span
-        v-else-if="connected[key] === false"
-        class="ml-auto shrink-0 whitespace-nowrap text-[11px] text-slate-400 dark:text-slate-500"
-      >Not connected</span>
     </button>
   </div>
 </template>

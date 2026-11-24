@@ -5,7 +5,8 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import AppShell from '../components/AppShell.vue'
 import UpgradeBanner from '../components/UpgradeBanner.vue'
-import { PageHeader, ProviderPicker } from '../components/ui'
+import { PageHeader, ProviderPicker, ShowMoreRow, UiButton } from '../components/ui'
+import { useCollapsedList } from '../lib/collapsedList'
 import { useSessionStore } from '../stores/session'
 import { usePageResetStore } from '../stores/pageReset'
 import { isPlanLimitError, planKeyFromError } from '../lib/planUpgrade'
@@ -44,6 +45,13 @@ const isManualProduct = computed(() => selectedProvider.value === 'kofi')
 const polarProducts = ref<Product[]>([])
 const polarProductsLoading = ref(false)
 const polarProductsError = ref<string | null>(null)
+// Polar is connected, only the optional API token for the product list is
+// missing. Say exactly that, with the way to fix it (PG-402).
+const polarNeedsToken = ref(false)
+// "Required" only once somebody has left the field or tried to save.
+const nameTouched = ref(false)
+const showNameError = computed(() => nameTouched.value && !formName.value.trim())
+const formRoot = ref<HTMLElement | null>(null)
 const polarSandbox = ref(false)
 
 
@@ -123,6 +131,7 @@ const saveSuccess = ref(false)
 const saveError = ref<string | null>(null)
 const saveErrorPlan = ref<string | null>(null)
 const editingId = ref<string | null>(null)
+const buttonList = useCollapsedList(buttons, editingId)
 const copiedRowId = ref<string | null>(null)
 const copiedEmbed = ref(false)
 
@@ -157,11 +166,15 @@ async function loadPolarProducts() {
   if (!session.activeTenantSlug || !session.idToken) return
   polarProductsLoading.value = true
   polarProductsError.value = null
+  polarNeedsToken.value = false
   try {
     const result = await getPolarProducts(session.activeTenantSlug, session.idToken)
     polarProducts.value = result.products ?? []
     polarSandbox.value = result.sandbox ?? false
-    if (!result.has_token) polarProductsError.value = 'No Polar token configured. Connect Polar first to load products.'
+    if (!result.has_token) {
+      polarNeedsToken.value = true
+      polarProductsError.value = 'Add your Polar API token to pick products from a list, or paste the product link below.'
+    }
   } catch {
     polarProductsError.value = 'Could not load products.'
   } finally {
@@ -340,8 +353,14 @@ async function loadButtons() {
   }
 }
 
+function startNewButton() {
+  resetForm()
+  formRoot.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+}
+
 function resetForm() {
   editingId.value = null
+  nameTouched.value = false
   formName.value = ''
   formLabel.value = 'Buy now'
   formDescription.value = ''
@@ -425,11 +444,12 @@ function startEdit(btn: BuyButtonData) {
     formTargetUrl.value = btn.target_url
   }
 
-  window.scrollTo({ top: 0, behavior: 'smooth' })
+  nextTick(() => formRoot.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }))
 }
 
 async function save() {
   if (!session.activeTenantSlug || !session.idToken) return
+  nameTouched.value = true
   if (!formName.value.trim()) return
   saving.value = true
   saveError.value = null
@@ -544,13 +564,86 @@ watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = '
 
       <PageHeader title="Buy Buttons" description="One script tag per button. Paste it anywhere, then update the label, color, or link here and it changes everywhere instantly, no HTML to touch." />
 
-      <!-- Value prop -->
-      <section class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 p-5 dark:border-slate-800 dark:bg-slate-800/40">
-        <p class="mb-1.5 text-sm font-semibold text-slate-700 dark:text-slate-200">Why not use the button from Polar, Gumroad, or PayPal?</p>
-        <p class="text-sm leading-relaxed text-slate-500 dark:text-slate-400">You can, but each platform gives you a different button with different settings. If you sell through multiple providers, or want to change button text or color, you have to log into each platform separately and update the HTML on every page. PayGlue buttons are provider-agnostic: create them once here, embed a single script tag, and manage everything from one place.</p>
+      <!-- Value prop, folded: worth reading once, not on every visit (PG-402). -->
+      <details class="group rounded-2xl border border-slate-200 bg-slate-50 px-5 py-3 dark:border-slate-800 dark:bg-slate-800/40">
+        <summary class="cursor-pointer list-none text-sm font-semibold text-slate-700 marker:hidden dark:text-slate-200">
+          <span class="inline-flex items-center gap-2">
+            <svg class="h-4 w-4 text-slate-500 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6" /></svg>
+            Why PayGlue buttons?
+          </span>
+        </summary>
+        <p class="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-400">You can, but each platform gives you a different button with different settings. If you sell through multiple providers, or want to change button text or color, you have to log into each platform separately and update the HTML on every page. PayGlue buttons are provider-agnostic: create them once here, embed a single script tag, and manage everything from one place.</p>
+      </details>
+
+      <!-- Saved list first, then the editor; the same order on Buy Buttons, Paywalls and Pricing Tables (PG-402). -->
+      <section class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 px-5 py-4">
+          <div>
+            <h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">Saved buttons</h2>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Click Edit to get the embed code again or update the button. Changes apply everywhere the button is embedded.</p>
+          </div>
+          <div class="flex shrink-0 items-center gap-2">
+            <span class="rounded-full bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 text-xs font-medium text-slate-600 dark:text-slate-300">{{ buttons.length }}</span>
+            <UiButton variant="primary" size="sm" @click="startNewButton">New button</UiButton>
+          </div>
+        </div>
+
+        <div v-if="loading" class="px-5 py-8 text-center text-sm text-slate-400 dark:text-slate-500">Loading...</div>
+        <div v-else-if="buttons.length === 0" class="px-5 py-10 text-center text-sm text-slate-400 dark:text-slate-500">
+          No buttons yet. Create your first one below.
+        </div>
+
+        <ul v-else class="divide-y divide-slate-100">
+          <li v-for="btn in buttonList.visible.value" :key="btn.id"
+            class="flex items-start gap-4 px-5 py-4"
+            :class="editingId === btn.id ? 'bg-indigo-50 dark:bg-indigo-500/10' : ''">
+
+            <div class="mt-0.5 h-3 w-3 shrink-0 rounded-full ring-1 ring-slate-200 dark:ring-slate-700"
+              :style="{ backgroundColor: btn.bg_color }" />
+
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">{{ btn.name }}</p>
+              <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+                {{ btn.label }}
+                <span v-if="btn.target_url" class="text-slate-400 dark:text-slate-500">&middot; {{ btn.target_url }}</span>
+              </p>
+            </div>
+
+            <div class="flex shrink-0 items-center gap-2 mt-0.5">
+              <button type="button"
+                class="flex items-center gap-1 rounded border border-slate-200 dark:border-slate-800 px-2 py-1 text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:border-indigo-300 hover:text-indigo-700"
+                @click="copyRowSnippet(btn)">
+                <svg v-if="copiedRowId !== btn.id" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                <svg v-else class="h-3 w-3 text-emerald-500" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                </svg>
+                {{ copiedRowId === btn.id ? 'Copied' : 'Copy' }}
+              </button>
+              <button type="button"
+                class="flex items-center gap-1 rounded border border-slate-200 dark:border-slate-800 px-2 py-1 text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:border-amber-300 hover:text-amber-600"
+                @click="startEdit(btn)">
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+                Edit
+              </button>
+              <button type="button"
+                class="flex items-center rounded border border-slate-200 dark:border-slate-800 p-1 text-slate-500 dark:text-slate-400 hover:border-red-200 hover:text-red-500"
+                :aria-label="`Delete ${btn.name}`"
+                @click="remove(btn)">
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            </div>
+          </li>
+        </ul>
+        <ShowMoreRow :hidden-count="buttonList.hiddenCount.value" :can-collapse="buttonList.canCollapse.value" @toggle="buttonList.toggle" />
       </section>
 
-      <div class="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
+      <div ref="formRoot" class="grid scroll-mt-20 gap-6 lg:grid-cols-2 [&>*]:min-w-0">
 
         <!-- Form -->
         <section
@@ -573,24 +666,27 @@ watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = '
 
           <!-- Internal name -->
           <div>
-            <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Name <span class="text-red-500 dark:text-rose-400">*</span> <span class="text-slate-400 dark:text-slate-500">(for your reference)</span></label>
-            <input v-model="formName" type="text" placeholder="e.g. Buy me a coffee"
+            <label for="bb-name" class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Name <span class="text-red-600 dark:text-rose-400" aria-hidden="true">*</span> <span class="text-slate-500 dark:text-slate-400">(for your reference)</span></label>
+            <input id="bb-name" v-model="formName" type="text" placeholder="e.g. Buy me a coffee" required
+              :aria-invalid="showNameError"
+              :aria-describedby="showNameError ? 'bb-name-error' : undefined"
               class="w-full rounded-lg border px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:outline-none"
-              :class="formName.trim() ? 'border-slate-200 dark:border-slate-800 focus:border-indigo-400' : 'border-red-300 focus:border-red-400'" />
-            <p v-if="!formName.trim()" class="mt-1 text-xs text-red-500 dark:text-rose-400">Required</p>
+              :class="showNameError ? 'border-red-300 focus:border-red-400' : 'border-slate-200 dark:border-slate-800 focus:border-indigo-400'"
+              @blur="nameTouched = true" />
+            <p v-if="showNameError" id="bb-name-error" class="mt-1 text-xs text-red-600 dark:text-rose-400">Required</p>
           </div>
 
           <!-- Button label -->
           <div>
-            <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Button text</label>
-            <input v-model="formLabel" type="text" placeholder="Buy now"
+            <label for="bb-label" class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Button text</label>
+            <input id="bb-label" v-model="formLabel" type="text" placeholder="Buy now"
               class="w-full rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none" />
           </div>
 
           <!-- Description -->
           <div>
-            <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Description <span class="text-slate-400 dark:text-slate-500">(optional, shown below button)</span></label>
-            <input v-model="formDescription" type="text" placeholder="e.g. Support my work with a one-time coffee"
+            <label for="bb-description" class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Description <span class="text-slate-500 dark:text-slate-400">(optional, shown below button)</span></label>
+            <input id="bb-description" v-model="formDescription" type="text" placeholder="e.g. Support my work with a one-time coffee"
               class="w-full rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none" />
           </div>
 
@@ -599,12 +695,15 @@ watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = '
             :class="useProduct ? 'border-indigo-200 dark:border-indigo-500/30 bg-indigo-50/50 dark:bg-indigo-500/10' : 'border-slate-200 dark:border-slate-800'">
             <div class="flex items-center justify-between">
               <div>
-                <p class="text-sm font-medium" :class="useProduct ? 'text-indigo-800 dark:text-indigo-300' : 'text-slate-800 dark:text-slate-100'">Link to a product?</p>
-                <p class="text-xs mt-0.5" :class="useProduct ? 'text-indigo-500' : 'text-slate-500 dark:text-slate-400'">Turn off to use a custom URL (newsletter, event, etc.)</p>
+                <p id="bb-use-product" class="text-sm font-medium" :class="useProduct ? 'text-indigo-800 dark:text-indigo-300' : 'text-slate-800 dark:text-slate-100'">Link to a product?</p>
+                <p id="bb-use-product-hint" class="text-xs mt-0.5" :class="useProduct ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-500 dark:text-slate-400'">Turn off to use a custom URL (newsletter, event, etc.)</p>
               </div>
-              <button type="button"
-                class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none"
-                :class="useProduct ? 'bg-indigo-600' : 'bg-slate-200'"
+              <button type="button" role="switch"
+                :aria-checked="useProduct"
+                aria-labelledby="bb-use-product"
+                aria-describedby="bb-use-product-hint"
+                class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors"
+                :class="useProduct ? 'bg-indigo-600' : 'bg-slate-300 dark:bg-slate-600'"
                 @click="toggleUseProduct">
                 <span class="inline-block h-5 w-5 rounded-full bg-white shadow transition-transform"
                   :class="useProduct ? 'translate-x-5' : 'translate-x-0'" />
@@ -619,8 +718,15 @@ watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = '
               </template>
               <template v-else>
                 <p v-if="productsLoading" class="text-xs text-slate-400 dark:text-slate-500">Loading products...</p>
-                <p v-else-if="productsError" class="text-xs text-amber-600 dark:text-amber-400">{{ productsError }}</p>
-                <select v-else v-model="selectedProductId"
+                <p v-else-if="productsError" class="text-xs text-amber-800 dark:text-amber-300">
+                  {{ productsError }}
+                  <RouterLink
+                    v-if="selectedProvider === 'polar' && polarNeedsToken"
+                    :to="`/t/${session.activeTenantSlug}/connection/polar`"
+                    class="ml-1 font-semibold text-indigo-700 underline underline-offset-2 dark:text-indigo-300"
+                  >Open Polar settings</RouterLink>
+                </p>
+                <select v-else v-model="selectedProductId" aria-label="Product"
                   class="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none">
                   <option value="">Select a product</option>
                   <option v-for="p in activeProducts" :key="p.id" :value="p.id">{{ p.name }}</option>
@@ -697,7 +803,7 @@ watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = '
             <!-- Welcome email -->
             <div class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 px-3 py-2.5">
               <p class="text-xs font-medium text-slate-800 dark:text-slate-100 mb-1.5">Welcome email</p>
-              <select v-model="mappingEmailType" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-xs text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none">
+              <select v-model="mappingEmailType" aria-label="Ghost email" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-xs text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none">
                 <option value="signin">Magic Link (recommended)</option>
                 <option value="signup">Account confirmation</option>
                 <option value="subscribe">Newsletter opt-in</option>
@@ -709,14 +815,14 @@ watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = '
 
           <!-- Link URL -->
           <div>
-            <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">
+            <label for="bb-url" class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">
               Link URL
               <span v-if="useProduct && selectedProvider === 'patreon'" class="ml-1 text-slate-400 dark:text-slate-500">(paste your Patreon join URL)</span>
               <span v-else-if="useProduct && selectedProductId && !isManualProduct" class="ml-1 text-indigo-500">(auto-filled from product)</span>
               <span v-else-if="useProduct && isManualProduct" class="ml-1 text-slate-400 dark:text-slate-500">(paste your Ko-fi page URL)</span>
               <span v-else-if="!useProduct" class="ml-1 text-slate-400 dark:text-slate-500">(custom link)</span>
             </label>
-            <input v-model="formTargetUrl" type="url"
+            <input id="bb-url" v-model="formTargetUrl" type="url"
               :placeholder="isManualProduct ? 'https://ko-fi.com/yourname' : useProduct ? 'Select a product above' : 'https://example.com/checkout'"
               class="w-full rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none" />
           </div>
@@ -724,18 +830,18 @@ watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = '
           <!-- Colors -->
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Button color</label>
+              <label for="bb-bg" class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Button color</label>
               <div class="flex items-center gap-2">
-                <input v-model="formBgColor" type="color" class="h-9 w-12 cursor-pointer rounded-lg border border-slate-200 dark:border-slate-800 p-0.5" />
-                <input v-model="formBgColor" type="text" placeholder="#4f46e5"
+                <input v-model="formBgColor" type="color" aria-label="Pick the button color" class="h-9 w-12 cursor-pointer rounded-lg border border-slate-200 dark:border-slate-800 p-0.5" />
+                <input id="bb-bg" v-model="formBgColor" type="text" placeholder="#4f46e5"
                   class="w-full rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm font-mono text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none" />
               </div>
             </div>
             <div>
-              <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Text color</label>
+              <label for="bb-text" class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Text color</label>
               <div class="flex items-center gap-2">
-                <input v-model="formTextColor" type="color" class="h-9 w-12 cursor-pointer rounded-lg border border-slate-200 dark:border-slate-800 p-0.5" />
-                <input v-model="formTextColor" type="text" placeholder="#ffffff"
+                <input v-model="formTextColor" type="color" aria-label="Pick the text color" class="h-9 w-12 cursor-pointer rounded-lg border border-slate-200 dark:border-slate-800 p-0.5" />
+                <input id="bb-text" v-model="formTextColor" type="text" placeholder="#ffffff"
                   class="w-full rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm font-mono text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none" />
               </div>
             </div>
@@ -744,23 +850,23 @@ watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = '
           <!-- Shape, Width, Alignment -->
           <div class="grid grid-cols-3 gap-3">
             <div>
-              <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Corners</label>
-              <select v-model="formBorderRadius" class="w-full rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none">
+              <label for="bb-corners" class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Corners</label>
+              <select id="bb-corners" v-model="formBorderRadius" class="w-full rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none">
                 <option value="none">Square</option>
                 <option value="md">Rounded</option>
                 <option value="full">Pill</option>
               </select>
             </div>
             <div>
-              <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Width</label>
-              <select v-model="formWidth" class="w-full rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none">
+              <label for="bb-width" class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Width</label>
+              <select id="bb-width" v-model="formWidth" class="w-full rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none">
                 <option value="auto">Auto</option>
                 <option value="full">Full</option>
               </select>
             </div>
             <div>
-              <label class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Align</label>
-              <select v-model="formAlignment" class="w-full rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none">
+              <label for="bb-align" class="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">Align</label>
+              <select id="bb-align" v-model="formAlignment" class="w-full rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100 focus:border-indigo-400 focus:outline-none">
                 <option value="left">Left</option>
                 <option value="center">Center</option>
                 <option value="right">Right</option>
@@ -811,8 +917,8 @@ watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = '
           </div>
         </section>
 
-        <!-- Right column -->
-        <div class="space-y-6">
+        <!-- Right column: the preview stays in view while the form scrolls. -->
+        <div class="space-y-6 self-start lg:sticky lg:top-16">
 
           <!-- Preview -->
           <section class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -855,69 +961,6 @@ watch(selectedProvider, (p) => { if (p === 'patreon') mappingEventType.value = '
 
         </div>
       </div>
-
-      <!-- Saved buttons list -->
-      <section class="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div class="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 px-5 py-4">
-          <div>
-            <h2 class="text-sm font-semibold text-slate-900 dark:text-slate-100">Saved buttons</h2>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Click Edit to get the embed code again or update the button. Changes apply everywhere the button is embedded.</p>
-          </div>
-          <span class="rounded-full bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 text-xs font-medium text-slate-600 dark:text-slate-300">{{ buttons.length }}</span>
-        </div>
-
-        <div v-if="loading" class="px-5 py-8 text-center text-sm text-slate-400 dark:text-slate-500">Loading...</div>
-        <div v-else-if="buttons.length === 0" class="px-5 py-10 text-center text-sm text-slate-400 dark:text-slate-500">
-          No buttons yet. Create your first one above.
-        </div>
-
-        <ul v-else class="divide-y divide-slate-100">
-          <li v-for="btn in buttons" :key="btn.id"
-            class="flex items-start gap-4 px-5 py-4"
-            :class="editingId === btn.id ? 'bg-indigo-50 dark:bg-indigo-500/10' : ''">
-
-            <div class="mt-0.5 h-3 w-3 shrink-0 rounded-full ring-1 ring-slate-200 dark:ring-slate-700"
-              :style="{ backgroundColor: btn.bg_color }" />
-
-            <div class="min-w-0 flex-1">
-              <p class="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">{{ btn.name }}</p>
-              <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
-                {{ btn.label }}
-                <span v-if="btn.target_url" class="text-slate-400 dark:text-slate-500">&middot; {{ btn.target_url }}</span>
-              </p>
-            </div>
-
-            <div class="flex shrink-0 items-center gap-2 mt-0.5">
-              <button type="button"
-                class="flex items-center gap-1 rounded border border-slate-200 dark:border-slate-800 px-2 py-1 text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:border-indigo-300 hover:text-indigo-700"
-                @click="copyRowSnippet(btn)">
-                <svg v-if="copiedRowId !== btn.id" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-                <svg v-else class="h-3 w-3 text-emerald-500" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                </svg>
-                {{ copiedRowId === btn.id ? 'Copied' : 'Copy' }}
-              </button>
-              <button type="button"
-                class="flex items-center gap-1 rounded border border-slate-200 dark:border-slate-800 px-2 py-1 text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:border-amber-300 hover:text-amber-600"
-                @click="startEdit(btn)">
-                <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                </svg>
-                Edit
-              </button>
-              <button type="button"
-                class="flex items-center rounded border border-slate-200 dark:border-slate-800 p-1 text-slate-400 dark:text-slate-500 hover:border-red-200 hover:text-red-500"
-                @click="remove(btn)">
-                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
-            </div>
-          </li>
-        </ul>
-      </section>
 
     </div>
   </AppShell>

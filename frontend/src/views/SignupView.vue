@@ -4,15 +4,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
-import Turnstile from 'cfturnstile-vue3'
 import signupHeroImage from '../assets/signup-hero.jpg'
 import { supabase } from '../lib/supabase'
 import { usesPasswordSignIn } from '../lib/passwordSignIn'
 import { captureEvent } from '../lib/posthog'
 import { useSessionStore } from '../stores/session'
 import PayGlueLogo from '../components/PayGlueLogo.vue'
+import TurnstileCheck from '../components/TurnstileCheck.vue'
 
-const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY as string
 const apiBase = import.meta.env.VITE_API_BASE_URL as string
 
 const route = useRoute()
@@ -31,6 +30,9 @@ const accessKey = ref('')
 const password = ref('')
 const passwordConfirm = ref('')
 const captchaToken = ref<string | null>(null)
+// A Turnstile token is single use, so every attempt that spent one asks for
+// a fresh one afterwards, whether it worked or not.
+const turnstile = ref<InstanceType<typeof TurnstileCheck> | null>(null)
 const isSending = ref(false)
 const sent = ref(Boolean(route.query.email))
 const error = ref<string | null>(null)
@@ -92,7 +94,14 @@ const submit = async () => {
   if (!canSubmit()) return
   error.value = null
   isSending.value = true
+  try {
+    await createAccount()
+  } finally {
+    turnstile.value?.reset()
+  }
+}
 
+const createAccount = async () => {
   // Step 1: validate access key against backend. Always -- there is no
   // frontend-only bypass (PG-142): a dev/test signup without a real
   // Creem/Polar purchase now goes through this exact same call with a
@@ -347,13 +356,9 @@ const backToEmail = () => {
                 Passwords do not match.
               </p>
             </div>
-            <Turnstile
-              :sitekey="siteKey"
-              theme="light"
-              size="flexible"
-              @callback="(token: string) => { captchaToken = token }"
-              @expired="() => { captchaToken = null }"
-              @error="() => { captchaToken = null }"
+            <TurnstileCheck
+              ref="turnstile"
+              v-model="captchaToken"
             />
             <button
               type="submit"
